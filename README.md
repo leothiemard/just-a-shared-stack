@@ -68,32 +68,6 @@ python3 scripts/install.py --restore /path/printed/by/installer/manifest.json
 
 Restoration first verifies that its links have not been replaced. If you edited skill files through a symlink, those edits live in this checkout; restoring the previous folders does not discard the checkout.
 
-## Share global instructions
-
-[GLOBAL_RULES.md](GLOBAL_RULES.md) is the agent instructions file shared by every machine and project. The installer does not manage it; link it once on each machine. Each machine's own rules and settings go in `~/.agents/LOCAL.md`, which stays out of this repository:
-
-```markdown
-# Local instructions
-
-- Notes vault: `/path/to/your/obsidian/vault`
-```
-
-Move anything this machine must keep from its current global file into `LOCAL.md`, then run this from the checkout. Remove any harness you do not use from both lists:
-
-```sh
-stamp=$(date +%Y%m%d%H%M%S)
-mkdir -p ~/.agents ~/.claude ~/.codex ~/.config/opencode
-for file in ~/.agents/AGENTS.md ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.config/opencode/AGENTS.md; do
-  if [ -e "$file" ] || [ -L "$file" ]; then mv "$file" "$file.backup-$stamp"; fi
-done
-ln -s "$PWD/GLOBAL_RULES.md" ~/.agents/AGENTS.md
-ln -s ~/.agents/AGENTS.md ~/.claude/CLAUDE.md
-ln -s ~/.agents/AGENTS.md ~/.codex/AGENTS.md
-ln -s ~/.agents/AGENTS.md ~/.config/opencode/AGENTS.md
-```
-
-The link follows whatever this checkout has checked out, so keep it on `main`. A pull updates the rules on that machine; start a new agent session to load them. The harness's own settings are separate: in Claude Code, also set `"attribution": {"commit": "", "pr": ""}` in `~/.claude/settings.json`.
-
 ## Existing checkouts after the rename
 
 Run this inside each existing checkout on both machines:

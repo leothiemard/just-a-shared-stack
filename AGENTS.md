@@ -4,8 +4,6 @@ This repository is a portable personal skill collection. Keep project-specific i
 
 Read a skill and its callers before editing it. Keep descriptions precise, use references for substantial conditional guidance, and preserve authorization boundaries. Avoid hardcoded checkout paths; accept project context from the caller.
 
-`GLOBAL_RULES.md` is linked as each machine's global agent instructions, so changes reach every project on pull. Keep it free of machine paths; those belong in each machine's `~/.agents/LOCAL.md`.
-
 `skills.json` is the installation allowlist. Update it when adding or removing a skill. Record third-party origins and retain license notices. Do not track the optional Tailwind documentation cache.
 
 Preserve borrowed skills' upstream behavior and bundled resources. Limit local patches to names, supported models, harness APIs and portability. Record each patch and its reason in `UPSTREAM.md`; changes to budgets, gates, permissions or output contracts need an explicit user decision. Do not summarize an upstream workflow into a different one.
