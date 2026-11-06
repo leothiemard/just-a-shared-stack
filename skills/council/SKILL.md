@@ -10,8 +10,8 @@ relevant checks. Give council the updated implementation; do not defer known
 fixes until reviews return. If the user wants to discard the implementation
 and explore new ideas, skip fixes to code being replaced.
 
-Bring in three delegates to help with the user's request, usually for review
-or feedback. Use one strong model from each of three different providers, at
+For round 1, bring in three delegates to help with the user's request, usually
+for review or feedback. Use one strong model from each of three providers, at
 high reasoning effort. If the user's instructions name council members, use
 those. Otherwise pick the latest flagship model from each provider, for
 example Claude Opus, GPT Astra, and Gemini Pro.
@@ -28,7 +28,8 @@ Give each delegate the request and relevant context. For review or feedback,
 keep their work read-only. Collect their responses and summarize the useful
 findings, disagreements, and recommended next steps.
 
-For a code review, ask each delegate for a score out of 10.
+For a code review, ask each delegate for a score out of 10 and findings labeled
+blocker, should, or nit.
 Count each full review pass as one round.
 A fresh review after fixes starts a new round.
 
@@ -42,18 +43,24 @@ Rounds: 2
 
 | Delegate | Round 1 | Round 2 |
 | --- | --- | --- |
-| Claude Opus | 7/10 | 9/10 |
-| GPT Sol | 8/10 | 10/10 |
-| Gemini Pro | 7/10 | 9/10 |
+| Claude Opus | 7/10 | — |
+| GPT Astra | 8/10 | — |
+| Gemini Pro | 7/10 | — |
+| GPT Sol | — | 9/10 |
 ```
 
-If a delegate gives no score, write `no score`. Do not invent one.
+If a delegate gives no score, write `no score`; if they skipped a round, `—`.
+Do not invent scores.
 If the PR is open, edit the description. Do not post a comment for this.
 If there is no PR, put the same results in the final reply only.
 
-If you agree with their recommendations, make the changes and request a fresh
-review after. Continue this process until all delegates are satisfied with the
-outcome.
+Fix findings you agree with. After round 1, use one GPT Sol reviewer on the
+diff since the last review plus open findings, unless the user asks otherwise.
+Stop when no blocker/should remains, the requested score is reached, or after
+3 rounds, whichever comes first. Also stop if there is no new blocker/should
+and the score rose by less than 1. Scores alone never keep the loop running.
+If reviews contradict each other, show both sides in 2–3 lines and let the
+user decide. Ask before more rounds, with open findings and the score trend.
 
 Do not let repeated reviews result in scope creep. It is your job to fight to
 keep scope limited.

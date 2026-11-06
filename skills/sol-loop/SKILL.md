@@ -61,6 +61,9 @@ Do not edit scoped files while review runs. Wait for the notice. Do not
 poll or start a second reviewer. Timeout, error, or no reply is not
 approval. On failure, cancel, verify stop, restart with the ledger.
 
+Above ~150k context, hand off to a fresh thread with the ledger before waiting
+on the reviewer.
+
 Round 1 brief (T3 children get no history):
 
 ```

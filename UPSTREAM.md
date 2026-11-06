@@ -20,13 +20,18 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 - Restore Lauren's general-impact review and project-local verifier generator with feature-map examples and maintenance guidance. Remove the custom Sanity specialization, personal-generator template and hybrid debugging/parity excerpts. No custom variants are retained.
 - Keep upstream invocation metadata. `disable-model-invocation` and `argument-hint` are harness fields used by Claude Code; upstream `agents/openai.yaml` files preserve corresponding Codex policy where supplied.
 
-## Complete compatibility patches
+## Complete local patches
 
 Council additionally adopts `1085050f3baed1ac724caa4a8166145fb2ac88af` (2026-10-28): resolve known issues and run checks before requesting an audit. The other six Theo folders retain the table pin.
 
-Theo's six other folders and Matt's five folders are copied without local modifications. The complete patches are:
+On 2026-11-06, the user approved bounded reviews and lean-thread handoffs to
+reduce review and cache-rebuild costs. Upstream pins are unchanged.
 
-- [council](patches/tstack-council.patch): prefer GPT-6 Astra for the OpenAI member, retaining upstream's three-provider workflow and explicit member overrides.
+Theo's four other folders and Matt's five folders are copied without local modifications. The complete patches are:
+
+- [council](patches/tstack-council.patch): prefer GPT-6 Astra; bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only reviewer after round 1 and escalate contradictions.
+- [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context.
+- [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context.
 
 - [blast-radius](patches/pstack-blast-radius.patch): qualify companion calls as `pstack:how`, `pstack:why`, `pstack:arena` and `pstack:unslop`; mirror its explicit-only invocation policy in Codex metadata.
 - [create-verification-skill](patches/pstack-create-verification-skill.patch): resolve the project-local skill directory for Codex, Claude Code or Cursor; qualify the pstack maintenance companion; mirror its explicit-only invocation policy in Codex metadata. The output stays project-local, and its feature coverage and proof requirements are unchanged.
