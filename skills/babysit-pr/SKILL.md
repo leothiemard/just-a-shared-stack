@@ -14,6 +14,9 @@ Never write your own watcher, polling loop, or `sleep` loop. Use one watcher
 per PR: `watch_pull_request` in T3 Code, `pr-wait` everywhere else. Never run
 both on the same PR. Every watcher on a GitHub account shares one rate limit.
 
+Above ~150k context, hand off to a lean thread with the PR URL, head SHA and
+open items before watching. Stop the old watch first.
+
 ### In T3 Code: `watch_pull_request`
 
 Handle the existing checks and comments first. Then call
