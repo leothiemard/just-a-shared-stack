@@ -1,9 +1,23 @@
 # just-a-stack
 
-Twenty portable skills shared between two independent machines. Borrowed workflows follow their upstream sources, with small documented compatibility patches. pstack-t3, Impeccable and other plugins remain independently maintained. The GitHub repository and T3 project are named `just-a-stack`. Existing checkouts can keep their `agent-skills` folder name so installed links continue working. Each machine keeps its own agents, credentials and project configuration. Company-specific workflows live separately on the work machine.
+## Stack, brain, boxes
+
+This repository is the **stack**: skills, a short managed block of global rules, and the `jas` CLI. A private **brain** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --brain <git-url> --apply
+```
+
+- [docs/ONBOARDING.md](docs/ONBOARDING.md): set up boxes, daily use, add skills, rules and private layers, review, roll back.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the stack, the brain and the boxes fit together.
+
+## Skills
+
+Twenty-one portable skills shared between two independent machines. Borrowed workflows follow their upstream sources, with small documented compatibility patches. pstack-t3, Impeccable and other plugins remain independently maintained. The GitHub repository and T3 project are named `just-a-stack`. Existing checkouts can keep their `agent-skills` folder name so installed links continue working. Each machine keeps its own agents, credentials and project configuration. Company-specific workflows live separately on the work machine.
 
 | Skill | Purpose |
 | --- | --- |
+| brain | Recall and record shared knowledge across projects and boxes with `jas`. |
 | diagnosing-bugs | Build a red-capable feedback loop, reproduce and minimize, then diagnose and fix. |
 | blast-radius | Trace contract and downstream risks beyond a diff. |
 | council | Get review or feedback from three providers, with scored code reviews and further rounds as needed. |
@@ -46,7 +60,7 @@ Manual cases in [evals/routing.json](evals/routing.json), [evals/sol-loop.json](
 
 ## Set up either machine
 
-Requires Git and Python 3.10+. Authenticate Git with this repository's personal GitHub account through your normal credential flow, then:
+Requires Git and Python 3.9+. Authenticate Git with this repository's personal GitHub account through your normal credential flow, then:
 
 ```sh
 git clone https://github.com/leothiemard/just-a-stack.git ~/Development/just-a-stack
