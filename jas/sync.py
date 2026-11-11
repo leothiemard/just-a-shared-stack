@@ -179,7 +179,7 @@ def exchange(root: Path, box: str, timeout: float, say, state: dict, quiet: bool
 
 def refresh_if_stale(cfg: dict, root: Path) -> None:
     """The quick sync before a recall: only with a remote, only when stale, never an error."""
-    if not cfg["brain"].get("remote") and "origin" not in brain.git(root, "remote", check=False).stdout.split():
+    if "origin" not in brain.git(root, "remote", check=False).stdout.split():
         return
     age = age_seconds(load_state(root).get("last_sync"))
     if age is not None and age < cfg["sync"]["max_age_minutes"] * 60:

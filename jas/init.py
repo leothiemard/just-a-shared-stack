@@ -256,7 +256,7 @@ def desired_config(args) -> dict:
         if resolved not in cfg["layers"]:
             cfg["layers"].append(resolved)
     config.validate(cfg)
-    return config.merge(raw, cfg)
+    return cfg
 
 
 def plan(cfg: dict, replace: bool, brain_args: tuple | None) -> list[Change]:
