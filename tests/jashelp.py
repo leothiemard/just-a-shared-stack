@@ -1,0 +1,83 @@
+"""Shared sandbox for jas tests: a temp home through JAS_HOME and a hermetic git config."""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from jas import cli  # noqa: E402
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+
+
+def tree(root: Path) -> dict[str, str]:
+    """Every path under `root` with its link target or file content, for before/after comparisons."""
+    out = {}
+    if not root.exists():
+        return out
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            out[rel] = "-> " + os.readlink(path)
+        elif path.is_file():
+            out[rel] = path.read_bytes().decode(errors="replace")
+        else:
+            out[rel] = "/"
+    return out
+
+
+class Sandbox(unittest.TestCase):
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory(prefix="jas test ")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+        self.home = self.base / "home"
+        self.home.mkdir()
+        gitconfig = self.base / "gitconfig"
+        gitconfig.write_text("[user]\n\tname = Fixture\n\temail = fixture@example.invalid\n[init]\n\tdefaultBranch = main\n")
+        env = mock.patch.dict(os.environ, {"JAS_HOME": str(self.home), "GIT_CONFIG_GLOBAL": str(gitconfig), "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def use_home(self, home: Path) -> None:
+        os.environ["JAS_HOME"] = str(home)
+        self.home = home
+
+    def jas(self, *argv: str, stdin: str = "") -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+            try:
+                code = cli.main(list(argv))
+            except SystemExit as exit_:
+                code = exit_.code
+        return code, out.getvalue(), err.getvalue()
+
+    def ok(self, *argv: str, stdin: str = "") -> str:
+        code, out, err = self.jas(*argv, stdin=stdin)
+        self.assertEqual(code, 0, f"jas {' '.join(argv)} failed:\n{out}\n{err}")
+        return out
+
+    def new_box(self, box: str = "mac", zone: str = "personal", sources: list[str] | None = None) -> Path:
+        """A configured box with a new local brain, written directly (no skill links)."""
+        brain = self.home / "brain"
+        cfg = {"box": box, "zone": zone, "brain": {"path": str(brain), "remote": ""},
+               "sessions": {"sources": sources or [], "idle_minutes": 30}}
+        config = self.home / ".config" / "just-a-stack" / "box.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps(cfg))
+        from jas import brain as brain_module
+
+        brain_module.create(brain, zone, box)
+        return brain
