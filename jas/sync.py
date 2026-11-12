@@ -101,6 +101,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         problem = brain.unfinished(root)
         if problem:
             raise JasError(f"Sync stopped; nothing was exported, committed or pushed. {problem}")
+        branch = current_branch(root)
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
         if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
@@ -113,18 +114,25 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if brain.commit_all(root, cfg["box"], f"brain: {cfg['box']} {stamp}"):
             say("Committed local changes.")
         try:
-            return exchange(root, cfg["box"], cfg["zone"], timeout, say, state, quiet)
+            return exchange(root, cfg["box"], cfg["zone"], branch, timeout, say, state, quiet)
         finally:
             save_state(root, state)
 
 
-def exchange(root: Path, box: str, zone: str, timeout: float, say, state: dict, quiet: bool) -> int:
+def current_branch(root: Path) -> str:
+    result = brain.git(root, "symbolic-ref", "--short", "-q", "HEAD", check=False)
+    if result.returncode:
+        raise JasError(f"Sync stopped; nothing was exported, committed or pushed. The brain {root} is on a detached HEAD. "
+                       f"Switch it back to its branch (git switch <branch>), then rerun.")
+    return result.stdout.strip()
+
+
+def exchange(root: Path, box: str, zone: str, branch: str, timeout: float, say, state: dict, quiet: bool) -> int:
     """Fetch, rebase local commits onto the remote, push. Never forces; a conflict leaves everything local."""
     if "origin" not in brain.git(root, "remote", check=False).stdout.split():
         state["last_sync"] = now().isoformat()
         say("Local-only brain (no remote); nothing to push.")
         return 0
-    branch = brain.git(root, "symbolic-ref", "--short", "HEAD").stdout.strip()
     try:
         brain.git(root, "fetch", "-q", "origin", timeout=timeout)
     except JasError as error:

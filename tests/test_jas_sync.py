@@ -112,3 +112,14 @@ class SyncTests(Sandbox):
         self.assertEqual(git(self.remote, "rev-parse", "HEAD"), remote_head)
         self.assertIn('"personal"', (self.a / "brain" / "brain.json").read_text())
         self.assertIn("Personal entry", git(self.a / "brain", "show", "HEAD:Projects/example-app/Log.md"))
+
+    def test_detached_head_stops_before_anything_is_committed(self):
+        root = self.a / "brain"
+        git(root, "checkout", "-q", "--detach")
+        self.on(self.a, "log", "-t", "Detached entry", "-p", "example-app", stdin="- x\n")
+        head, status = git(root, "rev-parse", "HEAD"), git(root, "status", "--porcelain")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1)
+        self.assertIn("detached", err)
+        self.assertEqual(git(root, "rev-parse", "HEAD"), head)
+        self.assertEqual(git(root, "status", "--porcelain"), status)
