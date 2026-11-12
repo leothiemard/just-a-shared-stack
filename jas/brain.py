@@ -87,6 +87,18 @@ def zone_of(root: Path) -> str | None:
         return None
 
 
+def inside(root: Path, path: Path) -> bool:
+    """Whether `path`, with every symlink resolved, stays inside the brain."""
+    return path.resolve().is_relative_to(root.resolve())
+
+
+def within(root: Path, path: Path) -> Path:
+    """`path`, when it stays inside the brain; jas never reads or writes through a link that leads out."""
+    if not inside(root, path):
+        raise JasError(f"{path} leads outside the brain through a symlink; jas does not read or write there. Replace the link with a real file or folder.")
+    return path
+
+
 def open_brain(cfg: dict) -> Path:
     """The brain path, after checking it exists and belongs to this box's zone."""
     root = config.brain_path(cfg)
@@ -132,7 +144,9 @@ def commit_all(root: Path, box: str, message: str) -> bool:
 
 
 def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
-    """Files to copy from `source` (its `Projects/` and loose top-level `.md`), and existing ones kept."""
+    """Files to copy from `source` (its `Projects/` and loose top-level `.md`), and existing ones kept.
+
+    Any existing destination, a dangling link included, is kept; one that leads outside the brain stops the whole import."""
     pairs = [(f, root / f.name) for f in sorted(source.glob("*.md")) if f.is_file()]
     projects = source / "Projects"
     if projects.is_dir():
@@ -140,8 +154,8 @@ def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list
             rel = f.relative_to(source)
             if f.is_file() and not any(part.startswith(".") for part in rel.parts):
                 pairs.append((f, root / rel))
-    copies = [pair for pair in pairs if not pair[1].exists()]
-    kept = [dest for _, dest in pairs if dest.exists()]
+    copies = [(src, within(root, dest)) for src, dest in pairs if not os.path.lexists(dest)]
+    kept = [dest for _, dest in pairs if os.path.lexists(dest)]
     return copies, kept
 
 

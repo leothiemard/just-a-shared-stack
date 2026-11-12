@@ -154,3 +154,35 @@ class InitTests(Sandbox):
         self.assertFalse((brain / "Projects" / "example-app" / ".hidden").exists())
         self.assertEqual(tree(vault), before)
         self.assertEqual(git(brain, "status", "--porcelain"), "")
+
+    def vault(self):
+        vault = self.base / "vault"
+        (vault / "Projects" / "example-app").mkdir(parents=True)
+        (vault / "Projects" / "example-app" / "New.md").write_text("imported\n")
+        (vault / "Inbox.md").write_text("loose note\n")
+        return vault
+
+    def test_import_aborts_when_a_destination_folder_leads_outside_the_brain(self):
+        self.ok(*INIT, "--apply")
+        vault, outside = self.vault(), self.base / "outside"
+        outside.mkdir()
+        brain = self.home / "brain"
+        (brain / "Projects").mkdir()
+        (brain / "Projects" / "example-app").symlink_to(outside, target_is_directory=True)
+        before = tree(vault), tree(outside), git(brain, "rev-parse", "HEAD")
+        code, _, err = self.jas(*INIT, "--import-notes", str(vault), "--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("outside the brain", err)
+        self.assertEqual((tree(vault), tree(outside), git(brain, "rev-parse", "HEAD")), before)
+        self.assertFalse((brain / "Inbox.md").exists())
+
+    def test_import_skips_a_dangling_destination_link(self):
+        self.ok(*INIT, "--apply")
+        vault = self.vault()
+        brain = self.home / "brain"
+        (brain / "Inbox.md").symlink_to(vault / "missing.md")
+        before = tree(vault)
+        out = self.ok(*INIT, "--import-notes", str(vault), "--apply")
+        self.assertIn("1 files to copy, 1 already present", out)
+        self.assertEqual(tree(vault), before)
+        self.assertEqual((brain / "Projects" / "example-app" / "New.md").read_text(), "imported\n")
