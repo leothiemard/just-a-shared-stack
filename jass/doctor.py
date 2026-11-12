@@ -1,0 +1,117 @@
+"""`jass doctor`: read-only checks of this box plus the context budget table."""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+from jass import JassError, budget, config, index, lore, paths, rules, sync
+from jass.init import installer
+from jass.sessions import sources
+
+HUB_MAX = 3000
+
+
+def checks(cfg: dict) -> list[tuple[str, str, str]]:
+    out = [("ok", "config", paths.tilde(paths.config_file()))]
+
+    def add(ok: bool, name: str, detail: str, level: str = "fail") -> None:
+        out.append(("ok" if ok else level, name, detail))
+
+    stack = config.stack_path(cfg)
+    add(lore.is_repo(stack), "stack", f"{paths.tilde(stack)}" + ("" if lore.is_repo(stack) else " is not a git checkout; clone it again"))
+    repos = [stack, *config.layer_paths(cfg)]
+    for root in paths.skill_roots():
+        for repo in repos:
+            try:
+                rows = installer.plan(repo, root)
+            except (OSError, ValueError, KeyError) as error:
+                add(False, "skills", f"{repo}: {error}")
+                continue
+            missing = [t.name for t, _, state in rows if state != "linked"]
+            detail = f"not linked: {', '.join(missing)}; run jass update --apply" if missing else f"{len(rows)} linked"
+            add(not missing, "skills", f"{paths.tilde(root)} ← {repo.name}: {detail}")
+    found = shutil.which("jass")
+    on_path = bool(found) and Path(found).resolve() == (stack / "bin" / "jass").resolve()
+    add(on_path, "cli", "jass on PATH" if on_path else f"jass not on PATH; add: export PATH=\"$HOME/.local/bin:$PATH\"", "warn")
+    try:
+        block = rules.render(repos)
+        canonical = paths.canonical_rules()
+        for path in [canonical, *paths.linked_rules()]:
+            if path != canonical and path.is_symlink() and path.resolve() == canonical.resolve():
+                add(True, "rules", f"{paths.tilde(path)} → {paths.tilde(canonical)}")
+            elif not path.is_file():
+                add(False, "rules", f"{paths.tilde(path)} missing; run jass update --apply", "fail" if path == canonical else "warn")
+            else:
+                try:
+                    same = rules.current(path.read_bytes().decode(), path) == block
+                except JassError as error:
+                    add(False, "rules", str(error))
+                    continue
+                add(same, "rules", f"{paths.tilde(path)}: managed block " + ("current" if same else "missing or stale; run jass update --apply"))
+    except (OSError, JassError) as error:
+        add(False, "rules", str(error))
+    out += lore_checks(cfg)
+    add(index.fts5_available(), "fts5", "SQLite FTS5 available" if index.fts5_available() else "this Python's sqlite3 lacks FTS5; use a python.org or Homebrew Python")
+    for source in sources(cfg["sessions"]) if cfg["sessions"]["export"] else []:
+        ok, reason = source.available()
+        add(ok, "sessions", f"{source.name} source " + ("available" if ok else f"disabled: {reason}"), "warn")
+    return out
+
+
+def lore_checks(cfg: dict) -> list[tuple[str, str, str]]:
+    try:
+        root = lore.open_lore(cfg)
+    except JassError as error:
+        return [("fail", "lore", str(error))]
+    out = [("ok", "lore", f"{paths.tilde(root)} (zone {cfg['zone']})")]
+
+    def git(*args: str):
+        return lore.git(root, *args, check=False)
+
+    problem = lore.unfinished(root)
+    if problem:
+        out.append(("fail", "lore git", problem))
+    dirty = git("status", "--porcelain").stdout.strip()
+    out.append(("warn" if dirty else "ok", "lore git", "uncommitted changes; jass sync commits them" if dirty else "clean"))
+    branch = git("symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
+    counts = git("rev-list", "--left-right", "--count", f"{sync.REMOTE}{branch}...HEAD")
+    if counts.returncode == 0:
+        behind, ahead = counts.stdout.split()
+        out.append(("warn" if int(ahead) else "ok", "lore git", f"{ahead} ahead, {behind} behind the remote (as of the last fetch)"))
+    unpublished = "origin" in git("remote").stdout.split() and not git("for-each-ref", "--count=1", sync.REMOTE, "refs/remotes/origin/").stdout.strip()
+    out.append(("warn", "lore sync", "not published: the remote had no branch at the last fetch; publish once with `jass sync --first-push`") if unpublished
+               else ("ok", "lore sync", sync.synced_label(root)))
+    has_identity = bool(git("config", "user.email").stdout.strip())
+    out.append(("ok" if has_identity else "warn", "git identity", "set" if has_identity else f"none; lore commits use {cfg['box']}@jass.local"))
+    for probe, line in (("Projects/x/Log.md", "Log.md merge=union"), ("Lessons/x.md", "Lessons/*.md merge=union")):
+        union = "merge: union" in git("check-attr", "merge", "--", probe).stdout
+        out.append(("ok" if union else "warn", "merge driver", line if union else f"add `{line}` to the lore's .gitattributes (rerun `jass init --apply` to add it)"))
+    exact = git("check-ignore", "-q", "--no-index", f".x.md{paths.TEMP}0123abcd").returncode == 0
+    broad = git("check-ignore", "-q", "--no-index", f"x{paths.TEMP}notes.md").returncode == 0
+    out.append(("ok" if exact and not broad else "warn", "temp files", f"{paths.TEMP_IGNORE} ignored" if exact and not broad else
+                f"the lore's .gitignore needs `{paths.TEMP_IGNORE}` and must not ignore other names with `{paths.TEMP}` in them "
+                f"(rerun `jass init --apply` to fix it)"))
+    big = sorted(p for p in (root / "Projects").glob("*/*.md") if p.stem == p.parent.name and lore.inside(root, p) and p.stat().st_size > HUB_MAX)
+    for hub in big:
+        out.append(("warn", "hub size", f"{hub.relative_to(root)} is {hub.stat().st_size} bytes (target {HUB_MAX}); move detail to topic notes"))
+    return out
+
+
+def run(as_json: bool = False) -> int:
+    try:
+        cfg = config.load()
+        results = checks(cfg)
+    except JassError as error:
+        results = [("fail", "config", str(error))]
+    report = budget.measure(Path.cwd())
+    failed = any(status == "fail" for status, _, _ in results)
+    if as_json:
+        print(json.dumps({"checks": [{"status": s, "check": n, "detail": d} for s, n, d in results], "budget": report}, indent=2))
+    else:
+        width = max(len(n) for _, n, _ in results)
+        for status, name, detail in results:
+            print(f"{status:4}  {name:{width}}  {detail}")
+        print("\nContext budget (measured)\n" + budget.table(report), end="")
+    return 1 if failed else 0

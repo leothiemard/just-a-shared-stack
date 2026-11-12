@@ -42,25 +42,43 @@ def plan(repo: Path, root: Path) -> list[tuple[Path, Path, str]]:
     return rows
 
 
+def save(manifest_path: Path, manifest: dict) -> None:
+    """Replace the manifest atomically, so a kill never leaves it half written."""
+    temp = manifest_path.with_name(f".{manifest_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    with temp.open("w") as handle:
+        handle.write(json.dumps(manifest, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp, manifest_path)
+
+
+def progress(row: dict) -> str:
+    """How far a recorded row got: "linked", "moved" (original backed up, link not made yet) or "untouched"."""
+    target, source = Path(row["target"]), Path(row["source"])
+    backup = Path(row["backup"]) if row["backup"] else None
+    if points_to(target, source):
+        return "linked"
+    if backup and present(backup) and not present(target):
+        return "moved"
+    if (backup is None and not present(target)) or (backup is not None and not present(backup) and present(target)):
+        return "untouched"
+    raise ValueError(f"Installed link changed; refusing to restore: {target}")
+
+
 def restore(manifest_path: Path) -> None:
+    """Undo an installation, or the recorded steps of one that was killed midway."""
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("version") != 1 or manifest.get("status") != "installed":
-        raise ValueError("Manifest does not describe an installed transaction.")
-    rows = manifest["entries"]
-    # Preflight all rows before touching any of them.
-    for row in rows:
-        target, source = Path(row["target"]), Path(row["source"])
-        if not points_to(target, source):
-            raise ValueError(f"Installed link changed; refusing to restore: {target}")
-        if row["backup"] and not present(Path(row["backup"])):
-            raise ValueError(f"Missing backup: {row['backup']}")
-    for row in reversed(rows):
+    if manifest.get("version") != 1 or manifest.get("status") not in ("installing", "installed"):
+        raise ValueError("Manifest does not describe an installed or interrupted transaction.")
+    rows = [(row, progress(row)) for row in manifest["entries"]]  # preflight every row before touching any
+    for row, state in reversed(rows):
         target = Path(row["target"])
-        target.unlink()
-        if row["backup"]:
+        if state == "linked":
+            target.unlink()
+        if state != "untouched" and row["backup"]:
             Path(row["backup"]).rename(target)
     manifest["status"] = "restored"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    save(manifest_path, manifest)
 
 
 def install(repo: Path, root: Path, replace: bool = False) -> Path | None:
@@ -76,21 +94,21 @@ def install(repo: Path, root: Path, replace: bool = False) -> Path | None:
     backup_root.mkdir(parents=True)
     manifest_path = backup_root / "manifest.json"
     manifest = {"version": 1, "status": "installing", "entries": []}
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    save(manifest_path, manifest)
     moved: list[tuple[Path, Path]] = []
     linked: list[tuple[Path, Path]] = []
     try:
         for target, source, state in pending:
             backup = backup_root / target.name if state == "replace" else None
+            manifest["entries"].append({"target": str(target), "source": str(source), "backup": str(backup) if backup else None})
+            save(manifest_path, manifest)
             if backup:
                 target.rename(backup)
                 moved.append((target, backup))
             target.symlink_to(source, target_is_directory=True)
             linked.append((target, source))
-            manifest["entries"].append({"target": str(target), "source": str(source), "backup": str(backup) if backup else None})
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
         manifest["status"] = "installed"
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        save(manifest_path, manifest)
         return manifest_path
     except BaseException:
         for target, source in reversed(linked):
@@ -101,8 +119,15 @@ def install(repo: Path, root: Path, replace: bool = False) -> Path | None:
                 raise RuntimeError(f"Rollback target changed; recover backup manually: {backup}")
             backup.rename(target)
         manifest["status"] = "rolled-back"
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        save(manifest_path, manifest)
         raise
+
+
+def default_root() -> Path:
+    sys.path.insert(0, str(REPO))
+    from jass import paths
+
+    return paths.skill_roots()[0]
 
 
 def main() -> int:
@@ -111,7 +136,7 @@ def main() -> int:
     action.add_argument("--apply", action="store_true", help="Install links after preflight.")
     action.add_argument("--check", action="store_true", help="Read-only; fail unless all links are current.")
     action.add_argument("--restore", type=Path, help="Undo an installation using its manifest.")
-    parser.add_argument("--root", type=Path, default=Path.home() / ".agents" / "skills")
+    parser.add_argument("--root", type=Path, help="skill root (default: ~/.agents/skills, honouring JASS_HOME)")
     parser.add_argument("--replace", action="store_true", help="Back up conflicting selected skills.")
     args = parser.parse_args()
     if args.replace and not args.apply:
@@ -121,7 +146,7 @@ def main() -> int:
             restore(args.restore.expanduser().absolute())
             print("Restored previous skills; repository retained.")
             return 0
-        root = args.root.expanduser().absolute()
+        root = (args.root.expanduser() if args.root else default_root()).absolute()
         rows = plan(REPO, root)
         for target, _, state in rows:
             print(f"{state:7} {target}")

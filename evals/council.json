@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "Council this design proposal before we write code. Do not implement anything.",
-      "expected_output": "Dispatch three strong models from three providers at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
+      "expected_output": "Dispatch Claude Opus, GPT-6.1 Sol and GPT-6 Astra at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "Council this code change. The named third provider cannot run. Can you replace it with a second seat from one of the other providers?",
-      "expected_output": "Report the unavailable named member/provider instead of substituting. Do not call a two-provider panel the requested council.",
+      "prompt": "Council this code change. Astra cannot run. Can you replace it with Gemini?",
+      "expected_output": "Report Astra as unavailable instead of substituting Gemini. The default panel is Opus / Sol / Astra; two OpenAI seats are intentional.",
       "files": []
     },
     {

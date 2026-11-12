@@ -72,6 +72,12 @@
       "prompt": "Explain how Portable Text serialization works in this React frontend.",
       "expected_output": "Portable Text knowledge workflow; no review loop or grilling.",
       "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "Reward loop: get this parser twice as fast and keep trying until you hit it.",
+      "expected_output": "Personal reward-loop, starting with the survey and interview. No episodes before the user approves the contract.",
+      "files": []
     }
   ]
 }

@@ -29,7 +29,7 @@ reduce review and cache-rebuild costs. Upstream pins are unchanged.
 
 Theo's four other folders and Matt's five folders are copied without local modifications. The complete patches are:
 
-- [council](patches/tstack-council.patch): prefer GPT-6 Astra; bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only reviewer after round 1 and escalate contradictions.
+- [council](patches/tstack-council.patch): retain the user-selected Opus / Sol / Astra panel; bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only reviewer after round 1 and escalate contradictions.
 - [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context.
 - [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context.
 
@@ -40,4 +40,4 @@ These patches contain every local difference, including added files. Apply them 
 
 ## Future updates
 
-Run the existing upstream checker to inspect source changes. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.
+Run `python3 scripts/check_upstream.py` (or `--source <name>` for one source) to inspect source changes. It fetches the mapped public scopes into temporary bare repositories, never runs upstream code or edits skills, and writes `report.md` and `report.json` under the ignored `.local/upstream/`. It exits 1 only when a fetch fails. Sanity and Tailwind folders have folder hashes, not Git commits, so they are not checked. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.
