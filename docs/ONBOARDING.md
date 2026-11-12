@@ -106,3 +106,9 @@ jas restore ~/.config/just-a-stack/backups/<stamp>/manifest.json
 ```
 
 It first checks that nothing it wrote has changed since; if something has, it restores nothing and tells you which file to look at. An `--apply` that failed midway prints the same command in its error; restore then undoes the steps that ran. The brain clone runs before any change outside the brain, so a clone that fails leaves the box as it was. The brain is never touched by a restore: undo brain changes with git in the brain folder (`jas path brain`).
+
+The skills step keeps a manifest of its own next to each skill root: `~/.agents/skill-backups/<stamp>/manifest.json` and `~/.claude/skill-backups/<stamp>/manifest.json`, with the backups of any replaced skills. `jas restore` undoes it through the `jas` manifest once the step has finished. If the process was killed during the skills step, the `jas` manifest does not list it yet; undo the links it made with the newest of those manifests, the one whose `status` is still `installing`, then run `jas restore` for the rest:
+
+```sh
+python3 "$(jas path stack)/scripts/install.py" --restore ~/.agents/skill-backups/<stamp>/manifest.json
+```
