@@ -254,7 +254,8 @@ def desired_config(args) -> dict:
     if args.brain_path:
         cfg["brain"]["path"] = args.brain_path
     if args.brain:
-        cfg["brain"]["remote"] = args.brain
+        root = config.brain_path(cfg)
+        cfg["brain"]["remote"] = brain.remote_location(args.brain, root if root.exists() else None)
     for layer in args.layer or []:
         resolved = str(Path(layer).expanduser().resolve())
         if resolved not in cfg["layers"]:
@@ -313,7 +314,7 @@ def execute(changes: list[Change], apply: bool) -> int:
 def run_init(args) -> int:
     cfg = desired_config(args)
     import_dir = Path(args.import_notes).expanduser().resolve() if args.import_notes else None
-    changes = plan(cfg, args.replace, (args.brain or cfg["brain"]["remote"], args.new_brain, import_dir))
+    changes = plan(cfg, args.replace, (cfg["brain"]["remote"], args.new_brain, import_dir))
     execute(changes, args.apply)
     return 0
 

@@ -233,3 +233,38 @@ class SyncTests(Sandbox):
         code, _, err = self.on(self.a, "sync")
         self.assertEqual(code, 0, err)
         self.assertIn("From mac", git(self.remote, "show", "main:Projects/example-app/Log.md"))
+
+    def test_a_remote_name_in_box_config_is_never_resolved(self):
+        work, empty = self.work_remote_on_trunk(), self.empty_remote("empty.git")
+        root = self.a / "brain"
+        git(root, "remote", "set-url", "origin", "alias")
+        git(root, "config", "remote.alias.url", str(empty))
+        git(root, "config", "remote.alias.pushurl", str(work))
+        self.use_home(self.a)
+        self.write_config("brain", remote="alias")
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1, err)
+        self.assertIn("full URL", err)
+        self.assertEqual(git(work, "branch", "--format=%(refname:short)").split(), ["trunk"])
+
+    def test_an_scp_url_that_is_also_a_remote_name_is_refused(self):
+        work = self.work_remote_on_trunk()
+        root, location = self.a / "brain", "brain@host.invalid:brain.git"
+        git(root, "remote", "set-url", "origin", location)
+        git(root, "config", f"remote.{location}.url", str(work))
+        self.use_home(self.a)
+        self.write_config("brain", remote=location)
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1, err)
+        self.assertIn("full URL", err)
+        self.assertEqual(git(work, "branch", "--format=%(refname:short)").split(), ["trunk"])
+
+    def test_a_push_rewrite_in_git_config_is_refused(self):
+        elsewhere = self.empty_remote("elsewhere.git")
+        git(self.a / "brain", "config", f"url.{elsewhere}.pushInsteadOf", str(self.remote))
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1, err)
+        self.assertIn("pushInsteadOf", err)
+        self.assertEqual(git(elsewhere, "for-each-ref"), "")

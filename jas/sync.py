@@ -149,15 +149,19 @@ def repo_id(url: str) -> str:
 
 
 def origin_url(root: Path, configured: str) -> str:
-    """The URL sync fetches from and pushes to: origin's, when it names the box config's `brain.remote` (or none is set).
+    """The literal location sync fetches from and pushes to: the box config's `brain.remote` (origin's when none is set),
+    after checking that origin names the same repository.
 
-    Fetch and push both use this one URL, so a push URL or a repointed origin never sends the brain somewhere unchecked."""
+    Fetch and push both use this one location, so a push URL, a remote name or a repointed origin never sends the brain somewhere unchecked."""
     url = brain.git(root, "remote", "get-url", "origin").stdout.strip()
     if configured and repo_id(url) != repo_id(configured):
         raise JasError(f"Sync stopped; nothing was exported, committed or pushed. The brain's origin is {strip_credentials(url)}, "
                        f"but brain.remote in {paths.tilde(paths.config_file())} is {strip_credentials(configured)}. "
                        f"Point origin back (git remote set-url origin <brain.remote>) or set brain.remote to the new URL, then rerun.")
-    return url
+    try:
+        return brain.remote_location(configured or url, root)
+    except JasError as error:
+        raise JasError(f"Sync stopped; nothing was exported, committed or pushed. {error}")
 
 
 def fetch(root: Path, url: str, branch: str, timeout: float) -> str | None:

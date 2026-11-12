@@ -55,6 +55,29 @@ def reason(result: subprocess.CompletedProcess) -> str:
     return next((line for line in lines if line.startswith(("fatal:", "error:"))), lines[-1] if lines else "no output")
 
 
+URL = re.compile(r"(https|ssh|git|file)://\S+")
+SCP = re.compile(r"[A-Za-z0-9][\w.-]*@[A-Za-z0-9][\w.-]*:\S+")
+
+
+def remote_location(value: str, root: Path | None = None) -> str:
+    """`value` as a location git takes literally: a URL, `user@host:path`, or a path made absolute.
+
+    Git looks up a configured remote by name before it treats the argument as a location, and rewrites a push
+    location that a `url.<base>.pushInsteadOf` matches, so either is refused."""
+    repo = root is not None and is_repo(root)
+    url = URL.fullmatch(value) or SCP.fullmatch(value)
+    if value in (git(root, "remote", check=False).stdout.split() if repo else []) or not (url or value.startswith(("/", "~", "./", "../"))):
+        raise JasError(f"Brain remote {value!r} is not a full URL (https://, ssh://, git://, file://, user@host:path) or a path. "
+                       f"Put the full URL in {paths.tilde(paths.config_file())} (brain.remote), or pass it to `jas init --brain`.")
+    location = value if url else str(Path(value).expanduser().resolve())
+    rewrites = git(root, "config", "-z", "--get-regexp", r"^url\..*\.pushinsteadof$", check=False).stdout.split("\0") if repo else []
+    for base in (entry.partition("\n")[2] for entry in rewrites if entry):
+        if location.startswith(base):
+            raise JasError(f"Git config rewrites pushes to {value!r} (url.*.pushInsteadOf {base!r}), so sync would push elsewhere than it fetched. "
+                           f"Remove that setting, or put the full URL of the brain in {paths.tilde(paths.config_file())} (brain.remote).")
+    return location
+
+
 def is_repo(path: Path) -> bool:
     return (path / ".git").exists()
 

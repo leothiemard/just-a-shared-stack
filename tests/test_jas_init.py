@@ -386,3 +386,23 @@ class PrivateFilesTests(Sandbox):
         for path in found:
             with self.subTest(str(path.relative_to(self.home))):
                 self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)
+
+
+class BrainRemoteTests(Sandbox):
+    def box_remote(self) -> str:
+        return json.loads((self.home / ".config" / "just-a-stack" / "box.json").read_text())["brain"]["remote"]
+
+    def test_a_bare_name_is_refused_as_brain_remote(self):
+        code, _, err = self.jas("init", "--box", "mac", "--brain", "alias")
+        self.assertEqual(code, 1)
+        self.assertIn("full URL", err)
+
+    def test_a_relative_path_is_recorded_absolute(self):
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", "--bare", str(self.base / "remote.git")], check=True)
+        cwd = os.getcwd()
+        os.chdir(self.base)
+        self.addCleanup(os.chdir, cwd)
+        self.ok("init", "--box", "mac", "--brain", "./remote.git", "--apply")
+        self.assertEqual(self.box_remote(), str(self.base / "remote.git"))
