@@ -332,6 +332,40 @@ class SyncTests(Sandbox):
         self.assertIn("not empty", err)
         self.assertEqual(git(empty, "rev-parse", "main"), before)
 
+    def test_another_spelling_of_the_same_local_remote_still_syncs(self):
+        link = self.base / "alias.git"
+        link.symlink_to(self.remote)
+        git(self.a / "brain", "remote", "set-url", "origin", str(link))
+        self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertIn("From mac", git(self.remote, "show", "main:Projects/example-app/Log.md"))
+
+    def test_a_file_url_with_a_space_is_a_location(self):
+        spaced = self.empty_remote("space remote.git")
+        home = self.base / "c"
+        home.mkdir()
+        self.use_home(home)
+        self.ok("init", "--box", "pi", "--zone", "personal", "--brain", f"file://{spaced}", "--apply")
+        self.ok("sync", "--first-push")
+        self.assertIn("personal", git(spaced, "show", "main:brain.json"))
+
+    def test_doctor_names_the_first_push_until_the_brain_is_published(self):
+        empty = self.empty_remote("fresh.git")
+        home = self.base / "c"
+        home.mkdir()
+        self.use_home(home)
+        self.ok("init", "--box", "pi", "--zone", "personal", "--brain", str(empty), "--apply")
+        self.write_config(sources=[])
+        _, out, _ = self.jas("doctor")
+        self.assertIn("jas sync --first-push", out)
+        self.ok("sync")
+        _, out, _ = self.jas("doctor")
+        self.assertIn("jas sync --first-push", out)
+        self.ok("sync", "--first-push")
+        _, out, _ = self.jas("doctor")
+        self.assertNotIn("jas sync --first-push", out)
+
     def test_init_against_an_empty_remote_names_the_first_push(self):
         empty = self.empty_remote("fresh.git")
         home = self.base / "c"

@@ -80,7 +80,9 @@ def brain_checks(cfg: dict) -> list[tuple[str, str, str]]:
     if counts.returncode == 0:
         behind, ahead = counts.stdout.split()
         out.append(("warn" if int(ahead) else "ok", "brain git", f"{ahead} ahead, {behind} behind the remote (as of the last fetch)"))
-    out.append(("ok", "brain sync", sync.synced_label(root)))
+    unpublished = "origin" in git("remote").stdout.split() and not git("for-each-ref", "--count=1", sync.REMOTE, "refs/remotes/origin/").stdout.strip()
+    out.append(("warn", "brain sync", "not published: the remote had no branch at the last fetch; publish once with `jas sync --first-push`") if unpublished
+               else ("ok", "brain sync", sync.synced_label(root)))
     has_identity = bool(git("config", "user.email").stdout.strip())
     out.append(("ok" if has_identity else "warn", "git identity", "set" if has_identity else f"none; brain commits use {cfg['box']}@just-a-stack.local"))
     for probe, line in (("Projects/x/Log.md", "Log.md merge=union"), ("Lessons/x.md", "Lessons/*.md merge=union")):

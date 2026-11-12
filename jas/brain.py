@@ -56,7 +56,7 @@ def reason(result: subprocess.CompletedProcess) -> str:
     return next((line for line in lines if line.startswith(("fatal:", "error:"))), lines[-1] if lines else "no output")
 
 
-URL = re.compile(r"(https|ssh|git|file)://\S+")
+URL = re.compile(r"(https|ssh|git)://\S+|file://.+")
 SCP = re.compile(r"[A-Za-z0-9][\w.-]*@[A-Za-z0-9][\w.-]*:\S+")
 
 

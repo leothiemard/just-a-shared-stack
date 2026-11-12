@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import platform
 import re
 import sys
@@ -159,8 +160,12 @@ REMOTE = "refs/jas/remote/"
 
 
 def repo_id(url: str) -> str:
-    """A repository URL as host/path in lower case, whatever its form: https, ssh://, git@host:path, file:// or a path."""
-    text = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", url.strip())
+    """A repository as host/path in lower case whatever the URL form, or as its real path when it is on this machine."""
+    text = url.strip()
+    local = text[len("file://"):] if text.startswith("file://") else text if text.startswith(("/", "~", "./", "../")) else None
+    if local is not None:
+        return re.sub(r"\.git$", "", os.path.realpath(os.path.expanduser(local)))
+    text = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", text)
     text = re.sub(r":\d*/", "/", re.sub(r"^[^@/]*@", "", text), count=1).replace(":", "/", 1)
     return re.sub(r"\.git$", "", text.rstrip("/")).lower()
 
@@ -233,6 +238,7 @@ def exchange(root: Path, box: str, zone: str, url: str, branch: str, upstream: s
         except JasError as error:
             print(f"warning: push failed; local commits kept. {error}", file=sys.stderr)
             return 0
+        brain.git(root, "update-ref", f"{REMOTE}{branch}", head)
         say(f"Pushed {branch}.")
     state["last_sync"] = now().isoformat()
     say("Brain in sync.")
