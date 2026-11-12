@@ -19,26 +19,26 @@ Each machine is a **box**. Every box has a name (`mac`, `linux-box`) and belongs
 
 | Layer | Holds | Lives in | Visibility |
 | --- | --- | --- | --- |
-| Stack | How agents work: skills, global rules, the `jas` CLI, bootstrap, these docs | this repository | public; never private content |
+| Stack | How agents work: skills, global rules, the `jass` CLI, bootstrap, these docs | this repository | public; never private content |
 | Brain | What agents know: project notes, lessons, session digests, box cards | a private git repository of Markdown, one per zone | private |
 | Repo-local | What is true for anyone who clones a project: its `AGENTS.md`, `docs/`, project skills | each project | per project |
-| Box config | Box name, zone, paths, brain remote, extra layers | `~/.config/just-a-stack/box.json` | never committed |
+| Box config | Box name, zone, paths, brain remote, extra layers | `~/.config/jass/box.json` | never committed |
 
 ```
-                        jas init / jas update
+                        jass init / jass update
  stack (public git) ──────────────────────────▶ each box: skill links, managed rules block,
-                                                 ~/.local/bin/jas, box.json
+                                                 ~/.local/bin/jass, box.json
                                                             │
-                           jas sync                         │ jas hub, recall, show, log, lesson
+                           jass sync                         │ jass hub, recall, show, log, lesson
  brain (private git) ◀────────────────────────▶ each box's   ◀──────── agents in any project
    one per zone            (commit, rebase, push) brain clone
 ```
 
-jas creates its own folders, `~/.config/just-a-stack` (box config, restore backups) and `~/.cache/just-a-stack` (recall index, sync and export state), as `0700`, and every file it writes there is `0600`, since they hold brain and session content.
+jass creates its own folders, `~/.config/jass` (box config, restore backups) and `~/.cache/jass` (recall index, sync and export state), as `0700`, and every file it writes there is `0600`, since they hold brain and session content.
 
-Agents run inside the project they work on, never from a special home folder. The stack reaches them through globally linked skills and a short managed block in the global instruction file. The brain reaches them only on demand, through `jas`.
+Agents run inside the project they work on, never from a special home folder. The stack reaches them through globally linked skills and a short managed block in the global instruction file. The brain reaches them only on demand, through `jass`.
 
-A work box adds a private **layer**: a directory shaped like this repository (`skills.json`, `skills/`, optional `rules/global.md`) with company skills and rules. It points at a company brain in zone `work`. `jas` refuses to read or sync a brain whose zone differs from the box's, so personal boxes never see work knowledge and the reverse. Skill names must be unique across layers; a duplicate is an error, never a silent override.
+A work box adds a private **layer**: a directory shaped like this repository (`skills.json`, `skills/`, optional `rules/global.md`) with company skills and rules. It points at a company brain in zone `work`. `jass` refuses to read or sync a brain whose zone differs from the box's, so personal boxes never see work knowledge and the reverse. Skill names must be unique across layers; a duplicate is an error, never a silent override.
 
 Threat model: the zone guard exists to prevent mistakes, such as a box pointed at the wrong brain, a wrong branch, a stale clone, or a redirect left in git config. It is not a defence against someone who controls the box's user account or its git configuration; that person can read every brain the box holds. Session digests are scrubbed for common credential shapes as defence in depth, not as a guarantee, and a brain remote must be a private repository.
 
@@ -48,7 +48,7 @@ Threat model: the zone guard exists to prevent mistakes, such as a box pointed a
 brain.json                         {"version":1,"zone":"personal"}
 README.md                          what this is; history is not instructions
 .gitattributes                     Log.md and Lessons/*.md merge=union, * text=auto eol=lf
-.gitignore                         ignores .<name>.jas-tmp-<8 hex>, the temp files of jas's atomic writes
+.gitignore                         ignores .<name>.jass-tmp-<8 hex>, the temp files of jass's atomic writes
 Projects/<project>/<project>.md    hub note, target 3,000 bytes or less
 Projects/<project>/Log.md          dated entries, newest first
 Projects/<project>/<Topic>.md      one subject per note
@@ -60,7 +60,7 @@ Reviews/<YYYY>-W<ww>.md            periodic review reports
 
 The brain is also a valid Obsidian vault, which is handy for reading it, but nothing depends on Obsidian.
 
-`jas init` accepts an existing folder as the brain only when it is a git repository with a `brain.json` of the box's zone; `--new-brain` and `--brain` need an empty or missing path, and a cloned repository with files but no `brain.json` is refused. Init commits only the files it writes (skeleton, imported notes), never other files in the folder.
+`jass init` accepts an existing folder as the brain only when it is a git repository with a `brain.json` of the box's zone; `--new-brain` and `--brain` need an empty or missing path, and a cloned repository with files but no `brain.json` is refused. Init commits only the files it writes (skeleton, imported notes), never other files in the folder.
 
 Every brain reader and writer (recall's index walk, `hub`, `log`, `lesson`, `show`, the session export and listing, the box card) resolves the path and refuses one that leads outside the brain, for example through a symlinked project folder. Containment is decided by file identity, so another spelling of the brain's path on a case-insensitive filesystem still counts as inside. The index skips such files; the commands stop with an error. A `brain.json` that leads outside the brain counts as no brain. `--import-notes` skips source files that lead outside the source folder, keeps any existing destination, a dangling link included, and stops the whole import before copying anything when a destination leads outside the brain.
 
@@ -74,11 +74,11 @@ Redeploy after changing variables; the running build keeps the old set.
 <!-- 2026-11-12 · box mac · project example-app · thread 5232d102 -->
 ```
 
-A **log entry** is a dated `##` heading with bullets and a `<!-- box mac -->` trailer. `jas log` inserts it at the top without the agent reading the file.
+A **log entry** is a dated `##` heading with bullets and a `<!-- box mac -->` trailer. `jass log` inserts it at the top without the agent reading the file.
 
 ## Recall
 
-`jas recall "<query>"` searches the brain and prints the cheapest useful answer:
+`jass recall "<query>"` searches the brain and prints the cheapest useful answer:
 
 ```
 3 of 17 hits · ~410 tokens · brain 2f9c1ab · synced 4 min ago
@@ -86,38 +86,38 @@ A **log entry** is a dated `##` heading with bullets and a `<!-- box mac -->` tr
     Redeploy after changing variables; the running build keeps the old set.
 [2] Projects/example-app/Log.md § 2026-10-26 — Deploy hook rollout   log · example-app · mac
     …snippet around the best-matching terms…
-Expand with: jas show 1
+Expand with: jass show 1
 ```
 
-- **Index**: SQLite FTS5 in `~/.cache/just-a-stack/`, never inside the brain. It updates incrementally by file modification time and size, and rebuilds when its schema version changes.
+- **Index**: SQLite FTS5 in `~/.cache/jass/`, never inside the brain. It updates incrementally by file modification time and size, and rebuilds when its schema version changes.
 - **Chunks**: each Markdown file is split at `#`, `##` and `###` headings. Each chunk records its path, heading trail, line, and metadata: kind (hub, log, note, lesson, session, box, review, other), project, box and date.
 - **Ranking**: BM25 with headings weighted four times the body, multiplied by a kind weight (lessons first, then hubs, notes, reviews, logs, box cards, sessions) and a mild recency factor (half-life 180 days, floor 0.6). At most two hits come from one file, so one long note cannot fill the answer. Session hits are labelled with the session title. `--since` keeps undated chunks and dates a chunk by its heading (log entries), its provenance comment (lessons) or the file's frontmatter.
-- **Budget**: output stops before the whole answer, header and footer included, exceeds `--budget` tokens (bytes/4, default 800), but always shows at least one hit. The header states the answer's own size. `jas show <n>` prints a hit in full.
+- **Budget**: output stops before the whole answer, header and footer included, exceeds `--budget` tokens (bytes/4, default 800), but always shows at least one hit. The header states the answer's own size. `jass show <n>` prints a hit in full.
 - **Freshness**: when the brain has a remote and the last sync is older than `sync.max_age_minutes`, recall first runs a quick sync with an 8-second network timeout. A failure is one warning line; recall still answers from the local copy.
 
 ## Session digests
 
 Each finished top-level agent session becomes a small Markdown file under `Sessions/<box>/`, so any box can search what happened on any other.
 
-- A **source** reads one session store strictly read-only and yields session records. The interface is in `jas/sessions/__init__.py`. Sources: `t3` (T3 Code's state database), `claude` and `codex` (native transcripts, registered but not implemented yet), and `json:<file>` for tests. A source is used only when `sessions.sources` lists it.
+- A **source** reads one session store strictly read-only and yields session records. The interface is in `jass/sessions/__init__.py`. Sources: `t3` (T3 Code's state database), `claude` and `codex` (native transcripts, registered but not implemented yet), and `json:<file>` for tests. A source is used only when `sessions.sources` lists it.
 - The **`t3` source** reads the projection tables of `~/.t3/userdata/statev2.sqlite` (`sessions.t3_store` overrides the path) through a read-only SQLite URI. Those tables are internal to T3 Code and change often, so the source checks every table and column it reads before reading; on a mismatch it prints `t3 source disabled: <what changed>` once and exports nothing. A thread becomes a digest when it has no parent (forks count as top-level), is not deleted, and has a completed run or no runs at all. The second case is history imported from T3 Code v1, which has messages but no runs; the spec asked only for threads with a completed run, and the code exports these too so that old history is searchable. A thread without any assistant answer is never exported. Its project is the basename of the T3 project's workspace root, and anything under a `scratch` folder is project `scratch`. "Asked" holds only what a human typed (plus the brief of an agent-launched thread); delegated results, notifications and scheduled-task wrappers are left out.
 - Only top-level sessions idle for `sessions.idle_minutes` are exported. Subagent threads, including nested ones, are counted on their top-level parent; app-owned children with runs get one line each under `## Delegated`.
 - The file name is stable per session, so a session that continued later overwrites its own digest. Export state lives in the cache, not the brain: the last update time of each exported session and a horizon (the last run's time minus the idle window). Sessions last updated before the horizon were final at the last run, so an incremental export asks sources only for newer ones. `--all` ignores the horizon. A run where a source was disabled does not move it.
 - Every text field passes through a scrubber that replaces known token shapes, private keys, credentials in URLs and credential values with `[redacted]`. A credential value follows a key that is, or ends in `_`, `-` or `.` plus, one of `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `access_key`, `auth`, `authorization`, `credential(s)` (any case), in `key=value`, `key: value` or JSON `"key": "value"` form, with plain or backslash-escaped quotes. When in doubt it redacts more: a quoted value is replaced through its closing quote, across lines, or to the end of its line when it has none, and an `Authorization:` or `Proxy-Authorization:` header loses its whole value, scheme included. Other identifiers (`monkey`, `max_tokens`, `author`) are left alone.
 - A digest has frontmatter (`kind: session`, id, box, zone, project, title, dates, provider, model, turns, subagents, PRs, tokens, `peak_context` (the largest context-window use seen), and, when known, the T3 environment id, `native_ref`, branch and `created_by`), then `## Asked` (the prompts; first and last three when there are more than six), `## Outcome` (the final answer), `## Turns` (one line per earlier turn, the last twelve) and `## Delegated` (children). It never exceeds 6,000 bytes. Headings in assistant text become bold and a code fence cut by a length cap is closed, so an answer cannot open sections of its own.
-- `jas sessions stats [--by week|box|project]` sums sessions, turns, tokens and subagents from digest frontmatter and counts the sessions whose peak context passed 200,000 tokens. Long threads and delegated workers dominate cost, so the brain review starts from it.
-- A source that finds its store missing or unrecognised prints one warning and yields nothing. It never breaks `jas sync`.
+- `jass sessions stats [--by week|box|project]` sums sessions, turns, tokens and subagents from digest frontmatter and counts the sessions whose peak context passed 200,000 tokens. Long threads and delegated workers dominate cost, so the brain review starts from it.
+- A source that finds its store missing or unrecognised prints one warning and yields nothing. It never breaks `jass sync`.
 
 ## Sync
 
-`jas sync` keeps the brain shared. It never touches the stack; `jas update` does that.
+`jass sync` keeps the brain shared. It never touches the stack; `jass update` does that.
 
 1. Take an advisory lock (`flock`) on a file in the cache directory, held until the sync ends; the kernel releases it if the process dies. If another sync holds it, exit quietly. Index rebuilds by `recall` wait on a lock of their own the same way.
-2. Stop with exit 1, before writing anything, while a rebase, merge, cherry-pick or revert is in progress in the brain or files are unmerged; the message says how to finish or abort it. `jas doctor` reports the same.
-3. Stop with exit 1, before writing anything, on a detached HEAD. With a remote, stop with exit 1 when origin's URL names another repository than `brain.remote` in the box config (any URL form counts as the same repository). Sync fetches from and pushes to `brain.remote` itself (origin's URL when none is set), and only as a literal location: a URL starting `https://`, `ssh://`, `git://` or `file://`, `user@host:path`, or a filesystem path, made absolute. Anything else, a value equal to one of the brain's remote names, or one that a `url.*.pushInsteadOf` setting rewrites, stops sync with a message to put the full URL in `box.json`, so a push URL, a remote name or a rewrite in git config never sends the brain elsewhere. `jas init --brain` applies the same rule before it records the remote. Fetch every remote branch with an explicit refspec into `refs/jas/remote/` (pruned), so the brain's fetch config and tracking refs never decide what the remote has; when the remote has branches but none with the local branch's name, stop with exit 1 and name the branch it uses. Sync never creates a branch on a non-empty remote, and plain `jas sync` never publishes to an empty one: it commits locally, pushes nothing, and says to run `jas sync --first-push` (so does `jas init --brain` when it clones an empty remote). `--first-push` is the provisioning step: it is refused when the remote has a branch, fetches again right before the push and stops if a branch appeared, then pushes with a lease that requires the branch to be absent. A branch another writer creates between that last fetch and the push is not caught when its name differs; that race is accepted, since a person runs `--first-push` once, by hand, at setup time. An unreachable remote is one warning: export and commit still run, nothing is pushed.
+2. Stop with exit 1, before writing anything, while a rebase, merge, cherry-pick or revert is in progress in the brain or files are unmerged; the message says how to finish or abort it. `jass doctor` reports the same.
+3. Stop with exit 1, before writing anything, on a detached HEAD. With a remote, stop with exit 1 when origin's URL names another repository than `brain.remote` in the box config (any URL form counts as the same repository). Sync fetches from and pushes to `brain.remote` itself (origin's URL when none is set), and only as a literal location: a URL starting `https://`, `ssh://`, `git://` or `file://`, `user@host:path`, or a filesystem path, made absolute. Anything else, a value equal to one of the brain's remote names, or one that a `url.*.pushInsteadOf` setting rewrites, stops sync with a message to put the full URL in `box.json`, so a push URL, a remote name or a rewrite in git config never sends the brain elsewhere. `jass init --brain` applies the same rule before it records the remote. Fetch every remote branch with an explicit refspec into `refs/jass/remote/` (pruned), so the brain's fetch config and tracking refs never decide what the remote has; when the remote has branches but none with the local branch's name, stop with exit 1 and name the branch it uses. Sync never creates a branch on a non-empty remote, and plain `jass sync` never publishes to an empty one: it commits locally, pushes nothing, and says to run `jass sync --first-push` (so does `jass init --brain` when it clones an empty remote). `--first-push` is the provisioning step: it is refused when the remote has a branch, fetches again right before the push and stops if a branch appeared, then pushes with a lease that requires the branch to be absent. A branch another writer creates between that last fetch and the push is not caught when its name differs; that race is accepted, since a person runs `--first-push` once, by hand, at setup time. An unreachable remote is one warning: export and commit still run, nothing is pushed.
 4. Export session digests (`--quick` skips this when the last export was under 6 hours ago).
 5. Refresh `Boxes/<box>.md`: zone, OS, stack revision, always-loaded context size, projects seen on this box.
-6. Delete temp files older than ten minutes that a killed write left in the brain: untracked regular files, outside `.git`, named exactly `.<name>.jas-tmp-<8 lowercase hex>`. A tracked file, a symlink or any other name is never deleted. Then commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
+6. Delete temp files older than ten minutes that a killed write left in the brain: untracked regular files, outside `.git`, named exactly `.<name>.jass-tmp-<8 lowercase hex>`. A tracked file, a symlink or any other name is never deleted. Then commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
 7. With a remote: check that the fetched remote branch's `brain.json` has this box's zone (exit 1 without rebasing or pushing when it does not), rebase local commits onto it, check the zone of the exact commit to push, push it with `--force-with-lease` set to the fetched commit, so a remote branch that moved since the fetch rejects the push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never a plain force.
 8. Record the sync time.
 
@@ -125,6 +125,6 @@ Concurrent work on two boxes usually merges cleanly: `Log.md` and lesson files u
 
 ## Context budget
 
-`jas doctor` measures what every session loads before the task starts: each global instruction file (symlinks counted once), the `name` and `description` bytes of every skill per skill root, enabled Claude plugins' skills, and configured MCP servers. It warns when a global file passes 2,000 bytes, a skill description passes 500 bytes, or the total passes 20,000 bytes. `jas sync` writes the total into the box card so drift shows over time.
+`jass doctor` measures what every session loads before the task starts: each global instruction file (symlinks counted once), the `name` and `description` bytes of every skill per skill root, enabled Claude plugins' skills, and configured MCP servers. It warns when a global file passes 2,000 bytes, a skill description passes 500 bytes, or the total passes 20,000 bytes. `jass sync` writes the total into the box card so drift shows over time.
 
-Run inside a git repository, `jas doctor` also lists that repository's `AGENTS.md` and `CLAUDE.md` and Claude's auto-memory index for it (`~/.claude/projects/<slug>/memory/MEMORY.md`, where the slug is the absolute repository path with every non-alphanumeric character replaced by `-`). These rows are not part of the box total; they warn past 8,000 bytes (instructions) and 4,000 bytes (memory index).
+Run inside a git repository, `jass doctor` also lists that repository's `AGENTS.md` and `CLAUDE.md` and Claude's auto-memory index for it (`~/.claude/projects/<slug>/memory/MEMORY.md`, where the slug is the absolute repository path with every non-alphanumeric character replaced by `-`). These rows are not part of the box total; they warn past 8,000 bytes (instructions) and 4,000 bytes (memory index).

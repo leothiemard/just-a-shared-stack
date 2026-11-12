@@ -125,7 +125,7 @@ def install(repo: Path, root: Path, replace: bool = False) -> Path | None:
 
 def default_root() -> Path:
     sys.path.insert(0, str(REPO))
-    from jas import paths
+    from jass import paths
 
     return paths.skill_roots()[0]
 
@@ -136,7 +136,7 @@ def main() -> int:
     action.add_argument("--apply", action="store_true", help="Install links after preflight.")
     action.add_argument("--check", action="store_true", help="Read-only; fail unless all links are current.")
     action.add_argument("--restore", type=Path, help="Undo an installation using its manifest.")
-    parser.add_argument("--root", type=Path, help="skill root (default: ~/.agents/skills, honouring JAS_HOME)")
+    parser.add_argument("--root", type=Path, help="skill root (default: ~/.agents/skills, honouring JASS_HOME)")
     parser.add_argument("--replace", action="store_true", help="Back up conflicting selected skills.")
     args = parser.parse_args()
     if args.replace and not args.apply:

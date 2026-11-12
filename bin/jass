@@ -1,0 +1,22 @@
+#!/bin/sh
+# Launcher for the jass package. Follows its own symlink so ~/.local/bin/jass works.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+root=$(cd "$(dirname "$self")/.." && pwd -P)
+python=${JASS_PYTHON:-}
+if [ -z "$python" ]; then
+  for candidate in python3 /usr/bin/python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then python=$candidate; break; fi
+  done
+fi
+if [ -z "$python" ]; then
+  echo "jass: no python3 found. Install Python 3.9 or newer, or set JASS_PYTHON." >&2
+  exit 1
+fi
+exec "$python" -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from jass.cli import main; sys.exit(main(sys.argv[1:]))' "$root" "$@"

@@ -35,7 +35,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse(self.root.parent.exists())
 
     def test_default_root_follows_jas_home(self):
-        env = dict(os.environ, JAS_HOME=str(self.base / "sandbox home"))
+        env = dict(os.environ, JASS_HOME=str(self.base / "sandbox home"))
         result = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(str(self.base / "sandbox home" / ".agents" / "skills"), result.stdout)

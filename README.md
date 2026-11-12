@@ -24,11 +24,11 @@ Twenty portable skills shared between two independent machines. Borrowed workflo
 | portable-text-serialization | Render and export Portable Text. |
 | tailwind-4-docs | Tailwind v4 guidance with an optional local docs cache. |
 | seo-aeo-best-practices | Metadata, structured data and search visibility. |
-| brain | Recall and record shared knowledge across projects and boxes with `jas`. |
+| brain | Recall and record shared knowledge across projects and boxes with `jass`. |
 
 ## Stack, brain, boxes
 
-This repository is the **stack**: skills, a short managed block of global rules, and the `jas` CLI. A private **brain** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
+This repository is the **stack**: skills, a short managed block of global rules, and the `jass` CLI. A private **brain** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --brain <git-url> --apply

@@ -22,15 +22,15 @@ class BootstrapTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(stack)], check=True)
         subprocess.run(["git", "-C", str(stack), "remote", "add", "origin", origin], check=True)
         (stack / "bin").mkdir()
-        (stack / "bin" / "jas").write_text(f"#!/bin/sh\necho \"$@\" > '{self.ran}'\n")
-        (stack / "bin" / "jas").chmod(0o755)
+        (stack / "bin" / "jass").write_text(f"#!/bin/sh\necho \"$@\" > '{self.ran}'\n")
+        (stack / "bin" / "jass").chmod(0o755)
         if cli:
-            (stack / "jas").mkdir()
-            (stack / "jas" / "cli.py").write_text("")
+            (stack / "jass").mkdir()
+            (stack / "jass" / "cli.py").write_text("")
         return stack
 
     def bootstrap(self, shell, stack):
-        env = dict(os.environ, HOME=str(self.base), JAS_STACK_DIR=str(stack), JAS_STACK_URL=URL, GIT_CONFIG_NOSYSTEM="1",
+        env = dict(os.environ, HOME=str(self.base), JASS_STACK_DIR=str(stack), JASS_STACK_URL=URL, GIT_CONFIG_NOSYSTEM="1",
                    GIT_CONFIG_GLOBAL=os.devnull)
         return subprocess.run([shell, str(SCRIPT), "--box", "test"], capture_output=True, text=True, env=env)
 
@@ -55,7 +55,7 @@ class BootstrapTests(unittest.TestCase):
         cases = {
             "another repository": ("https://github.com/example/other-tool.git", True),
             "another owner": ("git@github.com:someone/just-a-stack.git", True),
-            "no jas package": (URL, False),
+            "no jass package": (URL, False),
         }
         for name, (origin, cli) in cases.items():
             for shell in SHELLS:
@@ -63,21 +63,21 @@ class BootstrapTests(unittest.TestCase):
                     stack = self.checkout(origin, cli)
                     result = self.bootstrap(shell, stack)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("JAS_STACK_DIR", result.stderr)
+                    self.assertIn("JASS_STACK_DIR", result.stderr)
                     self.assertFalse(self.ran.exists())
                     shutil.rmtree(stack)
 
     def test_a_folder_inside_another_checkout_is_never_run(self):
         stack = self.checkout(URL)
-        inner = stack / "jas"
+        inner = stack / "jass"
         (inner / "bin").mkdir()
-        (inner / "bin" / "jas").write_text(f"#!/bin/sh\necho \"$@\" > '{self.ran}'\n")
-        (inner / "bin" / "jas").chmod(0o755)
-        (inner / "jas").mkdir()
-        (inner / "jas" / "cli.py").write_text("")
+        (inner / "bin" / "jass").write_text(f"#!/bin/sh\necho \"$@\" > '{self.ran}'\n")
+        (inner / "bin" / "jass").chmod(0o755)
+        (inner / "jass").mkdir()
+        (inner / "jass" / "cli.py").write_text("")
         for shell in SHELLS:
             with self.subTest(shell):
                 result = self.bootstrap(shell, inner)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("JAS_STACK_DIR", result.stderr)
+                self.assertIn("JASS_STACK_DIR", result.stderr)
                 self.assertFalse(self.ran.exists())
