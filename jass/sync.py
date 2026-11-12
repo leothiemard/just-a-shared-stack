@@ -159,10 +159,28 @@ def current_branch(root: Path) -> str:
 REMOTE = "refs/jass/remote/"
 
 
+def local_path(url: str) -> str | None:
+    """The filesystem path a remote URL names, or None when it is not on this machine."""
+    text = url.strip()
+    return text[len("file://"):] if text.startswith("file://") else text if text.startswith(("/", "~", "./", "../")) else None
+
+
+def same_repo(a: str, b: str) -> bool:
+    """Whether two remote URLs name one repository. Two existing local paths count by file identity, so another letter case
+    of the same folder on a case-insensitive filesystem matches while distinct folders on a case-sensitive one stay distinct."""
+    paths_ = [local_path(a), local_path(b)]
+    if all(p is not None for p in paths_):
+        try:
+            return os.path.samefile(*(os.path.expanduser(p) for p in paths_))
+        except OSError:
+            pass
+    return repo_id(a) == repo_id(b)
+
+
 def repo_id(url: str) -> str:
     """A repository as host/path in lower case whatever the URL form, or as its real path when it is on this machine."""
+    local = local_path(url)
     text = url.strip()
-    local = text[len("file://"):] if text.startswith("file://") else text if text.startswith(("/", "~", "./", "../")) else None
     if local is not None:
         return re.sub(r"\.git$", "", os.path.realpath(os.path.expanduser(local)))
     text = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", text)
@@ -176,7 +194,7 @@ def origin_url(root: Path, configured: str) -> str:
 
     Fetch and push both use this one location, so a push URL, a remote name or a repointed origin never sends the lore somewhere unchecked."""
     url = lore.git(root, "remote", "get-url", "origin").stdout.strip()
-    if configured and repo_id(url) != repo_id(configured):
+    if configured and not same_repo(url, configured):
         raise JassError(f"Sync stopped; nothing was exported, committed or pushed. The lore's origin is {strip_credentials(url)}, "
                        f"but lore.remote in {paths.tilde(paths.config_file())} is {strip_credentials(configured)}. "
                        f"Point origin back (git remote set-url origin <lore.remote>) or set lore.remote to the new URL, then rerun.")
