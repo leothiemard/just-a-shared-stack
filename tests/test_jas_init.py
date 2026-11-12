@@ -186,3 +186,22 @@ class InitTests(Sandbox):
         self.assertIn("1 files to copy, 1 already present", out)
         self.assertEqual(tree(vault), before)
         self.assertEqual((brain / "Projects" / "example-app" / "New.md").read_text(), "imported\n")
+
+    def test_failed_clone_changes_nothing_outside_the_brain(self):
+        before = tree(self.home)
+        code, _, err = self.jas("init", "--box", "mac", "--brain", str(self.base / "absent.git"), "--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("brain", err)
+        self.assertNotIn("jas restore", err)
+        self.assertEqual(tree(self.home), before)
+
+    def test_restore_undoes_an_init_that_failed_midway(self):
+        (self.home / ".codex").write_text("a file where a folder belongs\n")
+        before = tree(self.home)
+        code, _, err = self.jas(*INIT, "--apply")
+        self.assertEqual(code, 1)
+        self.assertTrue((self.home / ".agents" / "AGENTS.md").exists())
+        manifest = re.search(r"jas restore (.+manifest\.json)", err).group(1)
+        self.ok("restore", manifest)
+        after = {rel: v for rel, v in tree(self.home).items() if not rel.startswith(("brain", ".config/just-a-stack/backups", ".agents/skill-backups", ".claude/skill-backups"))}
+        self.assertEqual(after, {**before, ".config": "/", ".config/just-a-stack": "/", ".agents": "/", ".claude": "/"})

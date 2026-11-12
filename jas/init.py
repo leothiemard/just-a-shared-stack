@@ -52,28 +52,29 @@ class Transaction:
             missing.append(path)
             path = path.parent
         for folder in reversed(missing):
-            folder.mkdir()
             self.record({"type": "mkdir", "path": str(folder)})
+            folder.mkdir()
 
-    def stash(self, path: Path) -> str:
-        backup = self.dir / f"{len(self.data['entries'])}-{path.name}"
-        os.rename(path, backup)
-        return str(backup)
+    def backup_path(self, path: Path) -> str:
+        return str(self.dir / f"{len(self.data['entries'])}-{path.name}")
 
     def write(self, path: Path, text: str) -> None:
         self.mkdirs(path.parent)
+        data = text.encode()
         backup = None
         if path.exists():
-            backup = str(self.dir / f"{len(self.data['entries'])}-{path.name}")
+            backup = self.backup_path(path)
             shutil.copyfile(path, backup)
-        path.write_bytes(text.encode())
-        self.record({"type": "write", "path": str(path), "backup": backup, "sha256": digest(path)})
+        self.record({"type": "write", "path": str(path), "backup": backup, "sha256": hashlib.sha256(data).hexdigest()})
+        path.write_bytes(data)
 
     def link(self, path: Path, target: Path) -> None:
         self.mkdirs(path.parent)
-        backup = self.stash(path) if os.path.lexists(path) else None
-        path.symlink_to(target)
+        backup = self.backup_path(path) if os.path.lexists(path) else None
         self.record({"type": "link", "path": str(path), "target": str(target), "backup": backup})
+        if backup:
+            os.rename(path, backup)
+        path.symlink_to(target)
 
     def skills(self, repo: Path, root: Path, replace: bool) -> None:
         self.mkdirs(root)
@@ -288,8 +289,11 @@ def execute(changes: list[Change], apply: bool) -> int:
     if not apply:
         print("Preview only; nothing changed. Rerun with --apply to make these changes.")
         return 0
-    tx = Transaction() if any(not c.in_brain for c in pending) else None
+    pending.sort(key=lambda c: not c.in_brain)  # brain steps can fail on the network, so they run before the box is touched
+    tx = None
     for change in pending:
+        if not change.in_brain and tx is None:
+            tx = Transaction()
         try:
             change.apply(tx)
         except (OSError, ValueError, JasError) as error:
@@ -335,36 +339,50 @@ def run_update(args) -> int:
     return 0
 
 
+def in_place(entry: dict) -> bool:
+    """Whether the entry's change is in place (True) or never happened (False); raises when the path changed since."""
+    path, backup = Path(entry.get("path", "")), entry.get("backup")
+    if entry["type"] == "write":
+        if path.is_file() and digest(path) == entry["sha256"]:
+            return True
+        if not os.path.lexists(path) if backup is None else path.is_file() and digest(path) == digest(Path(backup)):
+            return False
+        raise JasError(f"{path} changed since this transaction; nothing restored. Restore it by hand from {backup or 'nothing (it was new)'}.")
+    if entry["type"] == "link":
+        if path.is_symlink() and os.readlink(path) == entry["target"]:
+            return True
+        if not os.path.lexists(path) or (backup is not None and not os.path.lexists(backup)):
+            return False
+        raise JasError(f"{path} no longer links to {entry['target']}; nothing restored. Inspect it by hand.")
+    if entry["type"] == "skills":
+        skills = json.loads(Path(entry["manifest"]).read_text())
+        for row in skills["entries"]:
+            if not installer.points_to(Path(row["target"]), Path(row["source"])):
+                raise JasError(f"Skill link {row['target']} changed; nothing restored. Inspect it by hand.")
+    return True
+
+
 def restore(manifest_path: Path) -> None:
+    """Undo an applied transaction, or the recorded steps of one that stopped midway."""
     try:
         manifest = json.loads(manifest_path.read_text())
     except (OSError, ValueError) as error:
         raise JasError(f"Cannot read manifest {manifest_path}: {error}. Pass the path printed by `jas init --apply`.")
-    if manifest.get("version") != 1 or manifest.get("status") != "applied":
-        raise JasError(f"{manifest_path} is not an applied jas transaction (status {manifest.get('status')!r}).")
-    entries = manifest["entries"]
-    for entry in entries:
-        path = Path(entry.get("path", ""))
-        if entry["type"] == "write" and (not path.is_file() or digest(path) != entry["sha256"]):
-            raise JasError(f"{path} changed since this transaction; nothing restored. Restore it by hand from {entry['backup'] or 'nothing (it was new)'}.")
-        if entry["type"] == "link" and not (path.is_symlink() and os.readlink(path) == entry["target"]):
-            raise JasError(f"{path} no longer links to {entry['target']}; nothing restored. Inspect it by hand.")
-        if entry["type"] == "skills":
-            skills = json.loads(Path(entry["manifest"]).read_text())
-            for row in skills["entries"]:
-                if not installer.points_to(Path(row["target"]), Path(row["source"])):
-                    raise JasError(f"Skill link {row['target']} changed; nothing restored. Inspect it by hand.")
-    for entry in reversed(entries):
-        path = Path(entry.get("path", ""))
-        if entry["type"] == "write":
-            if entry["backup"]:
-                shutil.copyfile(entry["backup"], path)
+    if manifest.get("version") != 1 or manifest.get("status") not in ("applying", "applied"):
+        raise JasError(f"{manifest_path} is not a jas transaction that can be undone (status {manifest.get('status')!r}).")
+    entries = [(entry, in_place(entry)) for entry in manifest["entries"]]
+    for entry, done in reversed(entries):
+        path, backup = Path(entry.get("path", "")), entry.get("backup")
+        if entry["type"] == "write" and done:
+            if backup:
+                shutil.copyfile(backup, path)
             else:
                 path.unlink()
         elif entry["type"] == "link":
-            path.unlink()
-            if entry["backup"]:
-                os.rename(entry["backup"], path)
+            if done:
+                path.unlink()
+            if backup and os.path.lexists(backup):
+                os.rename(backup, path)
         elif entry["type"] == "skills":
             installer.restore(Path(entry["manifest"]))
         elif entry["type"] == "mkdir":
