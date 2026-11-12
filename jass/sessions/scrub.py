@@ -1,4 +1,4 @@
-"""Redact secrets from text before it is written to the brain."""
+"""Redact secrets from text before it is written to the lore."""
 
 from __future__ import annotations
 

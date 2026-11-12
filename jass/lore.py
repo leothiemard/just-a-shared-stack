@@ -1,4 +1,4 @@
-"""The brain: a private git repo of Markdown, one per trust zone."""
+"""The lore: a private git repo of Markdown, one per trust zone."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from jass import JassError, config, paths
 
 SKELETON = {
     "README.md": (
-        "# Brain\n\n"
+        "# Lore\n\n"
         "Shared knowledge for agents on every box in this zone, managed by just-a-stack (`jass`).\n\n"
         "- `Projects/<project>/`: hub note, `Log.md` and topic notes per project.\n"
         "- `Lessons/<topic>.md`: lessons that apply beyond one project.\n"
@@ -68,14 +68,14 @@ def remote_location(value: str, root: Path | None = None) -> str:
     repo = root is not None and is_repo(root)
     url = URL.fullmatch(value) or SCP.fullmatch(value)
     if value in (git(root, "remote", check=False).stdout.split() if repo else []) or not (url or value.startswith(("/", "~", "./", "../"))):
-        raise JassError(f"Brain remote {value!r} is not a full URL (https://, ssh://, git://, file://, user@host:path) or a path. "
-                       f"Put the full URL in {paths.tilde(paths.config_file())} (brain.remote), or pass it to `jass init --brain`.")
+        raise JassError(f"Lore remote {value!r} is not a full URL (https://, ssh://, git://, file://, user@host:path) or a path. "
+                       f"Put the full URL in {paths.tilde(paths.config_file())} (lore.remote), or pass it to `jass init --lore`.")
     location = value if url else str(Path(value).expanduser().resolve())
     rewrites = git(root, "config", "-z", "--get-regexp", r"^url\..*\.pushinsteadof$", check=False).stdout.split("\0") if repo else []
     for base in (entry.partition("\n")[2] for entry in rewrites if entry):
         if location.startswith(base):
             raise JassError(f"Git config rewrites pushes to {value!r} (url.*.pushInsteadOf {base!r}), so sync would push elsewhere than it fetched. "
-                           f"Remove that setting, or put the full URL of the brain in {paths.tilde(paths.config_file())} (brain.remote).")
+                           f"Remove that setting, or put the full URL of the lore in {paths.tilde(paths.config_file())} (lore.remote).")
     return location
 
 
@@ -87,15 +87,15 @@ IN_PROGRESS = (("rebase-merge", "rebase"), ("rebase-apply", "rebase"), ("MERGE_H
 
 
 def unfinished(root: Path) -> str:
-    """Why the brain's git state must not be committed over: an operation in progress or unmerged files. Empty when clean."""
+    """Why the lore's git state must not be committed over: an operation in progress or unmerged files. Empty when clean."""
     git_dir = Path(git(root, "rev-parse", "--absolute-git-dir").stdout.strip())
     for marker, operation in IN_PROGRESS:
         if (git_dir / marker).exists():
-            return (f"A git {operation} is in progress in the brain. In {root}, finish it (fix the files, git add them, "
+            return (f"A git {operation} is in progress in the lore. In {root}, finish it (fix the files, git add them, "
                     f"git {operation} --continue) or undo it (git {operation} --abort), then rerun.")
     unmerged = sorted(set(git(root, "diff", "--name-only", "--diff-filter=U").stdout.splitlines()))
     if unmerged:
-        return f"The brain has unmerged files: {', '.join(unmerged)}. In {root}, fix them and git add them, then rerun."
+        return f"The lore has unmerged files: {', '.join(unmerged)}. In {root}, fix them and git add them, then rerun."
     return ""
 
 
@@ -103,11 +103,11 @@ def identity(repo: Path, box: str) -> list[str]:
     """`-c` flags for a fallback commit identity when git has none."""
     if git(repo, "config", "user.email", check=False).stdout.strip():
         return []
-    return ["-c", f"user.name={box}", "-c", f"user.email={box}@just-a-stack.local"]
+    return ["-c", f"user.name={box}", "-c", f"user.email={box}@jass.local"]
 
 
 def parse_zone(text: str) -> str | None:
-    """The zone in the text of a `brain.json`, or None when it is not one."""
+    """The zone in the text of a `lore.json`, or None when it is not one."""
     try:
         return json.loads(text).get("zone")
     except (ValueError, AttributeError):
@@ -115,8 +115,8 @@ def parse_zone(text: str) -> str | None:
 
 
 def zone_of(root: Path) -> str | None:
-    """The brain's zone; None when its `brain.json` is missing, invalid or leads outside it."""
-    path = root / "brain.json"
+    """The lore's zone; None when its `lore.json` is missing, invalid or leads outside it."""
+    path = root / "lore.json"
     try:
         return parse_zone(path.read_text()) if inside(root, path) else None
     except OSError:
@@ -124,10 +124,10 @@ def zone_of(root: Path) -> str | None:
 
 
 def inside(root: Path, path: Path) -> bool:
-    """Whether `path`, with every symlink resolved, stays inside the brain.
+    """Whether `path`, with every symlink resolved, stays inside the lore.
 
-    Decided by file identity, so another spelling of the brain's path (on a case-insensitive filesystem) counts as inside.
-    Before the brain folder exists nothing can lead out through it, so its spelled path decides."""
+    Decided by file identity, so another spelling of the lore's path (on a case-insensitive filesystem) counts as inside.
+    Before the lore folder exists nothing can lead out through it, so its spelled path decides."""
     if not root.exists():
         return path.resolve().is_relative_to(root.resolve())
     probe = path.resolve()
@@ -138,21 +138,21 @@ def inside(root: Path, path: Path) -> bool:
 
 
 def within(root: Path, path: Path) -> Path:
-    """`path`, when it stays inside the brain; jass never reads or writes through a link that leads out."""
+    """`path`, when it stays inside the lore; jass never reads or writes through a link that leads out."""
     if not inside(root, path):
-        raise JassError(f"{path} leads outside the brain; jass does not read or write there. If a symlink leads out, replace it with a real file or folder.")
+        raise JassError(f"{path} leads outside the lore; jass does not read or write there. If a symlink leads out, replace it with a real file or folder.")
     return path
 
 
-def open_brain(cfg: dict) -> Path:
-    """The brain path, after checking it exists and belongs to this box's zone."""
-    root = config.brain_path(cfg)
+def open_lore(cfg: dict) -> Path:
+    """The lore path, after checking it exists and belongs to this box's zone."""
+    root = config.lore_path(cfg)
     zone = zone_of(root)
     if zone is None:
-        raise JassError(f"No valid brain at {paths.tilde(root)} (a brain.json inside it that names a zone). "
-                       f"Run `jass init --brain <git-url>` or `jass init --new-brain`.")
+        raise JassError(f"No valid lore at {paths.tilde(root)} (a lore.json inside it that names a zone). "
+                       f"Run `jass init --lore <git-url>` or `jass init --new-lore`.")
     if zone != cfg["zone"]:
-        raise JassError(f"Brain {paths.tilde(root)} is zone {zone!r}; this box is zone {cfg['zone']!r}. Point brain.path at a {cfg['zone']} brain.")
+        raise JassError(f"Lore {paths.tilde(root)} is zone {zone!r}; this box is zone {cfg['zone']!r}. Point lore.path at a {cfg['zone']} lore.")
     return root
 
 
@@ -160,7 +160,7 @@ def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
     """Skeleton files to write: missing ones, and `.gitattributes` and `.gitignore` with their missing lines appended.
 
     The `.gitignore` line earlier versions wrote, which ignores any name containing `.jass-tmp-`, is dropped."""
-    files = dict(SKELETON, **{"brain.json": json.dumps({"version": 1, "zone": zone}) + "\n"})
+    files = dict(SKELETON, **{"lore.json": json.dumps({"version": 1, "zone": zone}) + "\n"})
     out = {name: text for name, text in files.items() if not os.path.lexists(root / name)}
     for name in (".gitattributes", ".gitignore"):
         if (root / name).is_file():
@@ -182,7 +182,7 @@ def write_skeleton(root: Path, zone: str) -> list[str]:
 def create(root: Path, zone: str, box: str) -> None:
     root.mkdir(parents=True, exist_ok=True)
     git(root, "init", "-q", "-b", "main")
-    commit_paths(root, box, "brain: init", write_skeleton(root, zone))
+    commit_paths(root, box, "lore: init", write_skeleton(root, zone))
 
 
 def commit_paths(root: Path, box: str, message: str, names: list[str]) -> bool:
@@ -223,7 +223,7 @@ def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list
     """Files to copy from `source` (its `Projects/` and loose top-level `.md`), and existing ones kept.
 
     Source files that lead outside `source` are left out. Any existing destination, a dangling link included, is kept;
-    one that leads outside the brain stops the whole import."""
+    one that leads outside the lore stops the whole import."""
     pairs = [(f, root / f.name) for f in sorted(source.glob("*.md")) if f.is_file() and inside(source, f)]
     projects = source / "Projects"
     if projects.is_dir():
@@ -237,7 +237,7 @@ def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list
 
 
 def import_notes(source: Path, root: Path) -> list[str]:
-    """Copy the planned files; returns their paths relative to the brain."""
+    """Copy the planned files; returns their paths relative to the lore."""
     copies, _ = import_plan(source, root)
     for src, dest in copies:
         dest.parent.mkdir(parents=True, exist_ok=True)

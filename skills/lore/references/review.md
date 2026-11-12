@@ -1,8 +1,8 @@
-# Brain review
+# Lore review
 
 A periodic pass that turns raw session digests and logs into lessons, trims hubs and proposes stack changes. One report per ISO week.
 
-1. Find the last review: the newest file in `Reviews/` (`jass show Reviews/<file>`), or none. `<since>` is a date, `YYYY-MM-DD`: the `date:` in that review's frontmatter, or for an older review without one, the day it was committed (`git -C "$(jass path brain)" log -1 --format=%cs -- Reviews/<file>`). `--since` does not accept an ISO week such as `2026-W45`. With no earlier review, use `--since 4w`.
+1. Find the last review: the newest file in `Reviews/` (`jass show Reviews/<file>`), or none. `<since>` is a date, `YYYY-MM-DD`: the `date:` in that review's frontmatter, or for an older review without one, the day it was committed (`git -C "$(jass path lore)" log -1 --format=%cs -- Reviews/<file>`). `--since` does not accept an ISO week such as `2026-W45`. With no earlier review, use `--since 4w`.
 2. Start from the cost picture: `jass sessions stats --since <since>`, then `--by project`. Note the sessions over 200K peak context and the delegate-heavy ones (many subagents) by title and path (the digests carry `peak_context` and `subagents` in their frontmatter).
 3. List the material: `jass sessions list --since <since>`, and `jass recall "<theme>" --kind log --since <since>` for project logs.
 4. Cluster the digests by project and by theme (a tool, a failure, a workflow). Read at most about 30 digests in total, the most informative of each cluster. When subagents are available, hand each cluster to one with the paths to read and ask for recurring friction, wins and candidate lessons, each with the digest paths as evidence.

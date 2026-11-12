@@ -1,4 +1,4 @@
-"""Write digests of finished sessions into the brain, list them, and summarise their cost."""
+"""Write digests of finished sessions into the lore, list them, and summarise their cost."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 
-from jass import brain, paths
+from jass import lore, paths
 from jass.sessions import SessionRecord, digest, scrub, sources
 
 LONG_CONTEXT = 200_000
@@ -19,7 +19,7 @@ def warn(message: str) -> None:
 
 
 def state_path(root: Path) -> Path:
-    return paths.cache_dir() / f"sessions-{paths.brain_key(root)}.json"
+    return paths.cache_dir() / f"sessions-{paths.lore_key(root)}.json"
 
 
 def load_state(root: Path) -> dict:
@@ -82,7 +82,7 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
         if not rec.subagent_count:
             rec.subagent_count = children.get(rec.id, 0)
         result["written"].append(rel)
-        pending.append((brain.within(root, root / rel), rec, stamp))
+        pending.append((lore.within(root, root / rel), rec, stamp))
     if not dry_run:
         for path, rec, stamp in pending:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,9 +102,9 @@ def numbers(text: str) -> dict[str, int]:
 def listing(root: Path, since: str = "", box: str = "", project: str = "") -> list[dict]:
     rows = []
     for path in sorted((root / "Sessions").glob("*/*/*.md")):
-        if not brain.inside(root, path):
+        if not lore.inside(root, path):
             continue
-        meta, _ = brain.frontmatter(path.read_text(errors="replace"))
+        meta, _ = lore.frontmatter(path.read_text(errors="replace"))
         date = str(meta.get("updated", ""))[:10]
         if (since and date < since) or (box and meta.get("box") != box) or (project and str(meta.get("project", "")).lower() != project.lower()):
             continue

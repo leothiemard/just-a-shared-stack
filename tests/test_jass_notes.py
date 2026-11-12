@@ -9,18 +9,18 @@ TODAY = dt.date.today().isoformat()
 class NotesTests(Sandbox):
     def setUp(self):
         super().setUp()
-        self.brain = self.new_box()
+        self.lore = self.new_box()
 
     def test_log_creates_project_with_hub_skeleton(self):
         self.ok("log", "-t", "First  entry", "-p", "example-app", stdin="- did a thing\n")
-        folder = self.brain / "Projects" / "example-app"
+        folder = self.lore / "Projects" / "example-app"
         hub = (folder / "example-app.md").read_text()
         self.assertTrue(hub.startswith("---\nproject: example-app\n"))
         self.assertIn("[[Log]]", hub)
         self.assertIn(f"## {TODAY} — First entry\n- did a thing\n<!-- box mac -->\n", (folder / "Log.md").read_text())
 
     def test_log_entry_goes_on_top_of_existing_entries(self):
-        log = self.brain / "Projects" / "Example App" / "Log.md"
+        log = self.lore / "Projects" / "Example App" / "Log.md"
         log.parent.mkdir(parents=True)
         log.write_text("---\nproject: Example App\n---\n# Log\n\nIntro line.\n\n## 2026-01-01 — Older\n- old\n")
         self.ok("log", "-t", "Newer", "-p", "example-app", stdin="- new\n")
@@ -28,10 +28,10 @@ class NotesTests(Sandbox):
             log.read_text(),
             f"---\nproject: Example App\n---\n# Log\n\nIntro line.\n\n## {TODAY} — Newer\n- new\n<!-- box mac -->\n\n## 2026-01-01 — Older\n- old\n",
         )
-        self.assertFalse((self.brain / "Projects" / "example-app").exists())
+        self.assertFalse((self.lore / "Projects" / "example-app").exists())
 
     def test_a_heading_inside_a_longer_fence_is_not_an_entry(self):
-        log = self.brain / "Projects" / "example-app" / "Log.md"
+        log = self.lore / "Projects" / "example-app" / "Log.md"
         log.parent.mkdir(parents=True)
         intro = "# Log\n\n````md\n```\n## 2026-01-02 — Example inside a fence\n````\n\n"
         log.write_text(intro + "## 2026-01-01 — Older\n- old\n")
@@ -41,8 +41,8 @@ class NotesTests(Sandbox):
     def test_a_failed_write_leaves_the_log_and_lessons_whole(self):
         self.ok("log", "-t", "First", "-p", "example-app", stdin="- kept\n")
         self.ok("lesson", "vercel", "Preview deploys ignore late env vars", "-p", "example-app")
-        log = self.brain / "Projects" / "example-app" / "Log.md"
-        lessons = self.brain / "Lessons" / "vercel.md"
+        log = self.lore / "Projects" / "example-app" / "Log.md"
+        lessons = self.lore / "Lessons" / "vercel.md"
         before = log.read_text(), lessons.read_text()
         with disk_full(log.parent), self.assertRaises(OSError):
             self.jass("log", "-t", "Second", "-p", "example-app", stdin="- new\n")
@@ -56,7 +56,7 @@ class NotesTests(Sandbox):
         from unittest import mock
 
         self.ok("log", "-t", "First", "-p", "example-app", stdin="- kept\n")
-        log = self.brain / "Projects" / "example-app" / "Log.md"
+        log = self.lore / "Projects" / "example-app" / "Log.md"
         os.chmod(log, 0o600)
         modes, real_fsync = [], os.fsync
 
@@ -73,13 +73,13 @@ class NotesTests(Sandbox):
             os.umask(old)
         self.assertEqual(set(modes), {0o600})
         self.assertEqual(log.stat().st_mode & 0o777, 0o600)
-        self.assertEqual((self.brain / "Projects" / "other-app" / "Log.md").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.lore / "Projects" / "other-app" / "Log.md").stat().st_mode & 0o777, 0o644)
 
     def test_an_empty_log_title_creates_nothing(self):
         code, _, err = self.jass("log", "-t", "  ", "-p", "new-project")
         self.assertEqual(code, 1)
         self.assertIn("Log title is empty", err)
-        self.assertFalse((self.brain / "Projects" / "new-project").exists())
+        self.assertFalse((self.lore / "Projects" / "new-project").exists())
 
     def test_log_project_defaults_to_the_repo_of_the_current_directory(self):
         work = self.base / "example-app"
@@ -89,11 +89,11 @@ class NotesTests(Sandbox):
         os.chdir(work / "sub")
         self.addCleanup(os.chdir, cwd)
         self.ok("log", "-t", "From cwd")
-        self.assertTrue((self.brain / "Projects" / "example-app" / "Log.md").exists())
+        self.assertTrue((self.lore / "Projects" / "example-app" / "Log.md").exists())
 
     def test_lesson_format_duplicates_and_near_duplicates(self):
         self.ok("lesson", "Vercel", "Preview deploys ignore env vars added after the build starts", "-p", "example-app", "--thread", "5232d102", stdin="Redeploy after changing variables.\n")
-        path = self.brain / "Lessons" / "vercel.md"
+        path = self.lore / "Lessons" / "vercel.md"
         self.assertEqual(
             path.read_text(),
             f"---\ntopic: vercel\n---\n# vercel\n\n## Preview deploys ignore env vars added after the build starts\n"
@@ -111,23 +111,23 @@ class NotesTests(Sandbox):
         code, _, err = self.jass("lesson", "git", "Claim", "-p", "x", stdin="1\n2\n3\n4\n5\n")
         self.assertEqual(code, 1)
         self.assertIn("more than four lines", err)
-        self.assertFalse((self.brain / "Lessons" / "git.md").exists())
+        self.assertFalse((self.lore / "Lessons" / "git.md").exists())
 
-    def test_old_brains_gain_the_lessons_merge_driver(self):
-        from jass import brain
+    def test_old_lore_repos_gain_the_lessons_merge_driver(self):
+        from jass import lore
 
-        attributes = self.brain / ".gitattributes"
+        attributes = self.lore / ".gitattributes"
         attributes.write_text("Log.md merge=union\n*.png binary\n")
-        missing = brain.skeleton_missing(self.brain, "personal")
+        missing = lore.skeleton_missing(self.lore, "personal")
         self.assertEqual(missing[".gitattributes"], "Log.md merge=union\n*.png binary\n* text=auto eol=lf\nLessons/*.md merge=union\n")
-        brain.write_skeleton(self.brain, "personal")
-        self.assertNotIn(".gitattributes", brain.skeleton_missing(self.brain, "personal"))
-        self.assertIn("merge: union", git(self.brain, "check-attr", "merge", "--", "Lessons/vercel.md"))
+        lore.write_skeleton(self.lore, "personal")
+        self.assertNotIn(".gitattributes", lore.skeleton_missing(self.lore, "personal"))
+        self.assertIn("merge: union", git(self.lore, "check-attr", "merge", "--", "Lessons/vercel.md"))
 
     def test_temp_files_left_by_a_kill_are_never_committed(self):
         import time
 
-        folder = self.brain / "Projects" / "example-app"
+        folder = self.lore / "Projects" / "example-app"
         folder.mkdir(parents=True)
         stale, fresh = folder / ".Log.md.jass-tmp-0123abcd", folder / ".Log.md.jass-tmp-4567cdef"
         stale.write_text("half a private entry\n")
@@ -137,18 +137,18 @@ class NotesTests(Sandbox):
         self.ok("sync")
         self.assertFalse(stale.exists())
         self.assertTrue(fresh.exists())
-        self.assertNotIn("jass-tmp", git(self.brain, "ls-files"))
+        self.assertNotIn("jass-tmp", git(self.lore, "ls-files"))
 
     def test_cleanup_and_ignore_spare_files_that_only_look_like_temp_files(self):
         import time
 
-        folder = self.brain / "Projects" / "example-app"
+        folder = self.lore / "Projects" / "example-app"
         folder.mkdir(parents=True)
         tracked, forced = folder / "report.jass-tmp-notes.md", folder / ".Log.md.jass-tmp-89abcdef"
         tracked.write_text("a real report\n")
         forced.write_text("committed on purpose\n")
-        git(self.brain, "add", "-f", str(tracked), str(forced))
-        git(self.brain, "commit", "-qm", "documents")
+        git(self.lore, "add", "-f", str(tracked), str(forced))
+        git(self.lore, "commit", "-qm", "documents")
         short, link, draft = folder / ".file.jass-tmp-1234", folder / ".hub.md.jass-tmp-0123abcd", folder / "draft.jass-tmp-v2.md"
         short.write_text("not jass's\n")
         draft.write_text("a new note\n")
@@ -160,20 +160,20 @@ class NotesTests(Sandbox):
         for path in (tracked, forced, short, draft):
             self.assertTrue(path.exists(), path.name)
         self.assertTrue(link.is_symlink())
-        files = git(self.brain, "ls-files").splitlines()
+        files = git(self.lore, "ls-files").splitlines()
         self.assertIn("Projects/example-app/report.jass-tmp-notes.md", files)
         self.assertIn("Projects/example-app/draft.jass-tmp-v2.md", files)
-        self.assertEqual(git(self.brain, "status", "--porcelain", "--", str(tracked), str(forced)), "")
+        self.assertEqual(git(self.lore, "status", "--porcelain", "--", str(tracked), str(forced)), "")
 
-    def test_old_brains_trade_the_broad_temp_file_ignore_line_for_the_exact_one(self):
-        ignore = self.brain / ".gitignore"
+    def test_old_lore_repos_trade_the_broad_temp_file_ignore_line_for_the_exact_one(self):
+        ignore = self.lore / ".gitignore"
         ignore.write_text(".DS_Store\n*.jass-tmp-*\n")
-        git(self.brain, "commit", "-qam", "old ignore file")
+        git(self.lore, "commit", "-qam", "old ignore file")
         self.assertIn("warn  temp files", self.jass("doctor")[1])
         self.ok("init", "--apply")
         lines = ignore.read_text().splitlines()
         self.assertEqual(lines[0], ".DS_Store")
         self.assertNotIn("*.jass-tmp-*", lines)
         self.assertIn(".*.jass-tmp-" + "[0-9a-f]" * 8, lines)
-        self.assertEqual(git(self.brain, "status", "--porcelain"), "")
+        self.assertEqual(git(self.lore, "status", "--porcelain"), "")
         self.assertIn("ok    temp files", self.jass("doctor")[1])

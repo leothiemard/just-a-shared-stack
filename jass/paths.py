@@ -45,7 +45,7 @@ def cache_dir() -> Path:
 
 
 def private(path: Path) -> bool:
-    """Whether `path` is in jass's own cache or config folder, whose files hold brain and session content."""
+    """Whether `path` is in jass's own cache or config folder, whose files hold lore and session content."""
     return any(Path(path).is_relative_to(folder) for folder in (cache_dir(), config_dir()))
 
 
@@ -60,8 +60,8 @@ def private_dir(path: Path) -> Path:
     return path
 
 
-def brain_key(brain: Path) -> str:
-    return hashlib.sha1(str(brain.resolve()).encode()).hexdigest()[:12]
+def lore_key(lore: Path) -> str:
+    return hashlib.sha1(str(lore.resolve()).encode()).hexdigest()[:12]
 
 
 TEMP = ".jass-tmp-"

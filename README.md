@@ -24,18 +24,18 @@ Twenty portable skills shared between two independent machines. Borrowed workflo
 | portable-text-serialization | Render and export Portable Text. |
 | tailwind-4-docs | Tailwind v4 guidance with an optional local docs cache. |
 | seo-aeo-best-practices | Metadata, structured data and search visibility. |
-| brain | Recall and record shared knowledge across projects and boxes with `jass`. |
+| lore | Recall and record shared knowledge across projects and boxes with `jass`. |
 
-## Stack, brain, boxes
+## Stack, lore, boxes
 
-This repository is the **stack**: skills, a short managed block of global rules, and the `jass` CLI. A private **brain** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
+This repository is the **stack**: skills, a short managed block of global rules, and the `jass` CLI. A private **lore** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --brain <git-url> --apply
+curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
 ```
 
 - [docs/ONBOARDING.md](docs/ONBOARDING.md): set up boxes, daily use, add skills, rules and private layers, review, roll back.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the stack, the brain and the boxes fit together.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the stack, the lore and the boxes fit together.
 
 ## Everyday workflow
 

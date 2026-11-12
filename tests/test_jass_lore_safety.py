@@ -63,7 +63,7 @@ class UnfinishedGitTests(Sandbox):
 
 
 class ContainmentTests(Sandbox):
-    """No brain reader or writer follows a symlink out of the brain."""
+    """No lore reader or writer follows a symlink out of the lore."""
 
     def setUp(self):
         super().setUp()
@@ -84,7 +84,7 @@ class ContainmentTests(Sandbox):
         before = tree(self.outside)
         code, out, err = self.jass(*argv, stdin=stdin)
         self.assertEqual(code, 1, out)
-        self.assertIn("outside the brain", err)
+        self.assertIn("outside the lore", err)
         self.assertEqual(tree(self.outside), before)
         return out
 
@@ -128,18 +128,18 @@ class ContainmentTests(Sandbox):
         self.refused("sessions", "export")
         self.assertEqual([p for p in (self.root / "Sessions" / "mac").rglob("*.md")], [])
 
-    def test_a_brain_json_that_leads_outside_is_no_brain(self):
-        (self.outside / "brain.json").write_text('{"version": 1, "zone": "personal"}\n')
-        (self.root / "brain.json").unlink()
-        self.link("brain.json", self.outside / "brain.json")
+    def test_a_lore_json_that_leads_outside_is_no_lore(self):
+        (self.outside / "lore.json").write_text('{"version": 1, "zone": "personal"}\n')
+        (self.root / "lore.json").unlink()
+        self.link("lore.json", self.outside / "lore.json")
         for argv in (("recall", "x", "--no-sync"), ("sync",), ("hub", "example")):
             with self.subTest(argv):
                 code, _, err = self.jass(*argv)
                 self.assertEqual(code, 1)
-                self.assertIn("No valid brain", err)
-        code, out, _ = self.jass("init", "--box", "mac", "--zone", "personal", "--new-brain")
+                self.assertIn("No valid lore", err)
+        code, out, _ = self.jass("init", "--box", "mac", "--zone", "personal", "--new-lore")
         self.assertEqual(code, 1)
-        self.assertRegex(out, r"conflict\s+brain\s+.*is not a brain")
+        self.assertRegex(out, r"conflict\s+lore\s+.*is not a lore")
 
     def test_session_and_box_folder_links(self):
         (self.outside / "2026-01").mkdir()
@@ -157,7 +157,7 @@ class ContainmentTests(Sandbox):
 
 
 class CaseInsensitiveContainmentTests(Sandbox):
-    def test_another_spelling_of_the_brain_is_inside_it(self):
+    def test_another_spelling_of_the_lore_is_inside_it(self):
         root = self.new_box()
         if not (self.base / str(root.relative_to(self.base)).upper()).exists():
             self.skipTest("case-sensitive filesystem")
@@ -178,4 +178,4 @@ class SyncLockTests(Sandbox):
             self.assertIn("Another jass sync is running", out)
             self.assertFalse((root / "Boxes").exists())
         self.assertTrue(sync.lock(root).path.exists())
-        self.assertIn("Local-only brain", self.ok("sync"))
+        self.assertIn("Local-only lore", self.ok("sync"))

@@ -18,7 +18,7 @@ DEFAULTS = {
     "zone": "personal",
     "stack": "",
     "layers": [],
-    "brain": {"path": "~/brain", "remote": ""},
+    "lore": {"path": "~/lore", "remote": ""},
     "sessions": {"export": True, "sources": ["t3"], "t3_store": "", "idle_minutes": 30, "exclude_projects": []},
     "sync": {"max_age_minutes": 30},
 }
@@ -73,8 +73,8 @@ def render(cfg: dict) -> str:
     return json.dumps(cfg, indent=2) + "\n"
 
 
-def brain_path(cfg: dict) -> Path:
-    return paths.expand(cfg["brain"]["path"])
+def lore_path(cfg: dict) -> Path:
+    return paths.expand(cfg["lore"]["path"])
 
 
 def stack_path(cfg: dict) -> Path:

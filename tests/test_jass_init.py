@@ -7,7 +7,7 @@ from jasshelp import Sandbox, disk_full, git, tree
 
 from jass import rules
 
-INIT = ["init", "--box", "mac", "--zone", "personal", "--new-brain"]
+INIT = ["init", "--box", "mac", "--zone", "personal", "--new-lore"]
 
 
 class InitTests(Sandbox):
@@ -20,15 +20,15 @@ class InitTests(Sandbox):
         before = tree(self.home)
         out = self.ok(*INIT)
         self.assertIn("Preview only", out)
-        self.assertIn("add      brain", out)
+        self.assertIn("add      lore", out)
         self.assertEqual(tree(self.home), before)
 
     def test_apply_is_idempotent(self):
         self.ok(*INIT, "--apply")
-        self.assertTrue((self.home / ".agents" / "skills" / "brain").is_symlink())
-        self.assertTrue((self.home / ".claude" / "skills" / "brain").is_symlink())
+        self.assertTrue((self.home / ".agents" / "skills" / "lore").is_symlink())
+        self.assertTrue((self.home / ".claude" / "skills" / "lore").is_symlink())
         self.assertTrue((self.home / ".local" / "bin" / "jass").is_symlink())
-        self.assertTrue((self.home / "brain" / "brain.json").is_file())
+        self.assertTrue((self.home / "lore" / "lore.json").is_file())
         before = tree(self.home)
         out = self.ok(*INIT, "--apply")
         self.assertIn("Nothing to do.", out)
@@ -48,7 +48,7 @@ class InitTests(Sandbox):
         self.ok("restore", self.manifest(out))
         after = tree(self.home)
         for rel in list(after):
-            if rel.startswith(("brain", ".config/jass/backups", ".agents/skill-backups", ".claude/skill-backups")):
+            if rel.startswith(("lore", ".config/jass/backups", ".agents/skill-backups", ".claude/skill-backups")):
                 after.pop(rel)
         self.assertEqual(after, {**before, ".config": "/", ".config/jass": "/", ".agents": "/"})
 
@@ -70,7 +70,7 @@ class InitTests(Sandbox):
         text = canonical.read_bytes().decode()
         self.assertTrue(text.startswith(head))
         self.assertTrue(text.endswith(tail))
-        self.assertIn("Shared knowledge (brain)", text)
+        self.assertIn("Shared knowledge (lore)", text)
         self.assertNotIn("old rules", text)
 
     def test_block_inserted_at_top_when_missing(self):
@@ -102,12 +102,12 @@ class InitTests(Sandbox):
 
     def test_duplicate_skill_across_layers_fails(self):
         layer = self.base / "company"
-        (layer / "skills" / "brain").mkdir(parents=True)
-        (layer / "skills" / "brain" / "SKILL.md").write_text("---\nname: brain\n---\n")
-        (layer / "skills.json").write_text(json.dumps({"skills": ["brain"]}))
+        (layer / "skills" / "lore").mkdir(parents=True)
+        (layer / "skills" / "lore" / "SKILL.md").write_text("---\nname: lore\n---\n")
+        (layer / "skills.json").write_text(json.dumps({"skills": ["lore"]}))
         code, _, err = self.jass(*INIT, "--layer", str(layer), "--apply")
         self.assertEqual(code, 1)
-        self.assertIn("Skill 'brain' is in both", err)
+        self.assertIn("Skill 'lore' is in both", err)
         self.assertFalse((self.home / ".agents").exists())
 
     def test_layer_rules_are_appended_to_the_block(self):
@@ -123,7 +123,7 @@ class InitTests(Sandbox):
         self.assertTrue((self.home / ".agents" / "skills" / "work-flow").is_symlink())
 
     def test_conflicting_skill_needs_replace(self):
-        existing = self.home / ".agents" / "skills" / "brain"
+        existing = self.home / ".agents" / "skills" / "lore"
         existing.mkdir(parents=True)
         (existing / "SKILL.md").write_text("someone else's")
         code, out, err = self.jass(*INIT, "--apply")
@@ -133,7 +133,7 @@ class InitTests(Sandbox):
         self.ok(*INIT, "--apply", "--replace")
         self.assertTrue(existing.is_symlink())
 
-    def test_existing_brain_with_other_zone_is_refused(self):
+    def test_existing_lore_with_other_zone_is_refused(self):
         self.ok(*INIT, "--apply")
         code, _, err = self.jass("init", "--zone", "work")
         self.assertEqual(code, 1)
@@ -148,13 +148,13 @@ class InitTests(Sandbox):
         (vault / "README.md").write_text("vault readme\n")
         before = tree(vault)
         self.ok(*INIT, "--import-notes", str(vault), "--apply")
-        brain = self.home / "brain"
-        self.assertEqual((brain / "Projects" / "example-app" / "example-app.md").read_text(), "# imported hub\n")
-        self.assertEqual((brain / "Inbox.md").read_text(), "loose note\n")
-        self.assertNotEqual((brain / "README.md").read_text(), "vault readme\n")
-        self.assertFalse((brain / "Projects" / "example-app" / ".hidden").exists())
+        lore = self.home / "lore"
+        self.assertEqual((lore / "Projects" / "example-app" / "example-app.md").read_text(), "# imported hub\n")
+        self.assertEqual((lore / "Inbox.md").read_text(), "loose note\n")
+        self.assertNotEqual((lore / "README.md").read_text(), "vault readme\n")
+        self.assertFalse((lore / "Projects" / "example-app" / ".hidden").exists())
         self.assertEqual(tree(vault), before)
-        self.assertEqual(git(brain, "status", "--porcelain"), "")
+        self.assertEqual(git(lore, "status", "--porcelain"), "")
 
     def vault(self):
         vault = self.base / "vault"
@@ -163,36 +163,36 @@ class InitTests(Sandbox):
         (vault / "Inbox.md").write_text("loose note\n")
         return vault
 
-    def test_import_aborts_when_a_destination_folder_leads_outside_the_brain(self):
+    def test_import_aborts_when_a_destination_folder_leads_outside_the_lore(self):
         self.ok(*INIT, "--apply")
         vault, outside = self.vault(), self.base / "outside"
         outside.mkdir()
-        brain = self.home / "brain"
-        (brain / "Projects").mkdir()
-        (brain / "Projects" / "example-app").symlink_to(outside, target_is_directory=True)
-        before = tree(vault), tree(outside), git(brain, "rev-parse", "HEAD")
+        lore = self.home / "lore"
+        (lore / "Projects").mkdir()
+        (lore / "Projects" / "example-app").symlink_to(outside, target_is_directory=True)
+        before = tree(vault), tree(outside), git(lore, "rev-parse", "HEAD")
         code, _, err = self.jass(*INIT, "--import-notes", str(vault), "--apply")
         self.assertEqual(code, 1)
-        self.assertIn("outside the brain", err)
-        self.assertEqual((tree(vault), tree(outside), git(brain, "rev-parse", "HEAD")), before)
-        self.assertFalse((brain / "Inbox.md").exists())
+        self.assertIn("outside the lore", err)
+        self.assertEqual((tree(vault), tree(outside), git(lore, "rev-parse", "HEAD")), before)
+        self.assertFalse((lore / "Inbox.md").exists())
 
     def test_import_skips_a_dangling_destination_link(self):
         self.ok(*INIT, "--apply")
         vault = self.vault()
-        brain = self.home / "brain"
-        (brain / "Inbox.md").symlink_to(vault / "missing.md")
+        lore = self.home / "lore"
+        (lore / "Inbox.md").symlink_to(vault / "missing.md")
         before = tree(vault)
         out = self.ok(*INIT, "--import-notes", str(vault), "--apply")
         self.assertIn("1 files to copy, 1 already present", out)
         self.assertEqual(tree(vault), before)
-        self.assertEqual((brain / "Projects" / "example-app" / "New.md").read_text(), "imported\n")
+        self.assertEqual((lore / "Projects" / "example-app" / "New.md").read_text(), "imported\n")
 
-    def test_failed_clone_changes_nothing_outside_the_brain(self):
+    def test_failed_clone_changes_nothing_outside_the_lore(self):
         before = tree(self.home)
-        code, _, err = self.jass("init", "--box", "mac", "--brain", str(self.base / "absent.git"), "--apply")
+        code, _, err = self.jass("init", "--box", "mac", "--lore", str(self.base / "absent.git"), "--apply")
         self.assertEqual(code, 1)
-        self.assertIn("brain", err)
+        self.assertIn("lore", err)
         self.assertNotIn("jass restore", err)
         self.assertEqual(tree(self.home), before)
 
@@ -204,7 +204,7 @@ class InitTests(Sandbox):
         self.assertTrue((self.home / ".agents" / "AGENTS.md").exists())
         manifest = re.search(r"jass restore (.+manifest\.json)", err).group(1)
         self.ok("restore", manifest)
-        after = {rel: v for rel, v in tree(self.home).items() if not rel.startswith(("brain", ".config/jass/backups", ".agents/skill-backups", ".claude/skill-backups"))}
+        after = {rel: v for rel, v in tree(self.home).items() if not rel.startswith(("lore", ".config/jass/backups", ".agents/skill-backups", ".claude/skill-backups"))}
         self.assertEqual(after, {**before, ".config": "/", ".config/jass": "/", ".agents": "/", ".claude": "/"})
 
     def canonical_with(self, text):
@@ -304,7 +304,7 @@ class InitTests(Sandbox):
                 self.assertRegex(out, r"conflict\s+rules\s+~/.agents/AGENTS.md\s+.*marker")
                 self.assertEqual(canonical.read_text(), text)
 
-    def test_existing_repo_without_brain_json_is_not_adopted(self):
+    def test_existing_repo_without_lore_json_is_not_adopted(self):
         repo = self.base / "project"
         repo.mkdir()
         git(repo, "init", "-q")
@@ -313,35 +313,35 @@ class InitTests(Sandbox):
         git(repo, "commit", "-q", "-m", "start")
         (repo / ".env").write_text("UNRELATED=1\n")
         before = tree(repo)
-        for extra in ([], ["--new-brain"]):
+        for extra in ([], ["--new-lore"]):
             with self.subTest(extra):
-                code, out, err = self.jass("init", "--box", "mac", "--brain-path", str(repo), *extra, "--apply")
+                code, out, err = self.jass("init", "--box", "mac", "--lore-path", str(repo), *extra, "--apply")
                 self.assertEqual(code, 1)
-                self.assertIn("brain.json", out + err)
+                self.assertIn("lore.json", out + err)
                 self.assertEqual(tree(repo), before)
 
-    def test_cloned_repo_without_brain_json_is_refused(self):
+    def test_cloned_repo_without_lore_json_is_refused(self):
         source = self.base / "project"
         source.mkdir()
         git(source, "init", "-q")
         (source / "notes.md").write_text("tracked\n")
         git(source, "add", "notes.md")
         git(source, "commit", "-q", "-m", "start")
-        code, _, err = self.jass("init", "--box", "mac", "--brain", str(source), "--apply")
+        code, _, err = self.jass("init", "--box", "mac", "--lore", str(source), "--apply")
         self.assertEqual(code, 1)
-        self.assertIn("brain.json", err)
-        self.assertNotIn("brain.json", git(source, "ls-tree", "-r", "--name-only", "HEAD"))
-        self.assertFalse((self.home / "brain" / "brain.json").exists())
+        self.assertIn("lore.json", err)
+        self.assertNotIn("lore.json", git(source, "ls-tree", "-r", "--name-only", "HEAD"))
+        self.assertFalse((self.home / "lore" / "lore.json").exists())
 
     def test_skeleton_fill_commits_only_the_skeleton(self):
         self.ok(*INIT, "--apply")
-        brain = self.home / "brain"
-        git(brain, "rm", "-q", "README.md")
-        git(brain, "commit", "-q", "-m", "drop readme")
-        (brain / "scratch.txt").write_text("not mine to commit\n")
+        lore = self.home / "lore"
+        git(lore, "rm", "-q", "README.md")
+        git(lore, "commit", "-q", "-m", "drop readme")
+        (lore / "scratch.txt").write_text("not mine to commit\n")
         self.ok(*INIT, "--apply")
-        self.assertIn("README.md", git(brain, "show", "--name-only", "--format=", "HEAD"))
-        self.assertEqual(git(brain, "status", "--porcelain"), "?? scratch.txt\n")
+        self.assertIn("README.md", git(lore, "show", "--name-only", "--format=", "HEAD"))
+        self.assertEqual(git(lore, "status", "--porcelain"), "?? scratch.txt\n")
 
     def test_import_skips_source_links_that_lead_outside_the_source(self):
         vault, outside = self.vault(), self.base / "outside"
@@ -350,17 +350,17 @@ class InitTests(Sandbox):
         (vault / "Projects" / "example-app" / "Linked.md").symlink_to(outside / "private.md")
         (vault / "Linked.md").symlink_to(outside / "private.md")
         self.ok(*INIT, "--import-notes", str(vault), "--apply")
-        brain = self.home / "brain"
-        self.assertTrue((brain / "Projects" / "example-app" / "New.md").exists())
-        self.assertFalse(os.path.lexists(brain / "Projects" / "example-app" / "Linked.md"))
-        self.assertFalse(os.path.lexists(brain / "Linked.md"))
+        lore = self.home / "lore"
+        self.assertTrue((lore / "Projects" / "example-app" / "New.md").exists())
+        self.assertFalse(os.path.lexists(lore / "Projects" / "example-app" / "Linked.md"))
+        self.assertFalse(os.path.lexists(lore / "Linked.md"))
 
     def test_skeleton_fill_never_writes_through_a_link(self):
         self.ok(*INIT, "--apply")
-        brain, outside = self.home / "brain", self.base / "outside.md"
-        git(brain, "rm", "-q", "README.md")
-        git(brain, "commit", "-q", "-m", "drop readme")
-        (brain / "README.md").symlink_to(outside)
+        lore, outside = self.home / "lore", self.base / "outside.md"
+        git(lore, "rm", "-q", "README.md")
+        git(lore, "commit", "-q", "-m", "drop readme")
+        (lore / "README.md").symlink_to(outside)
         self.jass(*INIT, "--apply")
         self.assertFalse(outside.exists())
 
@@ -388,12 +388,12 @@ class PrivateFilesTests(Sandbox):
                 self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)
 
 
-class BrainRemoteTests(Sandbox):
+class LoreRemoteTests(Sandbox):
     def box_remote(self) -> str:
-        return json.loads((self.home / ".config" / "jass" / "box.json").read_text())["brain"]["remote"]
+        return json.loads((self.home / ".config" / "jass" / "box.json").read_text())["lore"]["remote"]
 
-    def test_a_bare_name_is_refused_as_brain_remote(self):
-        code, _, err = self.jass("init", "--box", "mac", "--brain", "alias")
+    def test_a_bare_name_is_refused_as_lore_remote(self):
+        code, _, err = self.jass("init", "--box", "mac", "--lore", "alias")
         self.assertEqual(code, 1)
         self.assertIn("full URL", err)
 
@@ -404,5 +404,5 @@ class BrainRemoteTests(Sandbox):
         cwd = os.getcwd()
         os.chdir(self.base)
         self.addCleanup(os.chdir, cwd)
-        self.ok("init", "--box", "mac", "--brain", "./remote.git", "--apply")
+        self.ok("init", "--box", "mac", "--lore", "./remote.git", "--apply")
         self.assertEqual(self.box_remote(), str(self.base / "remote.git"))

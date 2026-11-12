@@ -11,13 +11,13 @@ TODAY = dt.date.today().isoformat()
 class RecallTests(Sandbox):
     def setUp(self):
         super().setUp()
-        self.brain = self.new_box()
+        self.lore = self.new_box()
         self.write("Lessons/vercel.md", f"---\ntopic: vercel\nupdated: {TODAY}\n---\n# vercel\n\n## Preview deploys ignore env vars added after the build starts\nRedeploy after changing variables.\n<!-- {TODAY} · box mac · project example-app -->\n")
         self.write(f"Sessions/linux-box/{TODAY[:7]}/{TODAY}-example-app-1234abcd.md", f"---\nkind: session\nbox: linux-box\nproject: example-app\nupdated: {TODAY}T10:00:00Z\n---\n# Fix preview deploys\n\n## Outcome\n\nPreview deploys ignore env vars added after the build starts; redeployed.\n")
         self.write("Projects/example-app/Log.md", "# log\n\n## 2025-01-02 — Old deploy work\n- deploys were slow\n<!-- box mac -->\n")
 
     def write(self, rel: str, text: str) -> None:
-        path = self.brain / rel
+        path = self.lore / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
@@ -31,7 +31,7 @@ class RecallTests(Sandbox):
 
     def test_text_output_and_show(self):
         out = self.ok("recall", "preview", "deploys", "--no-sync")
-        self.assertRegex(out.splitlines()[0], r"^\d+ of \d+ hits · ~\d+ tokens · brain \w+ · never synced$")
+        self.assertRegex(out.splitlines()[0], r"^\d+ of \d+ hits · ~\d+ tokens · lore \w+ · never synced$")
         self.assertIn("[1] Lessons/vercel.md § Preview deploys ignore env vars added after the build starts   lesson", out)
         self.assertIn("Expand with: jass show 1", out)
         shown = self.ok("show", "1")
@@ -81,7 +81,7 @@ class RecallTests(Sandbox):
         self.assertEqual(self.recall("zeppelin")["total"], 0)
         self.write("Lessons/airship.md", "# airship\n\n## Zeppelin mooring needs a mast\nUse a mast.\n")
         self.assertEqual(self.recall("zeppelin")["total"], 1)
-        path = self.brain / "Lessons/airship.md"
+        path = self.lore / "Lessons/airship.md"
         path.write_text("# airship\n\n## Blimps float\nHelium.\n")
         os.utime(path, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
         self.assertEqual(self.recall("zeppelin")["total"], 0)

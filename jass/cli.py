@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from jass import JassError, brain, config, paths
+from jass import JassError, config, lore, paths
 
 HUB_MAX_BYTES = 3500
 
@@ -41,7 +41,7 @@ def cmd_restore(args) -> int:
     from jass import init
 
     init.restore(Path(args.manifest).expanduser().absolute())
-    print("Restored the state before that transaction. The brain and the stack checkout are untouched.")
+    print("Restored the state before that transaction. The lore and the stack checkout are untouched.")
     return 0
 
 
@@ -52,17 +52,17 @@ def cmd_path(args) -> int:
     elif args.what == "stack":
         print(config.stack_path(cfg))
     else:
-        root = brain.open_brain(cfg)
-        print(root if args.what == "brain" else root / "Projects" / brain.project_key(root))
+        root = lore.open_lore(cfg)
+        print(root if args.what == "lore" else root / "Projects" / lore.project_key(root))
     return 0
 
 
 def cmd_hub(args) -> int:
-    root = brain.open_brain(config.load())
-    hub = brain.within(root, brain.hub_path(root, brain.project_key(root, args.project)))
+    root = lore.open_lore(config.load())
+    hub = lore.within(root, lore.hub_path(root, lore.project_key(root, args.project)))
     if hub.is_file():
         rel = hub.relative_to(root).as_posix()
-        print(brain.clip(hub.read_text(), HUB_MAX_BYTES, f"jass show {rel}"), end="")
+        print(lore.clip(hub.read_text(), HUB_MAX_BYTES, f"jass show {rel}"), end="")
     return 0
 
 
@@ -70,14 +70,14 @@ def cmd_recall(args) -> int:
     from jass import index, sync
 
     cfg = config.load()
-    root = brain.open_brain(cfg)
+    root = lore.open_lore(cfg)
     if not args.no_sync:
         sync.refresh_if_stale(cfg, root)
-    rev = brain.git(root, "rev-parse", "--short", "HEAD", check=False).stdout.strip() or "uncommitted"
+    rev = lore.git(root, "rev-parse", "--short", "HEAD", check=False).stdout.strip() or "uncommitted"
     since = index.parse_since(args.since) if args.since else ""
     with contextlib.closing(index.connect(root)) as conn:
         print(index.recall(
-            conn, root, " ".join(args.query), limit=args.limit, budget=args.budget, status=f"brain {rev} · {sync.synced_label(root)}",
+            conn, root, " ".join(args.query), limit=args.limit, budget=args.budget, status=f"lore {rev} · {sync.synced_label(root)}",
             as_json=args.json, project=args.project or "", box=args.box or "", kinds=args.kind, since=since,
         ), end="")
     return 0
@@ -86,24 +86,24 @@ def cmd_recall(args) -> int:
 def cmd_show(args) -> int:
     from jass import index
 
-    root = brain.open_brain(config.load())
+    root = lore.open_lore(config.load())
     print(index.show(root, args.ref, args.max_bytes), end="")
     return 0
 
 
 def cmd_log(args) -> int:
     cfg = config.load()
-    root = brain.open_brain(cfg)
-    log = brain.add_log(root, brain.project_key(root, args.project), args.title, stdin_text(), cfg["box"])
+    root = lore.open_lore(cfg)
+    log = lore.add_log(root, lore.project_key(root, args.project), args.title, stdin_text(), cfg["box"])
     print(f"Logged to {log.relative_to(root)}. Run `jass sync` to share it.")
     return 0
 
 
 def cmd_lesson(args) -> int:
     cfg = config.load()
-    root = brain.open_brain(cfg)
-    project = brain.project_key(root, args.project)
-    path, near = brain.add_lesson(root, args.topic, args.claim, stdin_text(), {"box": cfg["box"], "project": project, "thread": args.thread})
+    root = lore.open_lore(cfg)
+    project = lore.project_key(root, args.project)
+    path, near = lore.add_lesson(root, args.topic, args.claim, stdin_text(), {"box": cfg["box"], "project": project, "thread": args.thread})
     for claim in near:
         print(f"warning: similar lesson already in {path.relative_to(root)}: {claim}", file=sys.stderr)
     print(f"Saved lesson to {path.relative_to(root)}. Run `jass sync` to share it.")
@@ -115,7 +115,7 @@ def cmd_sessions(args) -> int:
     from jass.sessions import export
 
     cfg = config.load()
-    root = brain.open_brain(cfg)
+    root = lore.open_lore(cfg)
     since = index.parse_since(args.since) if args.since else ""
     if args.action == "export":
         result = export.run(cfg, root, everything=args.all, since=since, dry_run=args.dry_run)
@@ -147,7 +147,7 @@ def cmd_sync(args) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog="jass", description="just-a-stack: box setup, the shared brain, recall and sync.")
+    top = argparse.ArgumentParser(prog="jass", description="just-a-stack: box setup, the shared lore, recall and sync.")
     sub = top.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
@@ -156,14 +156,14 @@ def parser() -> argparse.ArgumentParser:
         p.set_defaults(func=func)
         return p
 
-    p = command("init", cmd_init, "Set up this box: config, skills, CLI, global rules, brain. Preview unless --apply.")
+    p = command("init", cmd_init, "Set up this box: config, skills, CLI, global rules, lore. Preview unless --apply.")
     p.add_argument("--box", help="box name, [a-z0-9-]+ (default: from the hostname)")
     p.add_argument("--zone", help="trust zone, e.g. personal or work (default: personal)")
-    p.add_argument("--brain-path", help="where the brain lives (default: ~/brain)")
+    p.add_argument("--lore-path", help="where the lore lives (default: ~/lore)")
     source = p.add_mutually_exclusive_group()
-    source.add_argument("--brain", metavar="URL", help="clone this brain repo, or add it as the remote of an existing one")
-    source.add_argument("--new-brain", action="store_true", help="create a new local brain")
-    p.add_argument("--import-notes", metavar="DIR", help="copy DIR/Projects and top-level .md files into the brain, never overwriting")
+    source.add_argument("--lore", metavar="URL", help="clone this lore repo, or add it as the remote of an existing one")
+    source.add_argument("--new-lore", action="store_true", help="create a new local lore repo")
+    p.add_argument("--import-notes", metavar="DIR", help="copy DIR/Projects and top-level .md files into the lore, never overwriting")
     p.add_argument("--layer", action="append", metavar="DIR", help="extra stack directory (skills.json, skills/, rules/global.md)")
     p.add_argument("--replace", action="store_true", help="back up and replace conflicting skills or links")
     p.add_argument("--apply", action="store_true", help="make the changes")
@@ -179,12 +179,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("manifest", help="manifest path printed by --apply")
 
     p = command("path", cmd_path, "Print a path.")
-    p.add_argument("what", nargs="?", default="brain", choices=["brain", "stack", "config", "project"])
+    p.add_argument("what", nargs="?", default="lore", choices=["lore", "stack", "config", "project"])
 
     p = command("hub", cmd_hub, "Print the project's hub note (silent when there is none).")
     p.add_argument("project", nargs="?", help="project name (default: the current repo or directory)")
 
-    p = command("recall", cmd_recall, "Ranked, budgeted search over the brain.")
+    p = command("recall", cmd_recall, "Ranked, budgeted search over the lore.")
     p.add_argument("query", nargs="+")
     p.add_argument("--project", "-p")
     p.add_argument("--box")
@@ -227,9 +227,9 @@ def parser() -> argparse.ArgumentParser:
     st.add_argument("--by", choices=["week", "box", "project"], default="week")
     st.add_argument("--json", action="store_true")
 
-    p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the brain.")
+    p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the lore.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")
-    p.add_argument("--first-push", action="store_true", help="publish this brain to an empty remote; refused once the remote has a branch")
+    p.add_argument("--first-push", action="store_true", help="publish this lore to an empty remote; refused once the remote has a branch")
     return top
 
 

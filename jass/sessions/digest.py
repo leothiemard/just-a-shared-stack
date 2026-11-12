@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 
-from jass import brain
+from jass import lore
 from jass.sessions import SessionRecord
 
 MAX_BYTES = 6000
@@ -66,7 +66,7 @@ def turns(rec: SessionRecord) -> int:
 def contained(text: str) -> str:
     """Assistant Markdown that cannot open sections of its own: headings become bold, a cut fence is closed."""
     lines = text.split("\n")
-    mask, still_open = brain.fenced(lines)
+    mask, still_open = lore.fenced(lines)
     out = [line if inside else re.sub(r"^#{1,6}\s+(.*?)\s*#*\s*$", r"**\1**", line) for line, inside in zip(lines, mask)]
     return "\n".join(out + ([still_open] if still_open else []))
 
@@ -108,4 +108,4 @@ def render(rec: SessionRecord, box: str, zone: str) -> str:
         text = render_with(rec, box, zone, *limits)
         if len(text.encode()) <= MAX_BYTES:
             return text
-    return brain.clip(text, MAX_BYTES - 120, "the source session")
+    return lore.clip(text, MAX_BYTES - 120, "the source session")

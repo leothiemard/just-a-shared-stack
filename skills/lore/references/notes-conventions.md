@@ -1,6 +1,6 @@
 # Notes conventions
 
-The brain is also an Obsidian vault. Keep its notes readable by a person.
+The lore is also an Obsidian vault. Keep its notes readable by a person.
 
 ## Layout per project
 

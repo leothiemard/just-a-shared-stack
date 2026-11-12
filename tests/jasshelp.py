@@ -105,14 +105,14 @@ class Sandbox(unittest.TestCase):
         return out
 
     def new_box(self, box: str = "mac", zone: str = "personal", sources: list[str] | None = None) -> Path:
-        """A configured box with a new local brain, written directly (no skill links)."""
-        brain = self.home / "brain"
-        cfg = {"box": box, "zone": zone, "brain": {"path": str(brain), "remote": ""},
+        """A configured box with a new local lore, written directly (no skill links)."""
+        lore = self.home / "lore"
+        cfg = {"box": box, "zone": zone, "lore": {"path": str(lore), "remote": ""},
                "sessions": {"sources": sources or [], "idle_minutes": 30}}
         config = self.home / ".config" / "jass" / "box.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(json.dumps(cfg))
-        from jass import brain as brain_module
+        from jass import lore as lore_module
 
-        brain_module.create(brain, zone, box)
-        return brain
+        lore_module.create(lore, zone, box)
+        return lore

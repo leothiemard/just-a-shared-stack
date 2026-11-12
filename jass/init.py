@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from jass import JassError, brain, config, paths, rules, sync
+from jass import JassError, config, lore, paths, rules, sync
 
 ATTRIBUTION = {"commit": "", "pr": ""}
 
@@ -28,7 +28,7 @@ installer = load_installer()
 
 
 class Transaction:
-    """Records every change outside the brain, with backups, so `jass restore` can undo it."""
+    """Records every change outside the lore, with backups, so `jass restore` can undo it."""
 
     def __init__(self) -> None:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -98,7 +98,7 @@ class Change:
     state: str  # add, update, keep, conflict, skip
     detail: str = ""
     apply: Callable[[Transaction], None] | None = None
-    in_brain: bool = False
+    in_lore: bool = False
 
 
 def config_change(cfg: dict) -> Change:
@@ -196,52 +196,52 @@ def attribution_change() -> Change:
     return Change("attribution", label, "update", "add empty commit/PR attribution", lambda tx: tx.write(path, text))
 
 
-def brain_changes(cfg: dict, remote: str, new_brain: bool, import_dir: Path | None) -> list[Change]:
-    root = config.brain_path(cfg)
+def lore_changes(cfg: dict, remote: str, new_lore: bool, import_dir: Path | None) -> list[Change]:
+    root = config.lore_path(cfg)
     label = paths.tilde(root)
     box, zone = cfg["box"], cfg["zone"]
     out = []
     if root.exists() and any(root.iterdir()):
-        found = brain.zone_of(root)
-        if not brain.is_repo(root) or found is None:
-            out.append(Change("brain", label, "conflict", "exists and is not a brain (a git repo with brain.json); --new-brain and --brain need an empty or missing "
-                                                          "path. Pick another --brain-path, and use --import-notes to bring notes in"))
+        found = lore.zone_of(root)
+        if not lore.is_repo(root) or found is None:
+            out.append(Change("lore", label, "conflict", "exists and is not a lore repo (a git repo with lore.json); --new-lore and --lore need an empty or missing "
+                                                          "path. Pick another --lore-path, and use --import-notes to bring notes in"))
         elif found != zone:
-            raise JassError(f"Brain {label} is zone {found!r}; this box is zone {zone!r}. Use --brain-path for a {zone} brain.")
+            raise JassError(f"Lore {label} is zone {found!r}; this box is zone {zone!r}. Use --lore-path for a {zone} lore.")
         else:
-            missing = brain.skeleton_missing(root, zone)
+            missing = lore.skeleton_missing(root, zone)
             if missing:
                 def fill(tx):
-                    brain.commit_paths(root, box, "brain: add skeleton files", brain.write_skeleton(root, zone))
-                out.append(Change("brain", label, "update", "add " + ", ".join(sorted(missing)), fill, True))
+                    lore.commit_paths(root, box, "lore: add skeleton files", lore.write_skeleton(root, zone))
+                out.append(Change("lore", label, "update", "add " + ", ".join(sorted(missing)), fill, True))
             else:
-                out.append(Change("brain", label, "keep", f"zone {zone}"))
-            if remote and "origin" not in brain.git(root, "remote", check=False).stdout.split():
-                out.append(Change("brain", label, "update", f"add remote origin {remote}", lambda tx: brain.git(root, "remote", "add", "origin", remote), True))
+                out.append(Change("lore", label, "keep", f"zone {zone}"))
+            if remote and "origin" not in lore.git(root, "remote", check=False).stdout.split():
+                out.append(Change("lore", label, "update", f"add remote origin {remote}", lambda tx: lore.git(root, "remote", "add", "origin", remote), True))
     elif remote:
         def clone(tx):
             root.parent.mkdir(parents=True, exist_ok=True)
-            brain.git(root.parent, "clone", "-q", remote, str(root))
-            found = brain.zone_of(root)
+            lore.git(root.parent, "clone", "-q", remote, str(root))
+            found = lore.zone_of(root)
             if found is None and any(p.name != ".git" for p in root.iterdir()):
-                raise JassError(f"{remote} has files but no brain.json, so it is not a brain. Remove {label} and pass --brain with a brain repo's URL")
+                raise JassError(f"{remote} has files but no lore.json, so it is not a lore repo. Remove {label} and pass --lore with a lore repo's URL")
             if found and found != zone:
-                raise JassError(f"Cloned brain is zone {found!r}; this box is zone {zone!r}. Remove {label} and clone a {zone} brain.")
-            brain.commit_paths(root, box, "brain: init", brain.write_skeleton(root, zone))
-            if not brain.git(root, "for-each-ref", "refs/remotes/").stdout.strip():
+                raise JassError(f"Cloned lore is zone {found!r}; this box is zone {zone!r}. Remove {label} and clone a {zone} lore.")
+            lore.commit_paths(root, box, "lore: init", lore.write_skeleton(root, zone))
+            if not lore.git(root, "for-each-ref", "refs/remotes/").stdout.strip():
                 print(sync.FIRST_PUSH_HINT)
-        out.append(Change("brain", label, "add", f"clone {remote}", clone, True))
-    elif new_brain:
-        out.append(Change("brain", label, "add", f"new {zone} brain", lambda tx: brain.create(root, zone, box), True))
+        out.append(Change("lore", label, "add", f"clone {remote}", clone, True))
+    elif new_lore:
+        out.append(Change("lore", label, "add", f"new {zone} lore", lambda tx: lore.create(root, zone, box), True))
     else:
-        out.append(Change("brain", label, "skip", "no brain yet; pass --brain <git-url> or --new-brain"))
+        out.append(Change("lore", label, "skip", "no lore yet; pass --lore <git-url> or --new-lore"))
     if import_dir:
         if not import_dir.is_dir():
             raise JassError(f"--import-notes {import_dir} is not a folder. Pass the folder that holds Projects/.")
-        copies, kept = brain.import_plan(import_dir, root)
+        copies, kept = lore.import_plan(import_dir, root)
 
         def run_import(tx):
-            brain.commit_paths(root, box, "brain: import notes", brain.import_notes(import_dir, root))
+            lore.commit_paths(root, box, "lore: import notes", lore.import_notes(import_dir, root))
         state = "add" if copies else "keep"
         out.append(Change("import", str(import_dir), state, f"{len(copies)} files to copy, {len(kept)} already present", run_import if copies else None, True))
     return out
@@ -253,11 +253,11 @@ def desired_config(args) -> dict:
     cfg["box"] = args.box or raw.get("box") or config.default_box()
     cfg["zone"] = args.zone or raw.get("zone") or "personal"
     cfg["stack"] = str(paths.STACK)
-    if args.brain_path:
-        cfg["brain"]["path"] = args.brain_path
-    if args.brain:
-        root = config.brain_path(cfg)
-        cfg["brain"]["remote"] = brain.remote_location(args.brain, root if root.exists() else None)
+    if args.lore_path:
+        cfg["lore"]["path"] = args.lore_path
+    if args.lore:
+        root = config.lore_path(cfg)
+        cfg["lore"]["remote"] = lore.remote_location(args.lore, root if root.exists() else None)
     for layer in args.layer or []:
         resolved = str(Path(layer).expanduser().resolve())
         if resolved not in cfg["layers"]:
@@ -266,14 +266,14 @@ def desired_config(args) -> dict:
     return cfg
 
 
-def plan(cfg: dict, replace: bool, brain_args: tuple | None) -> list[Change]:
+def plan(cfg: dict, replace: bool, lore_args: tuple | None) -> list[Change]:
     repos = [config.stack_path(cfg), *config.layer_paths(cfg)]
     changes = [config_change(cfg), *skill_changes(repos, replace)]
     changes.append(link_change("cli", paths.bin_dir() / "jass", config.stack_path(cfg) / "bin" / "jass", replace))
     changes += rules_changes(repos)
     changes.append(attribution_change())
-    if brain_args is not None:
-        changes += brain_changes(cfg, *brain_args)
+    if lore_args is not None:
+        changes += lore_changes(cfg, *lore_args)
     return changes
 
 
@@ -295,10 +295,10 @@ def execute(changes: list[Change], apply: bool) -> int:
     if not apply:
         print("Preview only; nothing changed. Rerun with --apply to make these changes.")
         return 0
-    pending.sort(key=lambda c: not c.in_brain)  # brain steps can fail on the network, so they run before the box is touched
+    pending.sort(key=lambda c: not c.in_lore)  # lore steps can fail on the network, so they run before the box is touched
     tx = None
     for change in pending:
-        if not change.in_brain and tx is None:
+        if not change.in_lore and tx is None:
             tx = Transaction()
         try:
             change.apply(tx)
@@ -316,17 +316,17 @@ def execute(changes: list[Change], apply: bool) -> int:
 def run_init(args) -> int:
     cfg = desired_config(args)
     import_dir = Path(args.import_notes).expanduser().resolve() if args.import_notes else None
-    changes = plan(cfg, args.replace, (cfg["brain"]["remote"], args.new_brain, import_dir))
+    changes = plan(cfg, args.replace, (cfg["lore"]["remote"], args.new_lore, import_dir))
     execute(changes, args.apply)
     return 0
 
 
 def pull(repo: Path) -> str:
-    if not brain.is_repo(repo):
+    if not lore.is_repo(repo):
         return f"{repo} is not a git checkout; skipped pull"
-    result = brain.git(repo, "pull", "--ff-only", "-q", timeout=60, check=False)
+    result = lore.git(repo, "pull", "--ff-only", "-q", timeout=60, check=False)
     if result.returncode:
-        return f"pull failed in {repo}: {brain.reason(result)}; continuing with the current checkout"
+        return f"pull failed in {repo}: {lore.reason(result)}; continuing with the current checkout"
     return ""
 
 

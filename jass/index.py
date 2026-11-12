@@ -1,4 +1,4 @@
-"""SQLite FTS5 index of the brain, ranked recall, and `show`."""
+"""SQLite FTS5 index of the lore, ranked recall, and `show`."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from jass import JassError, brain, paths
+from jass import JassError, lore, paths
 
 SCHEMA = "1"
 KIND_WEIGHT = {"lesson": 1.5, "hub": 1.3, "note": 1.2, "review": 1.1, "log": 1.0, "box": 0.9, "session": 0.8, "other": 1.0}
@@ -34,7 +34,7 @@ def fts5_available() -> bool:
 
 
 def db_path(root: Path) -> Path:
-    return paths.cache_dir() / f"index-{paths.brain_key(root)}.sqlite"
+    return paths.cache_dir() / f"index-{paths.lore_key(root)}.sqlite"
 
 
 def connect(root: Path) -> sqlite3.Connection:
@@ -68,7 +68,7 @@ def markdown_files(root: Path) -> dict[str, Path]:
     found = {}
     for path in root.rglob("*.md"):
         rel = path.relative_to(root)
-        if path.is_file() and brain.inside(root, path) and not any(part in brain.SKIP_DIRS for part in rel.parts):
+        if path.is_file() and lore.inside(root, path) and not any(part in lore.SKIP_DIRS for part in rel.parts):
             found[rel.as_posix()] = path
     return found
 
@@ -133,10 +133,10 @@ def provenance(body: str, base: dict) -> dict:
 
 
 def chunks(rel: str, text: str) -> list[dict]:
-    meta, start = brain.frontmatter(text)
+    meta, start = lore.frontmatter(text)
     base = file_meta(rel, meta)
     lines = text.split("\n")
-    marks = [(i, level, t) for i, level, t in brain.headings(lines) if level <= 3 and i >= start]
+    marks = [(i, level, t) for i, level, t in lore.headings(lines) if level <= 3 and i >= start]
     sections = [(start, 0, str(meta.get("title", "")))] + marks
     out, trail = [], {}
     for n, (i, level, heading) in enumerate(sections):
@@ -175,7 +175,7 @@ def recency(date: str) -> float:
 
 
 def search(conn: sqlite3.Connection, query: str, project: str = "", box: str = "", kinds: list[str] | None = None, since: str = "") -> list[dict]:
-    words = sorted(brain.terms(query))
+    words = sorted(lore.terms(query))
     if not words:
         return []
     where, args = ["chunks MATCH ?"], [" OR ".join(f'"{w}"' for w in words)]
@@ -215,7 +215,7 @@ def snippet(hit: dict) -> str:
 
 def hit_lines(n: int, hit: dict) -> str:
     heading = hit["trail"] if hit["kind"] == "session" and hit["trail"] else hit["heading"]
-    label = f"{hit['path']} § {brain.clip_line(heading, 120)}" if heading else hit["path"]
+    label = f"{hit['path']} § {lore.clip_line(heading, 120)}" if heading else hit["path"]
     meta = [hit["kind"]]
     if hit["project"] and hit["kind"] != "hub":
         meta.append(hit["project"])
@@ -227,7 +227,7 @@ def hit_lines(n: int, hit: dict) -> str:
 
 
 def refs_path(root: Path) -> Path:
-    return paths.cache_dir() / f"recall-{paths.brain_key(root)}.json"
+    return paths.cache_dir() / f"recall-{paths.lore_key(root)}.json"
 
 
 def recall(conn: sqlite3.Connection, root: Path, query: str, *, limit: int, budget: int, status: str, as_json: bool, **filters) -> str:
@@ -267,7 +267,7 @@ def rendered(body: str, shown: int, total: int, status: str) -> str:
 
 def section(lines: list[str], start: int) -> str:
     """The heading at `start` and everything up to the next heading of the same or higher level."""
-    marks = brain.headings(lines)
+    marks = lore.headings(lines)
     level = next((lv for i, lv, _ in marks if i == start), 0)
     end = next((i for i, lv, _ in marks if i > start and (level == 0 or lv <= level)), len(lines))
     return "\n".join(lines[start:end]).rstrip() + "\n"
@@ -284,15 +284,15 @@ def show(root: Path, ref: str, max_bytes: int) -> str:
         rel, line = entry["path"], entry["line"]
     else:
         rel, _, heading = ref.partition("#")
-    path = brain.within(root, root / rel)
+    path = lore.within(root, root / rel)
     if not path.is_file():
-        raise JassError(f"No file {rel!r} in the brain. Use a path from `jass recall` output.")
+        raise JassError(f"No file {rel!r} in the lore. Use a path from `jass recall` output.")
     text = path.read_text(errors="replace")
     lines = text.split("\n")
     if heading:
-        line = next((i for i, _, t in brain.headings(lines) if t.lower() == heading.strip().lower()), None)
+        line = next((i for i, _, t in lore.headings(lines) if t.lower() == heading.strip().lower()), None)
         if line is None:
             raise JassError(f"No heading {heading!r} in {rel}. Check the spelling, or show the whole file with `jass show {rel}`.")
     out = text if line is None else section(lines, line)
     full = f"jass show {ref} --max-bytes {len(out.encode())}"
-    return f"{rel}\n\n" + brain.clip(out, max_bytes, full)
+    return f"{rel}\n\n" + lore.clip(out, max_bytes, full)

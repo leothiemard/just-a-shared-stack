@@ -3,7 +3,7 @@ import json
 
 from jasshelp import Sandbox, disk_full
 
-from jass import brain
+from jass import lore
 from jass.sessions import SessionRecord, digest, export, scrub
 
 NOW = dt.datetime.now(dt.timezone.utc)
@@ -28,7 +28,7 @@ class SessionsTests(Sandbox):
     def setUp(self):
         super().setUp()
         self.store = self.base / "sessions.json"
-        self.brain = self.new_box(sources=[f"json:{self.store}"])
+        self.lore = self.new_box(sources=[f"json:{self.store}"])
 
     def export(self, rows, *args):
         self.store.write_text(json.dumps(rows))
@@ -50,14 +50,14 @@ class SessionsTests(Sandbox):
         ]
         result = self.export([record("leaky", title="Rotate token=PLANTED_G7", prompts=prompts, turn_finals=finals)])
         self.assertEqual(len(result["written"]), 1)
-        for path in (self.brain / "Sessions").rglob("*.md"):
+        for path in (self.lore / "Sessions").rglob("*.md"):
             data = path.read_bytes()
             for secret in planted:
                 self.assertNotIn(secret.encode(), data, path.name)
 
     def test_a_failed_write_leaves_the_digest_and_export_state_whole(self):
         rel = self.export([record("s1")])["written"][0]
-        path = self.brain / rel
+        path = self.lore / rel
         state = next((self.home / ".cache" / "jass").glob("sessions-*.json"))
         before = path.read_text(), state.read_text()
         self.store.write_text(json.dumps([record("s1", updated_minutes_ago=100, turn_finals=["A continuation."])]))
@@ -85,8 +85,8 @@ class SessionsTests(Sandbox):
         self.assertEqual(result["skipped"], 3)
         rel = result["written"][0]
         self.assertRegex(rel, r"^Sessions/mac/\d{4}-\d{2}/\d{4}-\d{2}-\d{2}-example-app-[0-9a-f]{8}\.md$")
-        text = (self.brain / rel).read_text()
-        meta, _ = brain.frontmatter(text)
+        text = (self.lore / rel).read_text()
+        meta, _ = lore.frontmatter(text)
         self.assertEqual((meta["kind"], meta["id"], meta["box"], meta["zone"], meta["subagents"]), ("session", "top", "mac", "personal", "1"))
         self.assertEqual(meta["tokens"], "{input: 1000, cached: 200, output: 300}")
         self.assertEqual(meta["t3_environment_id"], "env-1")
@@ -99,18 +99,18 @@ class SessionsTests(Sandbox):
     def test_unchanged_sessions_are_skipped_and_continuations_overwrite(self):
         first = self.export([record("s1", updated_minutes_ago=200)])
         self.assertEqual(self.export([record("s1", updated_minutes_ago=200)])["written"], [])
-        state = export.state_path(self.brain)
+        state = export.state_path(self.lore)
         state.write_text(json.dumps(dict(json.loads(state.read_text()), horizon=stamp(90))))
         continued = record("s1", updated_minutes_ago=60, turn_finals=["a", "b", "Continued and finished."])
         second = self.export([continued])
         self.assertEqual(second["written"], first["written"])
-        self.assertIn("Continued and finished.", (self.brain / first["written"][0]).read_text())
-        self.assertEqual(len(list((self.brain / "Sessions").rglob("*.md"))), 1)
+        self.assertIn("Continued and finished.", (self.lore / first["written"][0]).read_text())
+        self.assertEqual(len(list((self.lore / "Sessions").rglob("*.md"))), 1)
 
     def test_dry_run_writes_nothing(self):
         result = self.export([record("s1")], "--dry-run")
         self.assertEqual(len(result["written"]), 1)
-        self.assertFalse((self.brain / "Sessions").exists())
+        self.assertFalse((self.lore / "Sessions").exists())
 
     def test_unknown_schema_and_missing_store_warn_without_failing(self):
         self.store.write_text(json.dumps({"threads": []}))
@@ -158,9 +158,9 @@ class SessionsTests(Sandbox):
         self.assertEqual(rec.prompts, ["password=[redacted]"])
         self.assertEqual(rec.tokens, {"input": 3})
 
-    def test_secrets_never_reach_the_brain(self):
+    def test_secrets_never_reach_the_lore(self):
         self.export([record("s1", prompts=["use token=supersecretvalue please"])])
-        text = next((self.brain / "Sessions").rglob("*.md")).read_text()
+        text = next((self.lore / "Sessions").rglob("*.md")).read_text()
         self.assertNotIn("supersecretvalue", text)
 
     def test_stub_sources_report_only_when_listed(self):
@@ -186,7 +186,7 @@ class SessionsTests(Sandbox):
             turn_finals=["first", "````md\n```\n## inside\n````\n## outside\n````\nstill open"],
         )
         text = digest.render(rec, "mac", "personal")
-        sections = [t for _, level, t in brain.headings(text.split("\n")) if level == 2]
+        sections = [t for _, level, t in lore.headings(text.split("\n")) if level == 2]
         self.assertEqual(sections, ["Asked", "Outcome", "Turns"])
         self.assertIn("**outside**", text)
         self.assertIn("````md\n```\n## inside\n````", text)
@@ -198,6 +198,6 @@ class SessionsTests(Sandbox):
             turn_finals=["first", "## Question for you\nShould I?\n```\n# not a heading\n" + "y" * 3000],
         )
         text = digest.render(rec, "mac", "personal")
-        sections = [t for _, level, t in brain.headings(text.split("\n")) if level == 2]
+        sections = [t for _, level, t in lore.headings(text.split("\n")) if level == 2]
         self.assertEqual(sections, ["Asked", "Outcome", "Turns"])
         self.assertIn("**Question for you**\nShould I?", text)

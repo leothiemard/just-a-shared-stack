@@ -45,7 +45,7 @@ def timestamp(text: str) -> dt.datetime:
 
 
 def project_key(workspace_root: str) -> str:
-    """The brain project for a T3 workspace: its basename; anything under a `scratch` folder is `scratch`."""
+    """The lore project for a T3 workspace: its basename; anything under a `scratch` folder is `scratch`."""
     root = Path(workspace_root or "")
     if "scratch" in root.parts:
         return "scratch"

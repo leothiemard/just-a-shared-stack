@@ -6,7 +6,7 @@ from unittest import mock
 import t3fixture
 from jasshelp import Sandbox
 
-from jass import brain
+from jass import lore
 from jass.sessions import export, t3
 
 
@@ -16,7 +16,7 @@ class T3SourceTests(Sandbox):
         self.store_path = self.base / "t3 data" / "statev2.sqlite"
         self.store_path.parent.mkdir()
         self.store = t3fixture.standard(self.store_path)
-        self.brain = self.new_box(sources=["t3"])
+        self.lore = self.new_box(sources=["t3"])
         self.set_sessions(t3_store=str(self.store_path))
 
     def set_sessions(self, **values):
@@ -27,7 +27,7 @@ class T3SourceTests(Sandbox):
 
     def rewind_horizon(self, minutes):
         """Pretend the last export ran earlier, as if time had passed since."""
-        path = export.state_path(self.brain)
+        path = export.state_path(self.lore)
         state = json.loads(path.read_text())
         state["horizon"] = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes)).isoformat()
         path.write_text(json.dumps(state))
@@ -37,9 +37,9 @@ class T3SourceTests(Sandbox):
 
     def digests(self) -> dict:
         out = {}
-        for path in (self.brain / "Sessions").rglob("*.md"):
+        for path in (self.lore / "Sessions").rglob("*.md"):
             text = path.read_text()
-            out[brain.frontmatter(text)[0]["id"]] = text
+            out[lore.frontmatter(text)[0]["id"]] = text
         return out
 
     def test_exports_finished_top_level_threads_only(self):
@@ -51,7 +51,7 @@ class T3SourceTests(Sandbox):
     def test_digest_fields_and_folded_children(self):
         self.export()
         text = self.digests()["top"]
-        meta, _ = brain.frontmatter(text)
+        meta, _ = lore.frontmatter(text)
         self.assertEqual(meta["project"], "example-app")
         self.assertEqual((meta["turns"], meta["subagents"], meta["peak_context"]), ("3", "3", "230000"))
         self.assertEqual(meta["tokens"], "{input: 300, cached: 150, output: 30}")
@@ -89,7 +89,7 @@ class T3SourceTests(Sandbox):
     def test_scratch_workspace_and_secrets(self):
         self.export()
         found = self.digests()
-        self.assertEqual(brain.frontmatter(found["scratchy"])[0]["project"], "scratch")
+        self.assertEqual(lore.frontmatter(found["scratchy"])[0]["project"], "scratch")
         self.assertNotIn("sk-livesecretvalue", found["secret"])
         self.assertIn("API_KEY=[redacted]", found["secret"])
 
@@ -102,7 +102,7 @@ class T3SourceTests(Sandbox):
         self.assertEqual(len(self.export()["written"]), 2)
         self.assertIn("Also fixed the docs.", self.digests()["top"])
         self.assertIn("active", self.digests())
-        self.assertEqual(len(list((self.brain / "Sessions").rglob("*.md"))), 7)
+        self.assertEqual(len(list((self.lore / "Sessions").rglob("*.md"))), 7)
 
     def test_incremental_runs_load_only_changed_threads(self):
         self.export()
@@ -134,7 +134,7 @@ class T3SourceTests(Sandbox):
         self.assertEqual(code, 0)
         self.assertEqual(err.count("t3 source disabled:"), 1, err)
         self.assertIn(f"column {t3fixture.T}runs.status missing", err)
-        self.assertFalse((self.brain / "Sessions").exists())
+        self.assertFalse((self.lore / "Sessions").exists())
         self.assertEqual(self.jass("sync")[0], 0)
         _, doctor, _ = self.jass("doctor")
         self.assertIn(f"t3 source disabled: schema changed", doctor)
@@ -157,7 +157,7 @@ class T3SourceTests(Sandbox):
         self.assertEqual(t3.T3Source(str(self.store_path)).projects(),
                          [("Example App", "/work/example-app"), ("No project", "/home/someone/.t3/scratch")])
         self.ok("sync")
-        card = (self.brain / "Boxes" / "mac.md").read_text()
+        card = (self.lore / "Boxes" / "mac.md").read_text()
         self.assertIn("| Example App | /work/example-app |", card)
         self.assertNotIn("old-thing", card)
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Set up a box: clone just-a-stack (unless already there), then run `jass init` with the given arguments.
-# Usage: curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --brain <git-url> --apply
+# Usage: curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
 set -eu
 
 repo=${JASS_STACK_URL:-https://github.com/leothiemard/just-a-stack.git}

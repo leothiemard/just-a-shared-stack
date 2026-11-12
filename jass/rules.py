@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jass import JassError, brain
+from jass import JassError, lore
 
 BEGIN = "<!-- jass:begin (managed by just-a-stack; edit rules/global.md instead) -->"
 END = "<!-- jass:end -->"
@@ -22,7 +22,7 @@ def span(text: str, where: Path) -> tuple[int, int] | None:
     starts = [0]
     for line in lines:
         starts.append(starts[-1] + len(line) + 1)
-    found = [(i, line.rstrip()) for i, line in brain.outside_fences(lines) if line.rstrip() in (BEGIN, END)]
+    found = [(i, line.rstrip()) for i, line in lore.outside_fences(lines) if line.rstrip() in (BEGIN, END)]
     if not found:
         return None
     if [marker for _, marker in found] != [BEGIN, END]:
