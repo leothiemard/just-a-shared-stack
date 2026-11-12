@@ -52,6 +52,12 @@ class NotesTests(Sandbox):
         self.assertEqual(sorted(p.name for p in log.parent.iterdir()), ["Log.md", "example-app.md"])
         self.assertEqual([p.name for p in lessons.parent.iterdir()], ["vercel.md"])
 
+    def test_an_empty_log_title_creates_nothing(self):
+        code, _, err = self.jas("log", "-t", "  ", "-p", "new-project")
+        self.assertEqual(code, 1)
+        self.assertIn("Log title is empty", err)
+        self.assertFalse((self.brain / "Projects" / "new-project").exists())
+
     def test_log_project_defaults_to_the_repo_of_the_current_directory(self):
         work = self.base / "example-app"
         (work / "sub").mkdir(parents=True)

@@ -110,6 +110,14 @@ class ContainmentTests(Sandbox):
         self.assertIn("No hits", self.ok("recall", "unikeyword", "--no-sync"))
         self.refused("show", "leak.md")
 
+    def test_a_box_card_link_stops_sync_before_export(self):
+        updated = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat()
+        self.store.write_text(json.dumps([{"id": "s1", "title": "T", "project": "example-app", "cwd": "/work", "started": updated, "updated": updated,
+                                           "prompts": ["Do it"], "turn_finals": ["Done."]}]))
+        self.link("Boxes", self.outside, folder=True)
+        self.refused("sync")
+        self.assertFalse((self.root / "Sessions").exists())
+
     def test_a_brain_json_that_leads_outside_is_no_brain(self):
         (self.outside / "brain.json").write_text('{"version": 1, "zone": "personal"}\n')
         (self.root / "brain.json").unlink()

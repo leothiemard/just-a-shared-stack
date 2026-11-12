@@ -294,10 +294,10 @@ def ensure_project(root: Path, project: str) -> Path:
 
 
 def add_log(root: Path, project: str, title: str, body: str, box: str) -> Path:
-    log = within(root, ensure_project(root, project) / "Log.md")
     title = " ".join(title.split())
     if not title:
         raise JasError("Log title is empty. Pass -t with a short title.")
+    log = within(root, ensure_project(root, project) / "Log.md")
     entry = [f"## {today()} — {title}", *[line for line in body.strip("\n").split("\n") if body.strip()], f"<!-- box {box} -->", ""]
     text = log.read_text() if log.exists() else (
         f"---\nproject: {project}\ntags: [project, {project}, log]\ncreated: {today()}\n---\n# {project} log\n"

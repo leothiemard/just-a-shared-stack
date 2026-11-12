@@ -102,6 +102,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if problem:
             raise JasError(f"Sync stopped; nothing was exported, committed or pushed. {problem}")
         branch = current_branch(root)
+        card = brain.within(root, root / "Boxes" / f"{cfg['box']}.md")
         has_origin = "origin" in brain.git(root, "remote", check=False).stdout.split()
         upstream = fetch(root, branch, timeout) if has_origin else None
         state = load_state(root)
@@ -111,7 +112,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
             state["last_export"] = now().isoformat()
             if result["written"]:
                 say(f"Exported {len(result['written'])} session digest(s).")
-        write_if_changed(brain.within(root, root / "Boxes" / f"{cfg['box']}.md"), box_card(cfg, root, budget.measure()["total"]))
+        write_if_changed(card, box_card(cfg, root, budget.measure()["total"]))
         stamp = now().strftime("%Y-%m-%dT%H:%M:%SZ")
         if brain.commit_all(root, cfg["box"], f"brain: {cfg['box']} {stamp}"):
             say("Committed local changes.")
