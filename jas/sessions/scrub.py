@@ -37,7 +37,9 @@ def closing(value: str, start: int, quote: str) -> int | None:
     char = quote[-1]
     at = value.find(char, start)
     while at != -1:
-        run = at - len(value[start:at].rstrip("\\")) - start
+        run = 0
+        while at - run > start and value[at - run - 1] == "\\":
+            run += 1
         if (run % 2 == 0) if len(quote) == 1 else run == 1:
             return at + 1
         at = value.find(char, at + 1)

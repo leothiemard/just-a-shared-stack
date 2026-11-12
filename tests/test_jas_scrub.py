@@ -77,3 +77,12 @@ class ScrubTests(unittest.TestCase):
         for raw in KEPT:
             with self.subTest(raw):
                 self.assertEqual(scrub.text(raw), raw)
+
+    def test_escaped_quotes_scrub_in_linear_time(self):
+        import time
+
+        for raw in ('password="' + '\\"' * 500_000, "password='" + "\\'" * 500_000, 'token=\\"' + 'x\\\\"' * 333_000):
+            with self.subTest(raw[:12]):
+                started = time.perf_counter()
+                scrub.text(raw)
+                self.assertLess(time.perf_counter() - started, 3)
