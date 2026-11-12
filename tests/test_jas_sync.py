@@ -123,3 +123,27 @@ class SyncTests(Sandbox):
         self.assertIn("detached", err)
         self.assertEqual(git(root, "rev-parse", "HEAD"), head)
         self.assertEqual(git(root, "status", "--porcelain"), status)
+
+    def test_a_branch_the_remote_lacks_is_never_pushed(self):
+        other = self.b / "brain"
+        (other / "brain.json").write_text('{"version": 1, "zone": "work"}\n')
+        git(other, "commit", "-qam", "change zone")
+        git(other, "push", "-q")
+        root = self.a / "brain"
+        git(root, "checkout", "-q", "-b", "personal-notes")
+        self.on(self.a, "log", "-t", "Personal notes", "-p", "example-app", stdin="- private\n")
+        head = git(root, "rev-parse", "HEAD")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1)
+        self.assertIn("personal-notes", err)
+        self.assertIn("main", err)
+        self.assertEqual(git(self.remote, "branch", "--format=%(refname:short)").split(), ["main"])
+        self.assertEqual(git(root, "rev-parse", "HEAD"), head)
+
+    def test_a_new_branch_of_the_same_zone_is_not_pushed_either(self):
+        root = self.a / "brain"
+        git(root, "checkout", "-q", "-b", "side")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1)
+        self.assertIn("git switch main", err)
+        self.assertEqual(git(self.remote, "branch", "--format=%(refname:short)").split(), ["main"])

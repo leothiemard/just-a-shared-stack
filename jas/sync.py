@@ -102,6 +102,8 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if problem:
             raise JasError(f"Sync stopped; nothing was exported, committed or pushed. {problem}")
         branch = current_branch(root)
+        has_origin = "origin" in brain.git(root, "remote", check=False).stdout.split()
+        upstream = fetch(root, branch, timeout) if has_origin else None
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
         if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
@@ -114,7 +116,13 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if brain.commit_all(root, cfg["box"], f"brain: {cfg['box']} {stamp}"):
             say("Committed local changes.")
         try:
-            return exchange(root, cfg["box"], cfg["zone"], branch, timeout, say, state, quiet)
+            if not has_origin:
+                state["last_sync"] = now().isoformat()
+                say("Local-only brain (no remote); nothing to push.")
+                return 0
+            if upstream is None:
+                return 0
+            return exchange(root, cfg["box"], cfg["zone"], branch, upstream, timeout, say, state, quiet)
         finally:
             save_state(root, state)
 
@@ -127,19 +135,26 @@ def current_branch(root: Path) -> str:
     return result.stdout.strip()
 
 
-def exchange(root: Path, box: str, zone: str, branch: str, timeout: float, say, state: dict, quiet: bool) -> int:
-    """Fetch, rebase local commits onto the remote, push. Never forces; a conflict leaves everything local."""
-    if "origin" not in brain.git(root, "remote", check=False).stdout.split():
-        state["last_sync"] = now().isoformat()
-        say("Local-only brain (no remote); nothing to push.")
-        return 0
+def fetch(root: Path, branch: str, timeout: float) -> str | None:
+    """Fetch, then name the remote branch to exchange with: `origin/<branch>`, or "" when the remote has no branch yet.
+
+    None when the remote cannot be reached. Stops when the remote has branches but not this one: sync never creates a branch there."""
     try:
-        brain.git(root, "fetch", "-q", "origin", timeout=timeout)
+        brain.git(root, "fetch", "-q", "--prune", "origin", timeout=timeout)
     except JasError as error:
         print(f"warning: could not reach the brain remote; local commits kept, push skipped. {error}", file=sys.stderr)
-        return 0
-    upstream = f"origin/{branch}"
-    if brain.git(root, "rev-parse", "--verify", "-q", upstream, check=False).returncode == 0:
+        return None
+    refs = brain.git(root, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/").stdout.split()
+    names = [ref[len("refs/remotes/origin/"):] for ref in refs if ref != "refs/remotes/origin/HEAD"]
+    if names and branch not in names:
+        raise JasError(f"Sync stopped; nothing was exported, committed or pushed. The brain remote has no branch {branch!r} and sync never creates one; "
+                       f"it uses {', '.join(names)}. Switch the brain back (git switch {names[0]}), then rerun.")
+    return f"origin/{branch}" if names else ""
+
+
+def exchange(root: Path, box: str, zone: str, branch: str, upstream: str, timeout: float, say, state: dict, quiet: bool) -> int:
+    """Rebase local commits onto the fetched remote branch, push. Never forces; a conflict leaves everything local."""
+    if upstream:
         shown = brain.git(root, "show", f"{upstream}:brain.json", check=False)
         found = brain.parse_zone(shown.stdout) if shown.returncode == 0 else None
         if found != zone:
