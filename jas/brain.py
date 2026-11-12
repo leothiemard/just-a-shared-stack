@@ -96,8 +96,17 @@ def zone_of(root: Path) -> str | None:
 
 
 def inside(root: Path, path: Path) -> bool:
-    """Whether `path`, with every symlink resolved, stays inside the brain."""
-    return path.resolve().is_relative_to(root.resolve())
+    """Whether `path`, with every symlink resolved, stays inside the brain.
+
+    Decided by file identity, so another spelling of the brain's path (on a case-insensitive filesystem) counts as inside.
+    Before the brain folder exists nothing can lead out through it, so its spelled path decides."""
+    if not root.exists():
+        return path.resolve().is_relative_to(root.resolve())
+    probe = path.resolve()
+    while not probe.exists():
+        probe = probe.parent
+    top = root.stat()
+    return any(os.path.samestat(top, folder.stat()) for folder in (probe, *probe.parents))
 
 
 def within(root: Path, path: Path) -> Path:

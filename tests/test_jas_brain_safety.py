@@ -2,6 +2,7 @@ import datetime as dt
 import json
 import os
 import subprocess
+from pathlib import Path
 
 from jashelp import Sandbox, git, tree
 
@@ -122,6 +123,17 @@ class ContainmentTests(Sandbox):
         self.store.write_text("[]")
         self.link("Boxes", self.outside, folder=True)
         self.refused("sync")
+
+
+class CaseInsensitiveContainmentTests(Sandbox):
+    def test_another_spelling_of_the_brain_is_inside_it(self):
+        root = self.new_box()
+        if not (self.base / str(root.relative_to(self.base)).upper()).exists():
+            self.skipTest("case-sensitive filesystem")
+        (root / "Projects" / "real").mkdir(parents=True)
+        (root / "Projects" / "alias").symlink_to(Path(str(root).upper()) / "Projects" / "real", target_is_directory=True)
+        self.ok("log", "-p", "alias", "-t", "Entry", stdin="- body\n")
+        self.assertIn("Entry", (root / "Projects" / "real" / "Log.md").read_text())
 
 
 class SyncLockTests(Sandbox):
