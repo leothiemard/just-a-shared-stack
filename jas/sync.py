@@ -104,7 +104,8 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         branch = current_branch(root)
         card = brain.within(root, root / "Boxes" / f"{cfg['box']}.md")
         has_origin = "origin" in brain.git(root, "remote", check=False).stdout.split()
-        upstream = fetch(root, branch, timeout) if has_origin else None
+        url = origin_url(root, cfg["brain"]["remote"]) if has_origin else ""
+        upstream = fetch(root, url, branch, timeout) if has_origin else None
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
         if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
@@ -124,7 +125,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
                 return 0
             if upstream is None:
                 return 0
-            return exchange(root, cfg["box"], cfg["zone"], branch, upstream, timeout, say, state, quiet)
+            return exchange(root, cfg["box"], cfg["zone"], url, branch, upstream, timeout, say, state, quiet)
         finally:
             save_state(root, state)
 
@@ -140,13 +141,32 @@ def current_branch(root: Path) -> str:
 REMOTE = "refs/jas/remote/"
 
 
-def fetch(root: Path, branch: str, timeout: float) -> str | None:
+def repo_id(url: str) -> str:
+    """A repository URL as host/path in lower case, whatever its form: https, ssh://, git@host:path, file:// or a path."""
+    text = re.sub(r"^[A-Za-z][A-Za-z0-9+.-]*://", "", url.strip())
+    text = re.sub(r":\d*/", "/", re.sub(r"^[^@/]*@", "", text), count=1).replace(":", "/", 1)
+    return re.sub(r"\.git$", "", text.rstrip("/")).lower()
+
+
+def origin_url(root: Path, configured: str) -> str:
+    """The URL sync fetches from and pushes to: origin's, when it names the box config's `brain.remote` (or none is set).
+
+    Fetch and push both use this one URL, so a push URL or a repointed origin never sends the brain somewhere unchecked."""
+    url = brain.git(root, "remote", "get-url", "origin").stdout.strip()
+    if configured and repo_id(url) != repo_id(configured):
+        raise JasError(f"Sync stopped; nothing was exported, committed or pushed. The brain's origin is {strip_credentials(url)}, "
+                       f"but brain.remote in {paths.tilde(paths.config_file())} is {strip_credentials(configured)}. "
+                       f"Point origin back (git remote set-url origin <brain.remote>) or set brain.remote to the new URL, then rerun.")
+    return url
+
+
+def fetch(root: Path, url: str, branch: str, timeout: float) -> str | None:
     """Fetch every remote branch into `refs/jas/remote/`, then name the ref to exchange with, or "" when the remote has no branch.
 
     The refspec is explicit, so the brain's own fetch config and tracking refs never decide what the remote has.
     None when the remote cannot be reached. Stops when the remote has branches but not this one: sync never creates a branch there."""
     try:
-        brain.git(root, "fetch", "-q", "--prune", "--no-tags", "origin", f"+refs/heads/*:{REMOTE}*", timeout=timeout)
+        brain.git(root, "fetch", "-q", "--prune", "--no-tags", url, f"+refs/heads/*:{REMOTE}*", timeout=timeout)
     except JasError as error:
         print(f"warning: could not reach the brain remote; local commits kept, push skipped. {error}", file=sys.stderr)
         return None
@@ -162,7 +182,7 @@ def zone_at(root: Path, rev: str) -> str | None:
     return brain.parse_zone(shown.stdout) if shown.returncode == 0 else None
 
 
-def exchange(root: Path, box: str, zone: str, branch: str, upstream: str, timeout: float, say, state: dict, quiet: bool) -> int:
+def exchange(root: Path, box: str, zone: str, url: str, branch: str, upstream: str, timeout: float, say, state: dict, quiet: bool) -> int:
     """Rebase local commits onto the fetched remote branch, push. A push succeeds only while the remote branch is still what was fetched."""
     base = brain.git(root, "rev-parse", upstream).stdout.strip() if upstream else ""
     if base:
@@ -187,7 +207,7 @@ def exchange(root: Path, box: str, zone: str, branch: str, upstream: str, timeou
         if zone_at(root, head) != zone:
             raise JasError(f"Brain {root} is no longer zone {zone!r} after the rebase; nothing was pushed. Check brain.json.")
         try:
-            brain.git(root, "push", "-q", f"--force-with-lease=refs/heads/{branch}:{base}", "origin", f"{head}:refs/heads/{branch}", timeout=timeout)
+            brain.git(root, "push", "-q", f"--force-with-lease=refs/heads/{branch}:{base}", url, f"{head}:refs/heads/{branch}", timeout=timeout)
         except JasError as error:
             print(f"warning: push failed; local commits kept. {error}", file=sys.stderr)
             return 0

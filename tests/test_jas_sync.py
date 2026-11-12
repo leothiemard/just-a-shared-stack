@@ -166,6 +166,8 @@ class SyncTests(Sandbox):
         root = self.a / "brain"
         git(root, "remote", "set-url", "origin", str(work))
         git(root, "config", "--unset-all", "remote.origin.fetch")
+        self.use_home(self.a)
+        self.write_config("brain", remote=str(work))
         for ref in git(root, "for-each-ref", "--format=%(refname)", "refs/remotes/").split():
             git(root, "update-ref", "-d", ref)
         self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
@@ -200,3 +202,34 @@ class SyncTests(Sandbox):
             code, _, err = self.on(self.a, "sync")
         self.assertIn("push failed", err)
         self.assertIn("From linux", git(self.remote, "show", "main:Projects/example-app/Log.md"))
+
+    def empty_remote(self, name):
+        path = self.base / name
+        subprocess.run(["git", "init", "-q", "--bare", str(path)], check=True)
+        return path
+
+    def test_a_push_url_never_sends_the_brain_elsewhere(self):
+        elsewhere = self.empty_remote("elsewhere.git")
+        git(self.a / "brain", "config", "remote.origin.pushurl", str(elsewhere))
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(git(elsewhere, "for-each-ref"), "")
+        self.assertIn("Private entry", git(self.remote, "show", "main:Projects/example-app/Log.md"))
+
+    def test_an_origin_other_than_the_configured_remote_is_refused(self):
+        elsewhere = self.empty_remote("elsewhere.git")
+        git(self.a / "brain", "remote", "set-url", "origin", str(elsewhere))
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1, err)
+        self.assertIn("brain.remote", err)
+        self.assertEqual(git(elsewhere, "for-each-ref"), "")
+
+    def test_the_configured_remote_matches_in_another_url_form(self):
+        root = self.a / "brain"
+        git(root, "remote", "set-url", "origin", f"file://{self.remote}/")
+        self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertIn("From mac", git(self.remote, "show", "main:Projects/example-app/Log.md"))
