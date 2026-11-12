@@ -30,6 +30,14 @@ class NotesTests(Sandbox):
         )
         self.assertFalse((self.brain / "Projects" / "example-app").exists())
 
+    def test_a_heading_inside_a_longer_fence_is_not_an_entry(self):
+        log = self.brain / "Projects" / "example-app" / "Log.md"
+        log.parent.mkdir(parents=True)
+        intro = "# Log\n\n````md\n```\n## 2026-01-02 — Example inside a fence\n````\n\n"
+        log.write_text(intro + "## 2026-01-01 — Older\n- old\n")
+        self.ok("log", "-t", "Newer", "-p", "example-app", stdin="- new\n")
+        self.assertTrue(log.read_text().startswith(intro + f"## {TODAY} — Newer\n"), log.read_text())
+
     def test_log_project_defaults_to_the_repo_of_the_current_directory(self):
         work = self.base / "example-app"
         (work / "sub").mkdir(parents=True)

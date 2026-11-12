@@ -222,6 +222,18 @@ class InitTests(Sandbox):
         self.assertNotIn("\nold\n", text)
         self.assertTrue(text.endswith(rules.END + "\ntail\n"))
 
+    def test_a_fence_closes_only_on_its_own_kind_and_length(self):
+        for opener, inner in (("````md", "```"), ("```", "~~~")):
+            with self.subTest(opener):
+                example = f"{opener}\n{inner}\n" + rules.BEGIN + "\nKEEP\n" + rules.END + "\n" + opener[:4].rstrip("md") + "\n"
+                canonical = self.home / ".agents" / "AGENTS.md"
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                canonical.write_text("# Local\n\n" + example)
+                self.ok(*INIT, "--apply")
+                text = canonical.read_text()
+                self.assertIn(example, text)
+                self.assertEqual(text.count(rules.BEGIN), 2)
+
     def test_ambiguous_markers_are_a_conflict_and_the_file_is_kept(self):
         cases = {
             "only fenced markers": "```\n" + rules.BEGIN + "\n```\nlocal\n" + rules.END + "\n",

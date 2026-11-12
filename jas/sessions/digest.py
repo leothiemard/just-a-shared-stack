@@ -65,14 +65,10 @@ def turns(rec: SessionRecord) -> int:
 
 def contained(text: str) -> str:
     """Assistant Markdown that cannot open sections of its own: headings become bold, a cut fence is closed."""
-    lines, fenced = [], False
-    for line in text.split("\n"):
-        if brain.FENCE.match(line):
-            fenced = not fenced
-        elif not fenced:
-            line = re.sub(r"^#{1,6}\s+(.*?)\s*#*\s*$", r"**\1**", line)
-        lines.append(line)
-    return "\n".join(lines + (["```"] if fenced else []))
+    lines = text.split("\n")
+    mask, still_open = brain.fenced(lines)
+    out = [line if inside else re.sub(r"^#{1,6}\s+(.*?)\s*#*\s*$", r"**\1**", line) for line, inside in zip(lines, mask)]
+    return "\n".join(out + ([still_open] if still_open else []))
 
 
 def asked(prompts: list[str], chars: int) -> list[str]:

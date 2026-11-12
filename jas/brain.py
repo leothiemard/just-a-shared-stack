@@ -27,7 +27,7 @@ SKELETON = {
     ".gitignore": ".DS_Store\n.obsidian/workspace*.json\n.trash/\n",
 }
 SKIP_DIRS = {".git", ".obsidian", ".trash"}
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 PROJECT_NAME = re.compile(r"[^/\\]+")
 
@@ -212,15 +212,26 @@ def frontmatter(text: str) -> tuple[dict, int]:
     return {}, 0
 
 
+def fenced(lines: list[str]) -> tuple[list[bool], str]:
+    """Per line, whether it belongs to a code fence (delimiters included), and the fence still open at the end ("" when none).
+
+    A fence closes only on a line of its own character, at least as long, with nothing but whitespace after it."""
+    mask, fence = [], ""
+    for line in lines:
+        match = FENCE.match(line)
+        mask.append(bool(fence or match))
+        if fence:
+            if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence) and not match.group(2).strip():
+                fence = ""
+        elif match:
+            fence = match.group(1)
+    return mask, fence
+
+
 def outside_fences(lines: list[str]) -> list[tuple[int, str]]:
     """(line index, line) for each line outside code fences, fence lines excluded."""
-    out, fenced = [], False
-    for i, line in enumerate(lines):
-        if FENCE.match(line):
-            fenced = not fenced
-        elif not fenced:
-            out.append((i, line))
-    return out
+    mask, _ = fenced(lines)
+    return [(i, line) for i, line in enumerate(lines) if not mask[i]]
 
 
 def headings(lines: list[str]) -> list[tuple[int, int, str]]:

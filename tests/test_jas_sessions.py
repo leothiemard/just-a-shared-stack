@@ -166,6 +166,17 @@ class SessionsTests(Sandbox):
         self.export([record("s1", peak_context=250000, subagent_count=4)])
         self.assertIn("1500 tokens  peak 250K  4 subagents", self.ok("sessions", "list"))
 
+    def test_a_shorter_fence_line_does_not_end_a_longer_fence_in_a_digest(self):
+        rec = SessionRecord(
+            id="x", title="T", project="p", cwd="", started=NOW, updated=NOW, prompts=["Go"],
+            turn_finals=["first", "````md\n```\n## inside\n````\n## outside\n````\nstill open"],
+        )
+        text = digest.render(rec, "mac", "personal")
+        sections = [t for _, level, t in brain.headings(text.split("\n")) if level == 2]
+        self.assertEqual(sections, ["Asked", "Outcome", "Turns"])
+        self.assertIn("**outside**", text)
+        self.assertIn("````md\n```\n## inside\n````", text)
+
     def test_assistant_markdown_cannot_open_digest_sections(self):
         rec = SessionRecord(
             id="x", title="T", project="p", cwd="", started=NOW, updated=NOW,
