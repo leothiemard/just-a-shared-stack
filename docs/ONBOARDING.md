@@ -105,4 +105,4 @@ Every `jas init --apply` and `jas update --apply` that changed something prints 
 jas restore ~/.config/just-a-stack/backups/<stamp>/manifest.json
 ```
 
-It first checks that nothing it wrote has changed since; if something has, it restores nothing and tells you which file to look at. The brain is never touched by a restore: undo brain changes with git in the brain folder (`jas path brain`).
+It first checks that nothing it wrote has changed since; if something has, it restores nothing and tells you which file to look at. An `--apply` that failed midway prints the same command in its error; restore then undoes the steps that ran. The brain clone runs before any change outside the brain, so a clone that fails leaves the box as it was. The brain is never touched by a restore: undo brain changes with git in the brain folder (`jas path brain`).

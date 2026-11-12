@@ -56,6 +56,10 @@ Reviews/<YYYY>-W<ww>.md            periodic review reports
 
 The brain is also a valid Obsidian vault, which is handy for reading it, but nothing depends on Obsidian.
 
+`jas init` accepts an existing folder as the brain only when it is a git repository with a `brain.json` of the box's zone; `--new-brain` and `--brain` need an empty or missing path, and a cloned repository with files but no `brain.json` is refused. Init commits only the files it writes (skeleton, imported notes), never other files in the folder.
+
+Every brain reader and writer (recall's index walk, `hub`, `log`, `lesson`, `show`, the session export and listing, the box card) resolves the path and refuses one that leads outside the brain, for example through a symlinked project folder. The index skips such files; the commands stop with an error. `--import-notes` keeps any existing destination, a dangling link included, and stops the whole import before copying anything when a destination leads outside the brain.
+
 The project key is the basename of the git repository root of the current directory, or the directory name outside a repository. It matches existing folders ignoring case, spaces, dashes and underscores, so `Example App` and `example-app` are the same project.
 
 A **lesson** is one `##` heading phrased as the claim, at most four lines of body, and a trailing comment with its provenance:
@@ -84,7 +88,7 @@ Expand with: jas show 1
 - **Index**: SQLite FTS5 in `~/.cache/just-a-stack/`, never inside the brain. It updates incrementally by file modification time and size, and rebuilds when its schema version changes.
 - **Chunks**: each Markdown file is split at `#`, `##` and `###` headings. Each chunk records its path, heading trail, line, and metadata: kind (hub, log, note, lesson, session, box, review, other), project, box and date.
 - **Ranking**: BM25 with headings weighted four times the body, multiplied by a kind weight (lessons first, then hubs, notes, reviews, logs, box cards, sessions) and a mild recency factor (half-life 180 days, floor 0.6). At most two hits come from one file, so one long note cannot fill the answer. Session hits are labelled with the session title. `--since` keeps undated chunks and dates a chunk by its heading (log entries), its provenance comment (lessons) or the file's frontmatter.
-- **Budget**: output stops before it exceeds `--budget` tokens (bytes/4, default 800), but always shows at least one hit. `jas show <n>` prints a hit in full.
+- **Budget**: output stops before the whole answer, header and footer included, exceeds `--budget` tokens (bytes/4, default 800), but always shows at least one hit. The header states the answer's own size. `jas show <n>` prints a hit in full.
 - **Freshness**: when the brain has a remote and the last sync is older than `sync.max_age_minutes`, recall first runs a quick sync with an 8-second network timeout. A failure is one warning line; recall still answers from the local copy.
 
 ## Session digests
@@ -92,10 +96,10 @@ Expand with: jas show 1
 Each finished top-level agent session becomes a small Markdown file under `Sessions/<box>/`, so any box can search what happened on any other.
 
 - A **source** reads one session store strictly read-only and yields session records. The interface is in `jas/sessions/__init__.py`. Sources: `t3` (T3 Code's state database), `claude` and `codex` (native transcripts, registered but not implemented yet), and `json:<file>` for tests. A source is used only when `sessions.sources` lists it.
-- The **`t3` source** reads the projection tables of `~/.t3/userdata/statev2.sqlite` (`sessions.t3_store` overrides the path) through a read-only SQLite URI. Those tables are internal to T3 Code and change often, so the source checks every table and column it reads before reading; on a mismatch it prints `t3 source disabled: <what changed>` once and exports nothing. A thread becomes a digest when it has no parent (forks count as top-level), is not deleted and has a completed run; history imported from T3 Code v1, which has no runs, is exported too. Its project is the basename of the T3 project's workspace root, and anything under a `scratch` folder is project `scratch`. "Asked" holds only what a human typed (plus the brief of an agent-launched thread); delegated results, notifications and scheduled-task wrappers are left out.
+- The **`t3` source** reads the projection tables of `~/.t3/userdata/statev2.sqlite` (`sessions.t3_store` overrides the path) through a read-only SQLite URI. Those tables are internal to T3 Code and change often, so the source checks every table and column it reads before reading; on a mismatch it prints `t3 source disabled: <what changed>` once and exports nothing. A thread becomes a digest when it has no parent (forks count as top-level), is not deleted, and has a completed run or no runs at all. The second case is history imported from T3 Code v1, which has messages but no runs; the spec asked only for threads with a completed run, and the code exports these too so that old history is searchable. A thread without any assistant answer is never exported. Its project is the basename of the T3 project's workspace root, and anything under a `scratch` folder is project `scratch`. "Asked" holds only what a human typed (plus the brief of an agent-launched thread); delegated results, notifications and scheduled-task wrappers are left out.
 - Only top-level sessions idle for `sessions.idle_minutes` are exported. Subagent threads, including nested ones, are counted on their top-level parent; app-owned children with runs get one line each under `## Delegated`.
 - The file name is stable per session, so a session that continued later overwrites its own digest. Export state lives in the cache, not the brain: the last update time of each exported session and a horizon (the last run's time minus the idle window). Sessions last updated before the horizon were final at the last run, so an incremental export asks sources only for newer ones. `--all` ignores the horizon. A run where a source was disabled does not move it.
-- Every text field passes through a scrubber that replaces known token shapes, private keys, credentials in URLs and `key=`/`token=`/`password=`/`secret=` values with `[redacted]`.
+- Every text field passes through a scrubber that replaces known token shapes, private keys, credentials in URLs and credential values with `[redacted]`. A credential value follows a key that is, or ends in `_`, `-` or `.` plus, one of `password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `access_key`, `auth`, `credential(s)` (any case), in `key=value`, `key: value` or JSON `"key": "value"` form; a quoted value is replaced whole. Other identifiers (`monkey`, `max_tokens`, `author`) are left alone.
 - A digest has frontmatter (`kind: session`, id, box, zone, project, title, dates, provider, model, turns, subagents, PRs, tokens, `peak_context` (the largest context-window use seen), and, when known, the T3 environment id, `native_ref`, branch and `created_by`), then `## Asked` (the prompts; first and last three when there are more than six), `## Outcome` (the final answer), `## Turns` (one line per earlier turn, the last twelve) and `## Delegated` (children). It never exceeds 6,000 bytes. Headings in assistant text become bold and a code fence cut by a length cap is closed, so an answer cannot open sections of its own.
 - `jas sessions stats [--by week|box|project]` sums sessions, turns, tokens and subagents from digest frontmatter and counts the sessions whose peak context passed 200,000 tokens. Long threads and delegated workers dominate cost, so the brain review starts from it.
 - A source that finds its store missing or unrecognised prints one warning and yields nothing. It never breaks `jas sync`.
@@ -104,14 +108,15 @@ Each finished top-level agent session becomes a small Markdown file under `Sessi
 
 `jas sync` keeps the brain shared. It never touches the stack; `jas update` does that.
 
-1. Take a lock in the cache directory (stale after 10 minutes). If another sync holds it, exit quietly.
-2. Export session digests (`--quick` skips this when the last export was under 6 hours ago).
-3. Refresh `Boxes/<box>.md`: zone, OS, stack revision, always-loaded context size, projects seen on this box.
-4. Commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
-5. With a remote: fetch, rebase local commits onto it, push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never force.
-6. Record the sync time.
+1. Take an advisory lock (`flock`) on a file in the cache directory, held until the sync ends; the kernel releases it if the process dies. If another sync holds it, exit quietly. Index rebuilds by `recall` wait on a lock of their own the same way.
+2. Stop with exit 1, before writing anything, while a rebase, merge, cherry-pick or revert is in progress in the brain or files are unmerged; the message says how to finish or abort it. `jas doctor` reports the same.
+3. Export session digests (`--quick` skips this when the last export was under 6 hours ago).
+4. Refresh `Boxes/<box>.md`: zone, OS, stack revision, always-loaded context size, projects seen on this box.
+5. Commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
+6. With a remote: fetch, check that the fetched `brain.json` has this box's zone (exit 1 without rebasing or pushing when it does not), rebase local commits onto it, check the local zone again, push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never force.
+7. Record the sync time.
 
-Concurrent work on two boxes usually merges cleanly: `Log.md` and lesson files use git's `union` merge driver (lesson files carry no `updated:` field for that reason), and session digests and box cards are per-box files. A hub edited on two boxes at once is the remaining conflict case, and it fails safe as in step 5.
+Concurrent work on two boxes usually merges cleanly: `Log.md` and lesson files use git's `union` merge driver (lesson files carry no `updated:` field for that reason), and session digests and box cards are per-box files. A hub edited on two boxes at once is the remaining conflict case, and it fails safe as in step 6.
 
 ## Context budget
 
