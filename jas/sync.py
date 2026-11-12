@@ -134,12 +134,13 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         stamp = now().strftime("%Y-%m-%dT%H:%M:%SZ")
         if brain.commit_all(root, cfg["box"], f"brain: {cfg['box']} {stamp}"):
             say("Committed local changes.")
-        code = exchange(root, cfg["box"], timeout, say, state, quiet)
-        save_state(root, state)
-        return code
+        try:
+            return exchange(root, cfg["box"], cfg["zone"], timeout, say, state, quiet)
+        finally:
+            save_state(root, state)
 
 
-def exchange(root: Path, box: str, timeout: float, say, state: dict, quiet: bool) -> int:
+def exchange(root: Path, box: str, zone: str, timeout: float, say, state: dict, quiet: bool) -> int:
     """Fetch, rebase local commits onto the remote, push. Never forces; a conflict leaves everything local."""
     if "origin" not in brain.git(root, "remote", check=False).stdout.split():
         state["last_sync"] = now().isoformat()
@@ -153,6 +154,11 @@ def exchange(root: Path, box: str, timeout: float, say, state: dict, quiet: bool
         return 0
     upstream = f"origin/{branch}"
     if brain.git(root, "rev-parse", "--verify", "-q", upstream, check=False).returncode == 0:
+        shown = brain.git(root, "show", f"{upstream}:brain.json", check=False)
+        found = brain.parse_zone(shown.stdout) if shown.returncode == 0 else None
+        if found != zone:
+            raise JasError(f"The brain remote ({upstream}) is zone {found!r}; this box is zone {zone!r}. Nothing was pulled or pushed; "
+                           f"local commits are kept. Point the brain's origin at a {zone} brain.")
         rebase = brain.git(root, *brain.identity(root, box), "rebase", "--autostash", upstream, check=False)
         if rebase.returncode:
             conflicts = brain.git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
@@ -169,6 +175,8 @@ def exchange(root: Path, box: str, timeout: float, say, state: dict, quiet: bool
     else:
         ahead = 1
     if ahead:
+        if brain.zone_of(root) != zone:
+            raise JasError(f"Brain {root} is no longer zone {zone!r} after the rebase; nothing was pushed. Check brain.json.")
         try:
             brain.git(root, "push", "-q", "-u", "origin", branch, timeout=timeout)
         except JasError as error:

@@ -98,3 +98,17 @@ class SyncTests(Sandbox):
         self.on(self.a, "log", "-t", "No identity", "-p", "example-app")
         self.assertEqual(self.on(self.a, "sync")[0], 0)
         self.assertEqual(git(self.a / "brain", "log", "-1", "--format=%ae").strip(), "mac@just-a-stack.local")
+
+    def test_remote_of_another_zone_is_neither_pulled_nor_pushed(self):
+        other = self.b / "brain"
+        (other / "brain.json").write_text('{"version": 1, "zone": "work"}\n')
+        git(other, "commit", "-qam", "change zone")
+        git(other, "push", "-q")
+        remote_head = git(self.remote, "rev-parse", "HEAD")
+        self.on(self.a, "log", "-t", "Personal entry", "-p", "example-app", stdin="- personal\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1)
+        self.assertIn("zone 'work'", err)
+        self.assertEqual(git(self.remote, "rev-parse", "HEAD"), remote_head)
+        self.assertIn('"personal"', (self.a / "brain" / "brain.json").read_text())
+        self.assertIn("Personal entry", git(self.a / "brain", "show", "HEAD:Projects/example-app/Log.md"))

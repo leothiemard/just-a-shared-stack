@@ -80,10 +80,18 @@ def identity(repo: Path, box: str) -> list[str]:
     return ["-c", f"user.name={box}", "-c", f"user.email={box}@just-a-stack.local"]
 
 
+def parse_zone(text: str) -> str | None:
+    """The zone in the text of a `brain.json`, or None when it is not one."""
+    try:
+        return json.loads(text).get("zone")
+    except (ValueError, AttributeError):
+        return None
+
+
 def zone_of(root: Path) -> str | None:
     try:
-        return json.loads((root / "brain.json").read_text()).get("zone")
-    except (OSError, ValueError, AttributeError):
+        return parse_zone((root / "brain.json").read_text())
+    except OSError:
         return None
 
 
