@@ -48,20 +48,27 @@ def brain_key(brain: Path) -> str:
 
 
 def write_atomic(path: Path, data: str | bytes) -> None:
-    """Replace the file at `path` (through a symlink, never the link itself) so it holds either the old or the new content."""
+    """Replace the file at `path` (through a symlink, never the link itself) so it holds either the old or the new content.
+
+    The new content is written to a `0600` file and gets the old file's mode (or the umask default) only once it is complete."""
     target = path.resolve() if path.is_symlink() else path
     temp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        with temp.open("xb") as handle:
+        with open(temp, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as handle:
             handle.write(data.encode() if isinstance(data, str) else data)
             handle.flush()
             os.fsync(handle.fileno())
-        if target.exists():
-            os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
+        os.chmod(temp, stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o666 & ~umask())
         os.replace(temp, target)
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def umask() -> int:
+    current = os.umask(0o077)
+    os.umask(current)
+    return current
 
 
 class Lock:

@@ -69,7 +69,7 @@ def disk_full(folder: Path):
         writing = any(flag in mode for flag in "wxa")
         return PartialWrite(handle) if writing and Path(file).parent == folder else handle
 
-    with mock.patch("io.open", failing_open):
+    with mock.patch("io.open", failing_open), mock.patch("builtins.open", failing_open):
         yield
 
 

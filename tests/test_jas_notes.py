@@ -52,6 +52,29 @@ class NotesTests(Sandbox):
         self.assertEqual(sorted(p.name for p in log.parent.iterdir()), ["Log.md", "example-app.md"])
         self.assertEqual([p.name for p in lessons.parent.iterdir()], ["vercel.md"])
 
+    def test_a_private_log_is_never_readable_while_it_is_replaced(self):
+        from unittest import mock
+
+        self.ok("log", "-t", "First", "-p", "example-app", stdin="- kept\n")
+        log = self.brain / "Projects" / "example-app" / "Log.md"
+        os.chmod(log, 0o600)
+        modes, real_fsync = [], os.fsync
+
+        def recording_fsync(fd):
+            modes.append(os.fstat(fd).st_mode & 0o777)
+            return real_fsync(fd)
+
+        old = os.umask(0o022)
+        try:
+            with mock.patch("os.fsync", recording_fsync):
+                self.ok("log", "-t", "Second", "-p", "example-app", stdin="- new\n")
+                self.ok("log", "-t", "New project", "-p", "other-app", stdin="- new\n")
+        finally:
+            os.umask(old)
+        self.assertEqual(set(modes), {0o600})
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.brain / "Projects" / "other-app" / "Log.md").stat().st_mode & 0o777, 0o644)
+
     def test_an_empty_log_title_creates_nothing(self):
         code, _, err = self.jas("log", "-t", "  ", "-p", "new-project")
         self.assertEqual(code, 1)
