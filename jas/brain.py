@@ -57,6 +57,22 @@ def is_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+IN_PROGRESS = (("rebase-merge", "rebase"), ("rebase-apply", "rebase"), ("MERGE_HEAD", "merge"), ("CHERRY_PICK_HEAD", "cherry-pick"), ("REVERT_HEAD", "revert"))
+
+
+def unfinished(root: Path) -> str:
+    """Why the brain's git state must not be committed over: an operation in progress or unmerged files. Empty when clean."""
+    git_dir = Path(git(root, "rev-parse", "--absolute-git-dir").stdout.strip())
+    for marker, operation in IN_PROGRESS:
+        if (git_dir / marker).exists():
+            return (f"A git {operation} is in progress in the brain. In {root}, finish it (fix the files, git add them, "
+                    f"git {operation} --continue) or undo it (git {operation} --abort), then rerun.")
+    unmerged = sorted(set(git(root, "diff", "--name-only", "--diff-filter=U").stdout.splitlines()))
+    if unmerged:
+        return f"The brain has unmerged files: {', '.join(unmerged)}. In {root}, fix them and git add them, then rerun."
+    return ""
+
+
 def identity(repo: Path, box: str) -> list[str]:
     """`-c` flags for a fallback commit identity when git has none."""
     if git(repo, "config", "user.email", check=False).stdout.strip():

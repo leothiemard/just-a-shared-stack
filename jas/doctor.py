@@ -66,8 +66,9 @@ def brain_checks(cfg: dict) -> list[tuple[str, str, str]]:
     def git(*args: str):
         return brain.git(root, *args, check=False)
 
-    if (root / ".git" / "rebase-merge").exists() or (root / ".git" / "rebase-apply").exists() or git("diff", "--name-only", "--diff-filter=U").stdout.strip():
-        out.append(("fail", "brain git", "unfinished rebase or merge conflicts; resolve them in the brain, then jas sync"))
+    problem = brain.unfinished(root)
+    if problem:
+        out.append(("fail", "brain git", problem))
     dirty = git("status", "--porcelain").stdout.strip()
     out.append(("warn" if dirty else "ok", "brain git", "uncommitted changes; jas sync commits them" if dirty else "clean"))
     counts = git("rev-list", "--left-right", "--count", "@{upstream}...HEAD")

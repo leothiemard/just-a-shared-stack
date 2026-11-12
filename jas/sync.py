@@ -120,6 +120,9 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if not held:
             say("Another jas sync is running for this brain; skipped.")
             return 0
+        problem = brain.unfinished(root)
+        if problem:
+            raise JasError(f"Sync stopped; nothing was exported, committed or pushed. {problem}")
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
         if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
