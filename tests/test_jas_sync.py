@@ -45,6 +45,22 @@ class SyncTests(Sandbox):
             self.assertTrue((home / "brain" / "Boxes" / "mac.md").exists())
             self.assertTrue((home / "brain" / "Boxes" / "linux-box.md").exists())
 
+    def test_concurrent_lessons_on_one_topic_merge(self):
+        self.on(self.a, "lesson", "vercel", "Preview deploys ignore late env vars", "-p", "example-app")
+        self.on(self.a, "sync")
+        self.on(self.b, "sync")
+        self.on(self.a, "lesson", "vercel", "Edge config needs a redeploy", "-p", "example-app")
+        self.on(self.b, "lesson", "vercel", "Build cache survives branch renames", "-p", "other-app")
+        self.assertEqual(self.on(self.a, "sync")[0], 0)
+        code, _, err = self.on(self.b, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.on(self.a, "sync")[0], 0)
+        for home in (self.a, self.b):
+            text = (home / "brain" / "Lessons" / "vercel.md").read_text()
+            self.assertEqual(text.count("\n## "), 3, text)
+            self.assertEqual(text.count("topic: vercel"), 1)
+            self.assertNotIn("<<<<<<<", text)
+
     def test_hub_conflict_fails_safe(self):
         hub = "Projects/example-app/example-app.md"
         self.on(self.a, "log", "-t", "Start", "-p", "example-app")

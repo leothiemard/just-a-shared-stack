@@ -77,8 +77,9 @@ def brain_checks(cfg: dict) -> list[tuple[str, str, str]]:
     out.append(("ok", "brain sync", sync.synced_label(root)))
     has_identity = bool(git("config", "user.email").stdout.strip())
     out.append(("ok" if has_identity else "warn", "git identity", "set" if has_identity else f"none; brain commits use {cfg['box']}@just-a-stack.local"))
-    union = "merge: union" in git("check-attr", "merge", "--", "Projects/x/Log.md").stdout
-    out.append(("ok" if union else "warn", "merge driver", "Log.md merge=union" if union else "add `Log.md merge=union` to the brain's .gitattributes"))
+    for probe, line in (("Projects/x/Log.md", "Log.md merge=union"), ("Lessons/x.md", "Lessons/*.md merge=union")):
+        union = "merge: union" in git("check-attr", "merge", "--", probe).stdout
+        out.append(("ok" if union else "warn", "merge driver", line if union else f"add `{line}` to the brain's .gitattributes (rerun `jas init --apply` to add it)"))
     big = sorted(p for p in (root / "Projects").glob("*/*.md") if p.stem == p.parent.name and p.stat().st_size > HUB_MAX)
     for hub in big:
         out.append(("warn", "hub size", f"{hub.relative_to(root)} is {hub.stat().st_size} bytes (target {HUB_MAX}); move detail to topic notes"))

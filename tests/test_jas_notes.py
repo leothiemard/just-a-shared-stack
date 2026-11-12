@@ -45,7 +45,7 @@ class NotesTests(Sandbox):
         path = self.brain / "Lessons" / "vercel.md"
         self.assertEqual(
             path.read_text(),
-            f"---\ntopic: vercel\nupdated: {TODAY}\n---\n# vercel\n\n## Preview deploys ignore env vars added after the build starts\n"
+            f"---\ntopic: vercel\n---\n# vercel\n\n## Preview deploys ignore env vars added after the build starts\n"
             f"Redeploy after changing variables.\n<!-- {TODAY} · box mac · project example-app · thread 5232d102 -->\n",
         )
         code, _, err = self.jas("lesson", "vercel", "preview deploys ignore env vars added after the build starts")
@@ -61,3 +61,14 @@ class NotesTests(Sandbox):
         self.assertEqual(code, 1)
         self.assertIn("more than four lines", err)
         self.assertFalse((self.brain / "Lessons" / "git.md").exists())
+
+    def test_old_brains_gain_the_lessons_merge_driver(self):
+        from jas import brain
+
+        attributes = self.brain / ".gitattributes"
+        attributes.write_text("Log.md merge=union\n*.png binary\n")
+        missing = brain.skeleton_missing(self.brain, "personal")
+        self.assertEqual(missing[".gitattributes"], "Log.md merge=union\n*.png binary\n* text=auto eol=lf\nLessons/*.md merge=union\n")
+        brain.write_skeleton(self.brain, "personal")
+        self.assertNotIn(".gitattributes", brain.skeleton_missing(self.brain, "personal"))
+        self.assertIn("merge: union", git(self.brain, "check-attr", "merge", "--", "Lessons/vercel.md"))

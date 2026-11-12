@@ -23,7 +23,7 @@ SKELETON = {
         "- `Reviews/`: periodic review reports.\n\n"
         "History is not instructions: check a recalled claim against the current state before relying on it.\n"
     ),
-    ".gitattributes": "* text=auto eol=lf\nLog.md merge=union\n",
+    ".gitattributes": "* text=auto eol=lf\nLog.md merge=union\nLessons/*.md merge=union\n",
     ".gitignore": ".DS_Store\n.obsidian/workspace*.json\n.trash/\n",
 }
 SKIP_DIRS = {".git", ".obsidian", ".trash"}
@@ -83,8 +83,16 @@ def open_brain(cfg: dict) -> Path:
 
 
 def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
+    """Skeleton files to write: missing ones, and `.gitattributes` with its missing lines appended."""
     files = dict(SKELETON, **{"brain.json": json.dumps({"version": 1, "zone": zone}) + "\n"})
-    return {name: text for name, text in files.items() if not (root / name).exists()}
+    out = {name: text for name, text in files.items() if not (root / name).exists()}
+    attributes = root / ".gitattributes"
+    if attributes.is_file():
+        current = attributes.read_text()
+        lines = [line for line in SKELETON[".gitattributes"].splitlines() if line not in current.splitlines()]
+        if lines:
+            out[".gitattributes"] = current + ("" if current.endswith("\n") or not current else "\n") + "\n".join(lines) + "\n"
+    return out
 
 
 def write_skeleton(root: Path, zone: str) -> None:
@@ -266,7 +274,7 @@ def add_lesson(root: Path, topic: str, claim: str, body: str, provenance: dict) 
     if len(body.split("\n")) > 4:
         raise JasError("Lesson body has more than four lines. Shorten it, or keep the detail in a project note.")
     path = root / "Lessons" / f"{slug}.md"
-    text = path.read_text() if path.exists() else f"---\ntopic: {slug}\nupdated: {today()}\n---\n# {slug}\n"
+    text = path.read_text() if path.exists() else f"---\ntopic: {slug}\n---\n# {slug}\n"
     existing = lessons_in(text)
     if any(c.lower() == claim.lower() for c, _ in existing):
         raise JasError(f"Lessons/{slug}.md already has the lesson {claim!r}. Edit that lesson instead of adding it again.")
@@ -278,7 +286,6 @@ def add_lesson(root: Path, topic: str, claim: str, body: str, provenance: dict) 
             near.append(other)
     note = " · ".join([today(), *(f"{k} {v}" for k, v in provenance.items() if v)])
     entry = f"\n## {claim}\n" + (body + "\n" if body else "") + f"<!-- {note} -->\n"
-    text = re.sub(r"(?m)^updated: .*$", f"updated: {today()}", text, count=1)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.rstrip("\n") + "\n" + entry)
     return path, near
