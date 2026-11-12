@@ -139,7 +139,7 @@ def exchange(root: Path, box: str, zone: str, timeout: float, say, state: dict, 
                            f"local commits are kept. Point the brain's origin at a {zone} brain.")
         rebase = brain.git(root, *brain.identity(root, box), "rebase", "--autostash", upstream, check=False)
         if rebase.returncode:
-            conflicts = brain.git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+            conflicts = brain.git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.splitlines()
             brain.git(root, "rebase", "--abort", check=False)
             if not quiet:
                 files = ", ".join(conflicts) or "unknown files"

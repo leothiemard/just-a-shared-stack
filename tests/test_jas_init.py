@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -275,3 +276,24 @@ class InitTests(Sandbox):
         self.ok(*INIT, "--apply")
         self.assertIn("README.md", git(brain, "show", "--name-only", "--format=", "HEAD"))
         self.assertEqual(git(brain, "status", "--porcelain"), "?? scratch.txt\n")
+
+    def test_import_skips_source_links_that_lead_outside_the_source(self):
+        vault, outside = self.vault(), self.base / "outside"
+        outside.mkdir()
+        (outside / "private.md").write_text("private\n")
+        (vault / "Projects" / "example-app" / "Linked.md").symlink_to(outside / "private.md")
+        (vault / "Linked.md").symlink_to(outside / "private.md")
+        self.ok(*INIT, "--import-notes", str(vault), "--apply")
+        brain = self.home / "brain"
+        self.assertTrue((brain / "Projects" / "example-app" / "New.md").exists())
+        self.assertFalse(os.path.lexists(brain / "Projects" / "example-app" / "Linked.md"))
+        self.assertFalse(os.path.lexists(brain / "Linked.md"))
+
+    def test_skeleton_fill_never_writes_through_a_link(self):
+        self.ok(*INIT, "--apply")
+        brain, outside = self.home / "brain", self.base / "outside.md"
+        git(brain, "rm", "-q", "README.md")
+        git(brain, "commit", "-q", "-m", "drop readme")
+        (brain / "README.md").symlink_to(outside)
+        self.jas(*INIT, "--apply")
+        self.assertFalse(outside.exists())

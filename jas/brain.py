@@ -121,7 +121,7 @@ def open_brain(cfg: dict) -> Path:
 def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
     """Skeleton files to write: missing ones, and `.gitattributes` with its missing lines appended."""
     files = dict(SKELETON, **{"brain.json": json.dumps({"version": 1, "zone": zone}) + "\n"})
-    out = {name: text for name, text in files.items() if not (root / name).exists()}
+    out = {name: text for name, text in files.items() if not os.path.lexists(root / name)}
     attributes = root / ".gitattributes"
     if attributes.is_file():
         current = attributes.read_text()
@@ -134,7 +134,7 @@ def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
 def write_skeleton(root: Path, zone: str) -> list[str]:
     missing = skeleton_missing(root, zone)
     for name, text in missing.items():
-        (root / name).write_text(text)
+        within(root, root / name).write_text(text)
     return sorted(missing)
 
 
@@ -166,13 +166,14 @@ def commit_all(root: Path, box: str, message: str) -> bool:
 def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
     """Files to copy from `source` (its `Projects/` and loose top-level `.md`), and existing ones kept.
 
-    Any existing destination, a dangling link included, is kept; one that leads outside the brain stops the whole import."""
-    pairs = [(f, root / f.name) for f in sorted(source.glob("*.md")) if f.is_file()]
+    Source files that lead outside `source` are left out. Any existing destination, a dangling link included, is kept;
+    one that leads outside the brain stops the whole import."""
+    pairs = [(f, root / f.name) for f in sorted(source.glob("*.md")) if f.is_file() and inside(source, f)]
     projects = source / "Projects"
     if projects.is_dir():
         for f in sorted(projects.rglob("*")):
             rel = f.relative_to(source)
-            if f.is_file() and not any(part.startswith(".") for part in rel.parts):
+            if f.is_file() and inside(source, f) and not any(part.startswith(".") for part in rel.parts):
                 pairs.append((f, root / rel))
     copies = [(src, within(root, dest)) for src, dest in pairs if not os.path.lexists(dest)]
     kept = [dest for _, dest in pairs if os.path.lexists(dest)]
