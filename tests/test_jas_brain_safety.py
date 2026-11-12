@@ -110,6 +110,19 @@ class ContainmentTests(Sandbox):
         self.assertIn("No hits", self.ok("recall", "unikeyword", "--no-sync"))
         self.refused("show", "leak.md")
 
+    def test_a_brain_json_that_leads_outside_is_no_brain(self):
+        (self.outside / "brain.json").write_text('{"version": 1, "zone": "personal"}\n')
+        (self.root / "brain.json").unlink()
+        self.link("brain.json", self.outside / "brain.json")
+        for argv in (("recall", "x", "--no-sync"), ("sync",), ("hub", "example")):
+            with self.subTest(argv):
+                code, _, err = self.jas(*argv)
+                self.assertEqual(code, 1)
+                self.assertIn("No valid brain", err)
+        code, out, _ = self.jas("init", "--box", "mac", "--zone", "personal", "--new-brain")
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"conflict\s+brain\s+.*is not a brain")
+
     def test_session_and_box_folder_links(self):
         (self.outside / "2026-01").mkdir()
         (self.outside / "2026-01" / "digest.md").write_text("---\nkind: session\nbox: other\nupdated: 2026-01-02\n---\n# x\n")

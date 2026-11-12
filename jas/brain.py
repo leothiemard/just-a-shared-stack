@@ -89,8 +89,10 @@ def parse_zone(text: str) -> str | None:
 
 
 def zone_of(root: Path) -> str | None:
+    """The brain's zone; None when its `brain.json` is missing, invalid or leads outside it."""
+    path = root / "brain.json"
     try:
-        return parse_zone((root / "brain.json").read_text())
+        return parse_zone(path.read_text()) if inside(root, path) else None
     except OSError:
         return None
 
@@ -119,9 +121,10 @@ def within(root: Path, path: Path) -> Path:
 def open_brain(cfg: dict) -> Path:
     """The brain path, after checking it exists and belongs to this box's zone."""
     root = config.brain_path(cfg)
-    if not (root / "brain.json").is_file():
-        raise JasError(f"No brain at {paths.tilde(root)}. Run `jas init --brain <git-url>` or `jas init --new-brain`.")
     zone = zone_of(root)
+    if zone is None:
+        raise JasError(f"No valid brain at {paths.tilde(root)} (a brain.json inside it that names a zone). "
+                       f"Run `jas init --brain <git-url>` or `jas init --new-brain`.")
     if zone != cfg["zone"]:
         raise JasError(f"Brain {paths.tilde(root)} is zone {zone!r}; this box is zone {cfg['zone']!r}. Point brain.path at a {cfg['zone']} brain.")
     return root
