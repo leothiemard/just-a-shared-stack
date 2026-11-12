@@ -244,7 +244,7 @@ def recall(conn: sqlite3.Connection, root: Path, query: str, *, limit: int, budg
         shown.append(hit)
         per_file[hit["path"]] = per_file.get(hit["path"], 0) + 1
         body += line
-    refs_path(root).write_text(json.dumps([{"path": h["path"], "line": h["line"], "heading": h["heading"]} for h in shown]))
+    paths.write_atomic(refs_path(root), json.dumps([{"path": h["path"], "line": h["line"], "heading": h["heading"]} for h in shown]))
     if as_json:
         keys = ("path", "heading", "trail", "kind", "project", "box", "date")
         rows = [dict({k: h[k] for k in keys}, ref=n, line=h["line"] + 1, score=round(h["score"], 3), snippet=snippet(h)) for n, h in enumerate(shown, 1)]

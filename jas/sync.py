@@ -32,7 +32,7 @@ def load_state(root: Path) -> dict:
 
 def save_state(root: Path, state: dict) -> None:
     state_path(root).parent.mkdir(parents=True, exist_ok=True)
-    state_path(root).write_text(json.dumps(state, indent=2) + "\n")
+    paths.write_atomic(state_path(root), json.dumps(state, indent=2) + "\n")
 
 
 def age_seconds(stamp: str | None) -> float | None:
@@ -84,7 +84,7 @@ def box_card(cfg: dict, root: Path, total: int) -> str:
 def write_if_changed(path: Path, text: str) -> None:
     if not path.exists() or path.read_text() != text:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        paths.write_atomic(path, text)
 
 
 def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False) -> int:

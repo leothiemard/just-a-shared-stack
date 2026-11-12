@@ -1,7 +1,7 @@
 import datetime as dt
 import json
 
-from jashelp import Sandbox
+from jashelp import Sandbox, disk_full
 
 from jas import brain
 from jas.sessions import SessionRecord, digest, export, scrub
@@ -54,6 +54,20 @@ class SessionsTests(Sandbox):
             data = path.read_bytes()
             for secret in planted:
                 self.assertNotIn(secret.encode(), data, path.name)
+
+    def test_a_failed_write_leaves_the_digest_and_export_state_whole(self):
+        rel = self.export([record("s1")])["written"][0]
+        path = self.brain / rel
+        state = next((self.home / ".cache" / "just-a-stack").glob("sessions-*.json"))
+        before = path.read_text(), state.read_text()
+        self.store.write_text(json.dumps([record("s1", updated_minutes_ago=100, turn_finals=["A continuation."])]))
+        with disk_full(path.parent), self.assertRaises(OSError):
+            self.jas("sessions", "export", "--all")
+        self.assertEqual(path.read_text(), before[0])
+        self.assertEqual([p.name for p in path.parent.iterdir()], [path.name])
+        with disk_full(state.parent), self.assertRaises(OSError):
+            self.jas("sessions", "export", "--all")
+        self.assertEqual(json.loads(state.read_text())["sessions"], json.loads(before[1])["sessions"])
 
     def test_digest_from_fixture_store(self):
         rows = [

@@ -1,7 +1,7 @@
 import datetime as dt
 import os
 
-from jashelp import Sandbox, git
+from jashelp import Sandbox, disk_full, git
 
 TODAY = dt.date.today().isoformat()
 
@@ -37,6 +37,20 @@ class NotesTests(Sandbox):
         log.write_text(intro + "## 2026-01-01 — Older\n- old\n")
         self.ok("log", "-t", "Newer", "-p", "example-app", stdin="- new\n")
         self.assertTrue(log.read_text().startswith(intro + f"## {TODAY} — Newer\n"), log.read_text())
+
+    def test_a_failed_write_leaves_the_log_and_lessons_whole(self):
+        self.ok("log", "-t", "First", "-p", "example-app", stdin="- kept\n")
+        self.ok("lesson", "vercel", "Preview deploys ignore late env vars", "-p", "example-app")
+        log = self.brain / "Projects" / "example-app" / "Log.md"
+        lessons = self.brain / "Lessons" / "vercel.md"
+        before = log.read_text(), lessons.read_text()
+        with disk_full(log.parent), self.assertRaises(OSError):
+            self.jas("log", "-t", "Second", "-p", "example-app", stdin="- new\n")
+        with disk_full(lessons.parent), self.assertRaises(OSError):
+            self.jas("lesson", "vercel", "Edge config needs a redeploy", "-p", "example-app")
+        self.assertEqual((log.read_text(), lessons.read_text()), before)
+        self.assertEqual(sorted(p.name for p in log.parent.iterdir()), ["Log.md", "example-app.md"])
+        self.assertEqual([p.name for p in lessons.parent.iterdir()], ["vercel.md"])
 
     def test_log_project_defaults_to_the_repo_of_the_current_directory(self):
         work = self.base / "example-app"

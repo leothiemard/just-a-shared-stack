@@ -1,11 +1,9 @@
-import io
 import json
 import os
 import re
 from pathlib import Path
-from unittest import mock
 
-from jashelp import Sandbox, git, tree
+from jashelp import Sandbox, disk_full, git, tree
 
 from jas import rules
 
@@ -217,32 +215,7 @@ class InitTests(Sandbox):
 
     def test_restore_works_after_a_write_that_failed_partway(self):
         canonical = self.canonical_with("ORIGINAL\n")
-        real_open = io.open
-
-        class DiskFull:
-            def __init__(self, file):
-                self.file = file
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                self.file.close()
-
-            def write(self, data):
-                self.file.write(data[:1])
-                self.file.flush()
-                raise OSError(28, "No space left on device")
-
-            def __getattr__(self, name):
-                return getattr(self.file, name)
-
-        def failing_open(file, mode="r", *args, **kwargs):
-            handle = real_open(file, mode, *args, **kwargs)
-            writing = any(flag in mode for flag in "wxa")
-            return DiskFull(handle) if writing and Path(file).parent == canonical.parent else handle
-
-        with mock.patch("io.open", failing_open):
+        with disk_full(canonical.parent):
             code, _, err = self.jas(*INIT, "--apply")
         self.assertEqual(code, 1)
         self.assertEqual(canonical.read_text(), "ORIGINAL\n")

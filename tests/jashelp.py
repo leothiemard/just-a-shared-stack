@@ -38,6 +38,41 @@ def tree(root: Path) -> dict[str, str]:
     return out
 
 
+class PartialWrite:
+    """A file whose first write lands one byte and then fails, as on a full disk."""
+
+    def __init__(self, file) -> None:
+        self.file = file
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.file.close()
+
+    def write(self, data):
+        self.file.write(data[:1])
+        self.file.flush()
+        raise OSError(28, "No space left on device")
+
+    def __getattr__(self, name):
+        return getattr(self.file, name)
+
+
+@contextlib.contextmanager
+def disk_full(folder: Path):
+    """Every file opened for writing directly inside `folder` fails after its first byte."""
+    real_open = io.open
+
+    def failing_open(file, mode="r", *args, **kwargs):
+        handle = real_open(file, mode, *args, **kwargs)
+        writing = any(flag in mode for flag in "wxa")
+        return PartialWrite(handle) if writing and Path(file).parent == folder else handle
+
+    with mock.patch("io.open", failing_open):
+        yield
+
+
 class Sandbox(unittest.TestCase):
     def setUp(self) -> None:
         temp = tempfile.TemporaryDirectory(prefix="jas test ")

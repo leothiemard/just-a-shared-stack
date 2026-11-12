@@ -84,13 +84,13 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
         if not dry_run:
             path = brain.within(root, root / rel)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(digest.render(scrub.record(rec), cfg["box"], cfg["zone"]))
+            paths.write_atomic(path, digest.render(scrub.record(rec), cfg["box"], cfg["zone"]))
             seen[rec.id] = stamp
     if not dry_run:
         if complete and not since:
             state["horizon"] = (now - idle).isoformat()
         state_path(root).parent.mkdir(parents=True, exist_ok=True)
-        state_path(root).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+        paths.write_atomic(state_path(root), json.dumps(state, indent=2, sort_keys=True) + "\n")
     return result
 
 

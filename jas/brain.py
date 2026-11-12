@@ -146,7 +146,7 @@ def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
 def write_skeleton(root: Path, zone: str) -> list[str]:
     missing = skeleton_missing(root, zone)
     for name, text in missing.items():
-        within(root, root / name).write_text(text)
+        paths.write_atomic(within(root, root / name), text)
     return sorted(missing)
 
 
@@ -197,7 +197,8 @@ def import_notes(source: Path, root: Path) -> list[str]:
     copies, _ = import_plan(source, root)
     for src, dest in copies:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+        paths.write_atomic(dest, src.read_bytes())
+        shutil.copystat(src, dest)
     return [dest.relative_to(root).as_posix() for _, dest in copies]
 
 
@@ -284,7 +285,8 @@ def ensure_project(root: Path, project: str) -> Path:
     if not folder.is_dir():
         folder.mkdir(parents=True)
         date = today()
-        hub_path(root, project).write_text(
+        paths.write_atomic(
+            hub_path(root, project),
             f"---\nproject: {project}\ntags: [project, {project}]\ncreated: {date}\nupdated: {date}\n---\n"
             f"# {project}\n\n## Summary\n\n## Current state\n\n## Key decisions\n\n## Notes\n\n- [[Log]]\n"
         )
@@ -308,7 +310,7 @@ def add_log(root: Path, project: str, title: str, body: str, box: str) -> Path:
         lines += ["", *entry]
     else:
         lines[first:first] = entry
-    log.write_text("\n".join(lines))
+    paths.write_atomic(log, "\n".join(lines))
     return log
 
 
@@ -366,7 +368,7 @@ def add_lesson(root: Path, topic: str, claim: str, body: str, provenance: dict) 
     note = " · ".join([today(), *(f"{k} {v}" for k, v in provenance.items() if v)])
     entry = f"\n## {claim}\n" + (body + "\n" if body else "") + f"<!-- {note} -->\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text.rstrip("\n") + "\n" + entry)
+    paths.write_atomic(path, text.rstrip("\n") + "\n" + entry)
     return path, near
 
 
