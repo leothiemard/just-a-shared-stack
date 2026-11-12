@@ -15,7 +15,7 @@ from jass import JassError, config, paths
 SKELETON = {
     "README.md": (
         "# Lore\n\n"
-        "Shared knowledge for agents on every box in this zone, managed by just-a-stack (`jass`).\n\n"
+        "Shared knowledge for agents on every box in this zone, managed by `jass`.\n\n"
         "- `Projects/<project>/`: hub note, `Log.md` and topic notes per project.\n"
         "- `Lessons/<topic>.md`: lessons that apply beyond one project.\n"
         "- `Sessions/<box>/`: generated digests of past agent sessions. Never edit them by hand.\n"

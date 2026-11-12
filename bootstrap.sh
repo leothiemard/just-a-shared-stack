@@ -1,10 +1,10 @@
 #!/bin/sh
-# Set up a box: clone just-a-stack (unless already there), then run `jass init` with the given arguments.
-# Usage: curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
+# Set up a box: clone the jass stack (unless already there), then run `jass init` with the given arguments.
+# Usage: curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-shared-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
 set -eu
 
-repo=${JASS_STACK_URL:-https://github.com/leothiemard/just-a-stack.git}
-dir=${JASS_STACK_DIR:-$HOME/Development/just-a-stack}
+repo=${JASS_STACK_URL:-https://github.com/leothiemard/just-a-shared-stack.git}
+dir=${JASS_STACK_DIR:-$HOME/Development/just-a-shared-stack}
 
 command -v git >/dev/null 2>&1 || { echo "bootstrap: git is required. Install it, then rerun." >&2; exit 1; }
 

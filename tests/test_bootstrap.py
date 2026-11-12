@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "bootstrap.sh"
-URL = "https://github.com/example/just-a-stack.git"
+URL = "https://github.com/example/just-a-shared-stack.git"
 SHELLS = [shell for shell in ("sh", "dash") if shutil.which(shell)]
 
 
@@ -40,8 +40,8 @@ class BootstrapTests(unittest.TestCase):
                 self.assertEqual(subprocess.run([shell, "-n", str(SCRIPT)]).returncode, 0)
 
     def test_a_checkout_of_the_same_repository_is_used_in_any_url_form(self):
-        for origin in ("https://github.com/example/just-a-stack", "git@github.com:Example/just-a-stack.git",
-                       "ssh://git@GitHub.com/example/Just-A-Stack.git", "https://user@github.com/example/just-a-stack.git/"):
+        for origin in ("https://github.com/example/just-a-shared-stack", "git@github.com:Example/just-a-shared-stack.git",
+                       "ssh://git@GitHub.com/example/Just-A-Shared-Stack.git", "https://user@github.com/example/just-a-shared-stack.git/"):
             for shell in SHELLS:
                 with self.subTest(origin=origin, shell=shell):
                     stack = self.checkout(origin)
@@ -54,7 +54,7 @@ class BootstrapTests(unittest.TestCase):
     def test_an_unrelated_folder_is_never_run(self):
         cases = {
             "another repository": ("https://github.com/example/other-tool.git", True),
-            "another owner": ("git@github.com:someone/just-a-stack.git", True),
+            "another owner": ("git@github.com:someone/just-a-shared-stack.git", True),
             "no jass package": (URL, False),
         }
         for name, (origin, cli) in cases.items():

@@ -1,6 +1,6 @@
 # Onboarding
 
-How to adopt just-a-stack for yourself. [ARCHITECTURE.md](ARCHITECTURE.md) explains the design in more depth.
+How to adopt jass for yourself. [ARCHITECTURE.md](ARCHITECTURE.md) explains the design in more depth.
 
 ## The idea in five sentences
 
@@ -17,9 +17,9 @@ Git, Python 3.9 or newer with SQLite FTS5 (macOS system Python, python.org and H
 3. Preview, then apply:
 
    ```sh
-   git clone https://github.com/<owner>/just-a-stack.git ~/Development/just-a-stack
-   ~/Development/just-a-stack/bin/jass init --box mac --zone personal --lore <lore-git-url>
-   ~/Development/just-a-stack/bin/jass init --box mac --zone personal --lore <lore-git-url> --apply
+   git clone https://github.com/<owner>/just-a-shared-stack.git ~/Development/just-a-shared-stack
+   ~/Development/just-a-shared-stack/bin/jass init --box mac --zone personal --lore <lore-git-url>
+   ~/Development/just-a-shared-stack/bin/jass init --box mac --zone personal --lore <lore-git-url> --apply
    ```
 
    The preview prints one row per change (`add`, `update`, `keep`, `conflict`, `skip`) and changes nothing. `--apply` writes `~/.config/jass/box.json`, links the skills into `~/.agents/skills` and `~/.claude/skills`, links `~/.local/bin/jass`, writes the rules block into `~/.agents/AGENTS.md` (and links or updates `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`), clones the lore and creates its skeleton, then runs `jass doctor`. It prints a restore manifest path.
@@ -38,10 +38,10 @@ Existing skills or files with the same names are reported as conflicts. Inspect 
 On the new machine:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <lore-git-url> --apply
+curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-shared-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <lore-git-url> --apply
 ```
 
-`bootstrap.sh` checks for git and Python, clones the stack to `~/Development/just-a-stack` (or `$JASS_STACK_DIR`), and runs `jass init` with your arguments. A folder already there is used only when it is the top of a git checkout whose `origin` is the same repository as the clone URL (`$JASS_STACK_URL`, in any https, ssh or `git@host:` form) and holds `bin/jass` and `jass/cli.py`; anything else stops bootstrap. Drop `--apply` to preview first. Then run `jass sync`.
+`bootstrap.sh` checks for git and Python, clones the stack to `~/Development/just-a-shared-stack` (or `$JASS_STACK_DIR`), and runs `jass init` with your arguments. A folder already there is used only when it is the top of a git checkout whose `origin` is the same repository as the clone URL (`$JASS_STACK_URL`, in any https, ssh or `git@host:` form) and holds `bin/jass` and `jass/cli.py`; anything else stops bootstrap. Drop `--apply` to preview first. Then run `jass sync`.
 
 ## Keep a box current
 

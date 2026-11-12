@@ -35,7 +35,7 @@ The name is Jass, the Swiss card game. A hand of Jass depends on the deal; here 
 This repository is the **stack**: skills, a short managed block of global rules, and the `jass` CLI. A private **lore** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
+curl -fsSL https://raw.githubusercontent.com/leothiemard/just-a-shared-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --lore <git-url> --apply
 ```
 
 - [docs/ONBOARDING.md](docs/ONBOARDING.md): set up boxes, daily use, add skills, rules and private layers, review, roll back.
@@ -65,8 +65,8 @@ Manual cases in [evals/routing.json](evals/routing.json), [evals/sol-loop.json](
 Requires Git and Python 3.9+. Authenticate Git with this repository's personal GitHub account through your normal credential flow, then:
 
 ```sh
-git clone https://github.com/leothiemard/just-a-stack.git ~/Development/just-a-stack
-cd ~/Development/just-a-stack
+git clone https://github.com/leothiemard/just-a-shared-stack.git ~/Development/just-a-shared-stack
+cd ~/Development/just-a-shared-stack
 python3 scripts/install.py
 python3 scripts/install.py --apply
 python3 scripts/install.py --check
@@ -89,7 +89,7 @@ Restoration first verifies that its links have not been replaced. If you edited 
 Run this inside each existing checkout on both machines:
 
 ```sh
-git remote set-url origin https://github.com/leothiemard/just-a-stack.git
+git remote set-url origin https://github.com/leothiemard/just-a-shared-stack.git
 git pull --ff-only
 python3 scripts/install.py --check
 python3 scripts/install.py --root ~/.claude/skills --check

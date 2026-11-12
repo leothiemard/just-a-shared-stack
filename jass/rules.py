@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jass import JassError, lore
 
-BEGIN = "<!-- jass:begin (managed by just-a-stack; edit rules/global.md instead) -->"
+BEGIN = "<!-- jass:begin (managed by jass; edit rules/global.md in the stack instead) -->"
 END = "<!-- jass:end -->"
 
 

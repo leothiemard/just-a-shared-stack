@@ -1,4 +1,4 @@
-"""just-a-stack CLI: box setup, the shared lore, recall and sync."""
+"""jass (Just a Shared Stack) CLI: box setup, the shared lore, recall and sync."""
 
 
 class JassError(Exception):

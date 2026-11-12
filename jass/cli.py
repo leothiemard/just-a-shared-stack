@@ -147,7 +147,7 @@ def cmd_sync(args) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    top = argparse.ArgumentParser(prog="jass", description="just-a-stack: box setup, the shared lore, recall and sync.")
+    top = argparse.ArgumentParser(prog="jass", description="Just a Shared Stack: box setup, the shared lore, recall and sync.")
     sub = top.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 

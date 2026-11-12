@@ -1,6 +1,6 @@
 # Architecture
 
-just-a-stack is a setup for one person who runs coding agents (Claude Code, Codex, usually inside T3 Code) across many repositories and several machines. This page explains how the pieces fit. To set it up, read [ONBOARDING.md](ONBOARDING.md).
+jass (Just a Shared Stack) is a setup for one person who runs coding agents (Claude Code, Codex, usually inside T3 Code) across many repositories and several machines. This page explains how the pieces fit. To set it up, read [ONBOARDING.md](ONBOARDING.md).
 
 ## The problem
 
