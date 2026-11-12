@@ -1,4 +1,4 @@
-"""Write digests of finished sessions into the brain, and list them."""
+"""Write digests of finished sessions into the brain, list them, and summarise their cost."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from pathlib import Path
 
 from jas import brain, paths
 from jas.sessions import SessionRecord, digest, scrub, sources
+
+LONG_CONTEXT = 200_000
+
 
 def warn(message: str) -> None:
     print(f"warning: {message}", file=sys.stderr)
@@ -111,3 +114,46 @@ def listing(root: Path, since: str = "", box: str = "", project: str = "") -> li
         })
     return sorted(rows, key=lambda r: (r["date"], r["path"]))
 
+
+def group_key(row: dict, by: str) -> str:
+    if by == "week":
+        year, week, _ = dt.date.fromisoformat(row["date"]).isocalendar()
+        return f"{year}-W{week:02d}"
+    return str(row[by]) or "-"
+
+
+def stats(rows: list[dict], by: str) -> list[dict]:
+    """Per group: sessions, turns, tokens, subagents, and sessions whose peak context passed LONG_CONTEXT."""
+    groups: dict[str, dict] = {}
+    for row in rows:
+        if by == "week" and not row["date"]:
+            continue
+        g = groups.setdefault(group_key(row, by), {"group": group_key(row, by), "sessions": 0, "turns": 0, "input": 0, "cached": 0, "output": 0, "subagents": 0, "long": 0})
+        g["sessions"] += 1
+        for key in ("turns", "input", "cached", "output", "subagents"):
+            g[key] += row[key]
+        g["long"] += row["peak_context"] > LONG_CONTEXT
+    out = sorted(groups.values(), key=lambda g: g["group"] if by == "week" else -g["input"])
+    for g in out:
+        g["long_share"] = round(g["long"] / g["sessions"], 3)
+    return out
+
+
+def human(n: int) -> str:
+    for unit, size in (("B", 10**9), ("M", 10**6), ("k", 10**3)):
+        if n >= size:
+            return f"{n / size:.1f}{unit}"
+    return str(n)
+
+
+def stats_table(groups: list[dict], by: str) -> str:
+    total = {"group": "total", **{k: sum(g[k] for g in groups) for k in ("sessions", "turns", "input", "cached", "output", "subagents", "long")}}
+    total["long_share"] = round(total["long"] / total["sessions"], 3) if total["sessions"] else 0
+    width = max([len(by), 5, *(len(g["group"]) for g in groups)])
+    head = f"{by:<{width}} {'sessions':>8} {'turns':>6} {'input':>8} {'cached':>8} {'output':>7} {'subagents':>9} {'>200K':>6} {'share':>6}"
+
+    def line(g: dict) -> str:
+        return (f"{g['group']:<{width}} {g['sessions']:>8} {g['turns']:>6} {human(g['input']):>8} {human(g['cached']):>8}"
+                f" {human(g['output']):>7} {g['subagents']:>9} {g['long']:>6} {g['long_share']:>6.0%}")
+
+    return "\n".join([head, *(line(g) for g in groups), line(total)]) + "\n"

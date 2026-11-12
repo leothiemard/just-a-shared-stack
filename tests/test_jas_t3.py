@@ -154,3 +154,13 @@ class T3SourceTests(Sandbox):
         card = (self.brain / "Boxes" / "mac.md").read_text()
         self.assertIn("| Example App | /work/example-app |", card)
         self.assertNotIn("old-thing", card)
+
+    def test_sessions_stats(self):
+        self.export()
+        groups = json.loads(self.ok("sessions", "stats", "--by", "project", "--json"))
+        app = next(g for g in groups if g["group"] == "example-app")
+        self.assertEqual((app["sessions"], app["turns"], app["input"], app["subagents"], app["long"], app["long_share"]), (4, 26, 2600, 3, 1, 0.25))
+        table = self.ok("sessions", "stats", "--by", "week")
+        self.assertRegex(table.splitlines()[1], r"^\d{4}-W\d{2} ")
+        self.assertRegex(table.splitlines()[-1], r"^total\s+5\s")
+        self.assertIn(">200K", table.splitlines()[0])

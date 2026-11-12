@@ -127,6 +127,10 @@ def cmd_sessions(args) -> int:
             print(f"{verb} {rel}")
         print(f"{verb} {len(result['written'])} digest(s); {result['unchanged']} unchanged, {result['skipped']} skipped (active, subagent, excluded or too old).")
         return 0
+    if args.action == "stats":
+        groups = export.stats(export.listing(root, since), args.by)
+        print(json.dumps(groups, indent=2) if args.json else export.stats_table(groups, args.by).rstrip("\n"))
+        return 0
     rows = export.listing(root, since, args.box or "", args.project or "")
     if args.json:
         print(json.dumps(rows, indent=2))
@@ -205,7 +209,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("-p", "--project")
     p.add_argument("--thread", help="thread or session id for provenance")
 
-    p = command("sessions", cmd_sessions, "Export or list session digests.")
+    p = command("sessions", cmd_sessions, "Export, list or summarise session digests.")
     actions = p.add_subparsers(dest="action", metavar="<action>")
     actions.required = True
     e = actions.add_parser("export", help="write digests for finished sessions on this box")
@@ -218,6 +222,10 @@ def parser() -> argparse.ArgumentParser:
     ls.add_argument("--box")
     ls.add_argument("--project", "-p")
     ls.add_argument("--json", action="store_true")
+    st = actions.add_parser("stats", help="sessions, turns, tokens and long-context share per week, box or project")
+    st.add_argument("--since")
+    st.add_argument("--by", choices=["week", "box", "project"], default="week")
+    st.add_argument("--json", action="store_true")
 
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the brain.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")
