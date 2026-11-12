@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import subprocess
 
 from jasshelp import Sandbox, git
@@ -336,6 +337,16 @@ class SyncTests(Sandbox):
         link = self.base / "alias.git"
         link.symlink_to(self.remote)
         git(self.a / "lore", "remote", "set-url", "origin", str(link))
+        self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertIn("From mac", git(self.remote, "show", "main:Projects/example-app/Log.md"))
+
+    def test_another_letter_case_of_the_same_local_remote_still_syncs(self):
+        swapped = Path(str(self.remote).swapcase())
+        if not swapped.exists():
+            self.skipTest("case-sensitive filesystem")
+        git(self.a / "lore", "remote", "set-url", "origin", str(swapped))
         self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
         code, _, err = self.on(self.a, "sync")
         self.assertEqual(code, 0, err)
