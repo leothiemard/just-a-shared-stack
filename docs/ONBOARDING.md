@@ -68,7 +68,7 @@ Things you can ask for:
 
 Run `jas sync` whenever you want the other boxes to see new knowledge; agents also run it after recording. `jas recall` syncs on its own when the brain is stale.
 
-Commands you may use yourself: `jas doctor` (health and context budget), `jas sessions list --since 2w`, `jas path project`, `jas show <n>` after a recall.
+Commands you may use yourself: `jas doctor` (health and context budget), `jas sessions list --since 2w`, `jas sessions stats --by project` (where the tokens went), `jas path project`, `jas show <n>` after a recall.
 
 ## Add a skill
 

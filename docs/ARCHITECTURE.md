@@ -43,7 +43,7 @@ A work box adds a private **layer**: a directory shaped like this repository (`s
 ```
 brain.json                         {"version":1,"zone":"personal"}
 README.md                          what this is; history is not instructions
-.gitattributes                     Log.md merge=union, * text=auto eol=lf
+.gitattributes                     Log.md and Lessons/*.md merge=union, * text=auto eol=lf
 .gitignore
 Projects/<project>/<project>.md    hub note, target 3,000 bytes or less
 Projects/<project>/Log.md          dated entries, newest first
@@ -83,7 +83,7 @@ Expand with: jas show 1
 
 - **Index**: SQLite FTS5 in `~/.cache/just-a-stack/`, never inside the brain. It updates incrementally by file modification time and size, and rebuilds when its schema version changes.
 - **Chunks**: each Markdown file is split at `#`, `##` and `###` headings. Each chunk records its path, heading trail, line, and metadata: kind (hub, log, note, lesson, session, box, review, other), project, box and date.
-- **Ranking**: BM25 with headings weighted four times the body, multiplied by a kind weight (lessons first, then hubs, notes, reviews, logs, box cards, sessions) and a mild recency factor (half-life 180 days, floor 0.6).
+- **Ranking**: BM25 with headings weighted four times the body, multiplied by a kind weight (lessons first, then hubs, notes, reviews, logs, box cards, sessions) and a mild recency factor (half-life 180 days, floor 0.6). At most two hits come from one file, so one long note cannot fill the answer. Session hits are labelled with the session title. `--since` keeps undated chunks and dates a chunk by its heading (log entries), its provenance comment (lessons) or the file's frontmatter.
 - **Budget**: output stops before it exceeds `--budget` tokens (bytes/4, default 800), but always shows at least one hit. `jas show <n>` prints a hit in full.
 - **Freshness**: when the brain has a remote and the last sync is older than `sync.max_age_minutes`, recall first runs a quick sync with an 8-second network timeout. A failure is one warning line; recall still answers from the local copy.
 
@@ -91,11 +91,13 @@ Expand with: jas show 1
 
 Each finished top-level agent session becomes a small Markdown file under `Sessions/<box>/`, so any box can search what happened on any other.
 
-- A **source** reads one session store strictly read-only and yields session records. The interface is in `jas/sessions/__init__.py`. Sources: `t3` (T3 Code's state database), `claude` and `codex` (native transcripts), and `json:<file>` for tests. The `t3`, `claude` and `codex` sources are registered but not implemented yet; until they are, `jas doctor` lists them as disabled.
-- Only top-level sessions idle for `sessions.idle_minutes` are exported. Subagent sessions are folded into their parent.
-- The file name is stable per session, so a session that continued later overwrites its own digest. Export state lives in the cache, not the brain.
+- A **source** reads one session store strictly read-only and yields session records. The interface is in `jas/sessions/__init__.py`. Sources: `t3` (T3 Code's state database), `claude` and `codex` (native transcripts, registered but not implemented yet), and `json:<file>` for tests. A source is used only when `sessions.sources` lists it.
+- The **`t3` source** reads the projection tables of `~/.t3/userdata/statev2.sqlite` (`sessions.t3_store` overrides the path) through a read-only SQLite URI. Those tables are internal to T3 Code and change often, so the source checks every table and column it reads before reading; on a mismatch it prints `t3 source disabled: <what changed>` once and exports nothing. A thread becomes a digest when it has no parent (forks count as top-level), is not deleted and has a completed run; history imported from T3 Code v1, which has no runs, is exported too. Its project is the basename of the T3 project's workspace root, and anything under a `scratch` folder is project `scratch`. "Asked" holds only what a human typed (plus the brief of an agent-launched thread); delegated results, notifications and scheduled-task wrappers are left out.
+- Only top-level sessions idle for `sessions.idle_minutes` are exported. Subagent threads, including nested ones, are counted on their top-level parent; app-owned children with runs get one line each under `## Delegated`.
+- The file name is stable per session, so a session that continued later overwrites its own digest. Export state lives in the cache, not the brain: the last update time of each exported session and a horizon (the last run's time minus the idle window). Sessions last updated before the horizon were final at the last run, so an incremental export asks sources only for newer ones. `--all` ignores the horizon. A run where a source was disabled does not move it.
 - Every text field passes through a scrubber that replaces known token shapes, private keys, credentials in URLs and `key=`/`token=`/`password=`/`secret=` values with `[redacted]`.
-- A digest has frontmatter (`kind: session`, id, box, zone, project, title, dates, provider, model, turns, subagents, PRs, tokens, and the T3 environment id when known), then `## Asked` (the prompts; first and last three when there are more than six), `## Outcome` (the final answer), `## Turns` (one line per earlier turn, the last twelve) and `## Delegated` (children). It never exceeds 6,000 bytes.
+- A digest has frontmatter (`kind: session`, id, box, zone, project, title, dates, provider, model, turns, subagents, PRs, tokens, `peak_context` (the largest context-window use seen), and, when known, the T3 environment id, `native_ref`, branch and `created_by`), then `## Asked` (the prompts; first and last three when there are more than six), `## Outcome` (the final answer), `## Turns` (one line per earlier turn, the last twelve) and `## Delegated` (children). It never exceeds 6,000 bytes. Headings in assistant text become bold and a code fence cut by a length cap is closed, so an answer cannot open sections of its own.
+- `jas sessions stats [--by week|box|project]` sums sessions, turns, tokens and subagents from digest frontmatter and counts the sessions whose peak context passed 200,000 tokens. Long threads and delegated workers dominate cost, so the brain review starts from it.
 - A source that finds its store missing or unrecognised prints one warning and yields nothing. It never breaks `jas sync`.
 
 ## Sync
@@ -109,8 +111,10 @@ Each finished top-level agent session becomes a small Markdown file under `Sessi
 5. With a remote: fetch, rebase local commits onto it, push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never force.
 6. Record the sync time.
 
-Concurrent work on two boxes usually merges cleanly: `Log.md` uses git's `union` merge driver, and session digests and box cards are per-box files. A hub edited on two boxes at once is the remaining conflict case, and it fails safe as in step 5.
+Concurrent work on two boxes usually merges cleanly: `Log.md` and lesson files use git's `union` merge driver (lesson files carry no `updated:` field for that reason), and session digests and box cards are per-box files. A hub edited on two boxes at once is the remaining conflict case, and it fails safe as in step 5.
 
 ## Context budget
 
 `jas doctor` measures what every session loads before the task starts: each global instruction file (symlinks counted once), the `name` and `description` bytes of every skill per skill root, enabled Claude plugins' skills, and configured MCP servers. It warns when a global file passes 2,000 bytes, a skill description passes 500 bytes, or the total passes 20,000 bytes. `jas sync` writes the total into the box card so drift shows over time.
+
+Run inside a git repository, `jas doctor` also lists that repository's `AGENTS.md` and `CLAUDE.md` and Claude's auto-memory index for it (`~/.claude/projects/<slug>/memory/MEMORY.md`, where the slug is the absolute repository path with every non-alphanumeric character replaced by `-`). These rows are not part of the box total; they warn past 8,000 bytes (instructions) and 4,000 bytes (memory index).
