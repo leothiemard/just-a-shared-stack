@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,12 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Preview only", result.stdout)
         self.assertFalse(self.root.parent.exists())
+
+    def test_default_root_follows_jas_home(self):
+        env = dict(os.environ, JAS_HOME=str(self.base / "sandbox home"))
+        result = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(self.base / "sandbox home" / ".agents" / "skills"), result.stdout)
 
     def test_conflict_preflight_prevents_partial_install(self):
         self.root.mkdir(parents=True)

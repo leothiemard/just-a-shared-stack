@@ -105,13 +105,20 @@ def install(repo: Path, root: Path, replace: bool = False) -> Path | None:
         raise
 
 
+def default_root() -> Path:
+    sys.path.insert(0, str(REPO))
+    from jas import paths
+
+    return paths.skill_roots()[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--apply", action="store_true", help="Install links after preflight.")
     action.add_argument("--check", action="store_true", help="Read-only; fail unless all links are current.")
     action.add_argument("--restore", type=Path, help="Undo an installation using its manifest.")
-    parser.add_argument("--root", type=Path, default=Path.home() / ".agents" / "skills")
+    parser.add_argument("--root", type=Path, help="skill root (default: ~/.agents/skills, honouring JAS_HOME)")
     parser.add_argument("--replace", action="store_true", help="Back up conflicting selected skills.")
     args = parser.parse_args()
     if args.replace and not args.apply:
@@ -121,7 +128,7 @@ def main() -> int:
             restore(args.restore.expanduser().absolute())
             print("Restored previous skills; repository retained.")
             return 0
-        root = args.root.expanduser().absolute()
+        root = (args.root.expanduser() if args.root else default_root()).absolute()
         rows = plan(REPO, root)
         for target, _, state in rows:
             print(f"{state:7} {target}")
