@@ -147,3 +147,56 @@ class SyncTests(Sandbox):
         self.assertEqual(code, 1)
         self.assertIn("git switch main", err)
         self.assertEqual(git(self.remote, "branch", "--format=%(refname:short)").split(), ["main"])
+
+    def work_remote_on_trunk(self):
+        """A bare work-zone remote whose only branch is `trunk`."""
+        work = self.base / "work.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "trunk", str(work)], check=True)
+        seed = self.base / "seed"
+        subprocess.run(["git", "clone", "-q", str(work), str(seed)], check=True, capture_output=True)
+        git(seed, "checkout", "-q", "-b", "trunk")
+        (seed / "brain.json").write_text('{"version": 1, "zone": "work"}\n')
+        git(seed, "add", "brain.json")
+        git(seed, "commit", "-qm", "work brain")
+        git(seed, "push", "-q", "origin", "trunk")
+        return work
+
+    def test_a_remote_without_tracking_refs_is_not_taken_for_empty(self):
+        work = self.work_remote_on_trunk()
+        root = self.a / "brain"
+        git(root, "remote", "set-url", "origin", str(work))
+        git(root, "config", "--unset-all", "remote.origin.fetch")
+        for ref in git(root, "for-each-ref", "--format=%(refname)", "refs/remotes/").split():
+            git(root, "update-ref", "-d", ref)
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        code, _, err = self.on(self.a, "sync")
+        self.assertEqual(code, 1, err)
+        self.assertIn("trunk", err)
+        self.assertEqual(git(work, "branch", "--format=%(refname:short)").split(), ["trunk"])
+
+    def test_sync_works_without_tracking_refs(self):
+        for root in (self.a / "brain", self.b / "brain"):
+            git(root, "config", "--unset-all", "remote.origin.fetch")
+        self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
+        self.assertEqual(self.on(self.a, "sync")[0], 0)
+        code, _, err = self.on(self.b, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertIn("From mac", (self.b / "brain" / "Projects" / "example-app" / "Log.md").read_text())
+
+    def test_a_remote_that_moved_after_the_fetch_is_not_overwritten(self):
+        from unittest import mock
+        from jas import sync
+
+        self.on(self.b, "log", "-t", "From linux", "-p", "example-app", stdin="- b\n")
+        self.on(self.a, "log", "-t", "From mac", "-p", "example-app", stdin="- a\n")
+        real = sync.exchange
+
+        def moved(root, *args, **kwargs):
+            self.on(self.b, "sync")
+            self.use_home(self.a)
+            return real(root, *args, **kwargs)
+
+        with mock.patch.object(sync, "exchange", moved):
+            code, _, err = self.on(self.a, "sync")
+        self.assertIn("push failed", err)
+        self.assertIn("From linux", git(self.remote, "show", "main:Projects/example-app/Log.md"))

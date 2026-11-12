@@ -136,32 +136,40 @@ def current_branch(root: Path) -> str:
     return result.stdout.strip()
 
 
-def fetch(root: Path, branch: str, timeout: float) -> str | None:
-    """Fetch, then name the remote branch to exchange with: `origin/<branch>`, or "" when the remote has no branch yet.
+REMOTE = "refs/jas/remote/"
 
+
+def fetch(root: Path, branch: str, timeout: float) -> str | None:
+    """Fetch every remote branch into `refs/jas/remote/`, then name the ref to exchange with, or "" when the remote has no branch.
+
+    The refspec is explicit, so the brain's own fetch config and tracking refs never decide what the remote has.
     None when the remote cannot be reached. Stops when the remote has branches but not this one: sync never creates a branch there."""
     try:
-        brain.git(root, "fetch", "-q", "--prune", "origin", timeout=timeout)
+        brain.git(root, "fetch", "-q", "--prune", "--no-tags", "origin", f"+refs/heads/*:{REMOTE}*", timeout=timeout)
     except JasError as error:
         print(f"warning: could not reach the brain remote; local commits kept, push skipped. {error}", file=sys.stderr)
         return None
-    refs = brain.git(root, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/").stdout.split()
-    names = [ref[len("refs/remotes/origin/"):] for ref in refs if ref != "refs/remotes/origin/HEAD"]
+    names = [ref[len(REMOTE):] for ref in brain.git(root, "for-each-ref", "--format=%(refname)", REMOTE).stdout.split()]
     if names and branch not in names:
         raise JasError(f"Sync stopped; nothing was exported, committed or pushed. The brain remote has no branch {branch!r} and sync never creates one; "
                        f"it uses {', '.join(names)}. Switch the brain back (git switch {names[0]}), then rerun.")
-    return f"origin/{branch}" if names else ""
+    return REMOTE + branch if names else ""
+
+
+def zone_at(root: Path, rev: str) -> str | None:
+    shown = brain.git(root, "show", f"{rev}:brain.json", check=False)
+    return brain.parse_zone(shown.stdout) if shown.returncode == 0 else None
 
 
 def exchange(root: Path, box: str, zone: str, branch: str, upstream: str, timeout: float, say, state: dict, quiet: bool) -> int:
-    """Rebase local commits onto the fetched remote branch, push. Never forces; a conflict leaves everything local."""
-    if upstream:
-        shown = brain.git(root, "show", f"{upstream}:brain.json", check=False)
-        found = brain.parse_zone(shown.stdout) if shown.returncode == 0 else None
+    """Rebase local commits onto the fetched remote branch, push. A push succeeds only while the remote branch is still what was fetched."""
+    base = brain.git(root, "rev-parse", upstream).stdout.strip() if upstream else ""
+    if base:
+        found = zone_at(root, base)
         if found != zone:
-            raise JasError(f"The brain remote ({upstream}) is zone {found!r}; this box is zone {zone!r}. Nothing was pulled or pushed; "
+            raise JasError(f"The brain remote's {branch} is zone {found!r}; this box is zone {zone!r}. Nothing was pulled or pushed; "
                            f"local commits are kept. Point the brain's origin at a {zone} brain.")
-        rebase = brain.git(root, *brain.identity(root, box), "rebase", "--autostash", upstream, check=False)
+        rebase = brain.git(root, *brain.identity(root, box), "rebase", "--autostash", base, check=False)
         if rebase.returncode:
             conflicts = brain.git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.splitlines()
             brain.git(root, "rebase", "--abort", check=False)
@@ -169,18 +177,16 @@ def exchange(root: Path, box: str, zone: str, branch: str, upstream: str, timeou
                 files = ", ".join(conflicts) or "unknown files"
                 print(
                     f"Sync stopped: {files} changed on another box too. Local commits are kept; nothing was pushed.\n"
-                    f"Resolve: cd {root} && git pull --rebase, fix the files, git add them, git rebase --continue, then jas sync.",
+                    f"Resolve: cd {root} && git rebase {upstream}, fix the files, git add them, git rebase --continue, then jas sync.",
                     file=sys.stderr,
                 )
             return 1
-        ahead = int(brain.git(root, "rev-list", "--count", f"{upstream}..HEAD").stdout.strip() or 0)
-    else:
-        ahead = 1
-    if ahead:
-        if brain.zone_of(root) != zone:
+    head = brain.git(root, "rev-parse", "HEAD").stdout.strip()
+    if head != base:
+        if zone_at(root, head) != zone:
             raise JasError(f"Brain {root} is no longer zone {zone!r} after the rebase; nothing was pushed. Check brain.json.")
         try:
-            brain.git(root, "push", "-q", "-u", "origin", branch, timeout=timeout)
+            brain.git(root, "push", "-q", f"--force-with-lease=refs/heads/{branch}:{base}", "origin", f"{head}:refs/heads/{branch}", timeout=timeout)
         except JasError as error:
             print(f"warning: push failed; local commits kept. {error}", file=sys.stderr)
             return 0

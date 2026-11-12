@@ -75,7 +75,8 @@ def brain_checks(cfg: dict) -> list[tuple[str, str, str]]:
         out.append(("fail", "brain git", problem))
     dirty = git("status", "--porcelain").stdout.strip()
     out.append(("warn" if dirty else "ok", "brain git", "uncommitted changes; jas sync commits them" if dirty else "clean"))
-    counts = git("rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+    branch = git("symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
+    counts = git("rev-list", "--left-right", "--count", f"{sync.REMOTE}{branch}...HEAD")
     if counts.returncode == 0:
         behind, ahead = counts.stdout.split()
         out.append(("warn" if int(ahead) else "ok", "brain git", f"{ahead} ahead, {behind} behind the remote (as of the last fetch)"))
