@@ -96,6 +96,35 @@ class InstallTests(unittest.TestCase):
         self.assertEqual((original / "keep").read_text(), "original")
         self.assertFalse((self.root / "beta").exists())
 
+    def test_restore_recovers_an_install_killed_midway(self):
+        self.root.mkdir(parents=True)
+        for name in ("alpha", "beta"):
+            (self.root / name).mkdir()
+            (self.root / name / "keep").write_text(f"original {name}")
+        killer = (
+            "import importlib.util, os, sys\n"
+            "from pathlib import Path\n"
+            f"spec = importlib.util.spec_from_file_location('install', {str(SCRIPT)!r})\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "real = Path.symlink_to\n"
+            "def kill(path, target, **kw):\n"
+            "    if path.name == 'beta':\n"
+            "        os._exit(9)\n"
+            "    return real(path, target, **kw)\n"
+            "Path.symlink_to = kill\n"
+            "m.install(Path(sys.argv[1]), Path(sys.argv[2]), replace=True)\n"
+        )
+        result = subprocess.run([sys.executable, "-c", killer, str(self.repo), str(self.root)])
+        self.assertEqual(result.returncode, 9)
+        self.assertTrue((self.root / "alpha").is_symlink())
+        self.assertFalse((self.root / "beta").exists())
+        manifest = next((self.root.parent / "skill-backups").glob("*/manifest.json"))
+        restored = subprocess.run([sys.executable, str(SCRIPT), "--restore", str(manifest)], capture_output=True, text=True)
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        for name in ("alpha", "beta"):
+            self.assertFalse((self.root / name).is_symlink())
+            self.assertEqual((self.root / name / "keep").read_text(), f"original {name}")
+
     def test_dangling_symlink_is_preserved(self):
         self.root.mkdir(parents=True)
         target = self.root / "alpha"
