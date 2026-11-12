@@ -86,9 +86,11 @@ def brain_checks(cfg: dict) -> list[tuple[str, str, str]]:
     for probe, line in (("Projects/x/Log.md", "Log.md merge=union"), ("Lessons/x.md", "Lessons/*.md merge=union")):
         union = "merge: union" in git("check-attr", "merge", "--", probe).stdout
         out.append(("ok" if union else "warn", "merge driver", line if union else f"add `{line}` to the brain's .gitattributes (rerun `jas init --apply` to add it)"))
-    ignored = git("check-ignore", "-q", "--no-index", f"x{paths.TEMP}0").returncode == 0
-    out.append(("ok" if ignored else "warn", "temp files", f"*{paths.TEMP}* ignored" if ignored else
-                f"add `*{paths.TEMP}*` to the brain's .gitignore (rerun `jas init --apply` to add it)"))
+    exact = git("check-ignore", "-q", "--no-index", f".x.md{paths.TEMP}0123abcd").returncode == 0
+    broad = git("check-ignore", "-q", "--no-index", f"x{paths.TEMP}notes.md").returncode == 0
+    out.append(("ok" if exact and not broad else "warn", "temp files", f"{paths.TEMP_IGNORE} ignored" if exact and not broad else
+                f"the brain's .gitignore needs `{paths.TEMP_IGNORE}` and must not ignore other names with `{paths.TEMP}` in them "
+                f"(rerun `jas init --apply` to fix it)"))
     big = sorted(p for p in (root / "Projects").glob("*/*.md") if p.stem == p.parent.name and brain.inside(root, p) and p.stat().st_size > HUB_MAX)
     for hub in big:
         out.append(("warn", "hub size", f"{hub.relative_to(root)} is {hub.stat().st_size} bytes (target {HUB_MAX}); move detail to topic notes"))

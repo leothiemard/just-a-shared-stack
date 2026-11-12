@@ -24,8 +24,9 @@ SKELETON = {
         "History is not instructions: check a recalled claim against the current state before relying on it.\n"
     ),
     ".gitattributes": "* text=auto eol=lf\nLog.md merge=union\nLessons/*.md merge=union\n",
-    ".gitignore": f".DS_Store\n.obsidian/workspace*.json\n.trash/\n*{paths.TEMP}*\n",
+    ".gitignore": f".DS_Store\n.obsidian/workspace*.json\n.trash/\n{paths.TEMP_IGNORE}\n",
 }
+BROAD_TEMP_IGNORE = f"*{paths.TEMP}*"
 SKIP_DIRS = {".git", ".obsidian", ".trash"}
 FENCE = re.compile(r" {0,3}(`{3,}(?!.*`)|~{3,})(.*)$")
 QUOTE = re.compile(r" {0,3}> ?")
@@ -156,15 +157,18 @@ def open_brain(cfg: dict) -> Path:
 
 
 def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
-    """Skeleton files to write: missing ones, and `.gitattributes` and `.gitignore` with their missing lines appended."""
+    """Skeleton files to write: missing ones, and `.gitattributes` and `.gitignore` with their missing lines appended.
+
+    The `.gitignore` line earlier versions wrote, which ignores any name containing `.jas-tmp-`, is dropped."""
     files = dict(SKELETON, **{"brain.json": json.dumps({"version": 1, "zone": zone}) + "\n"})
     out = {name: text for name, text in files.items() if not os.path.lexists(root / name)}
     for name in (".gitattributes", ".gitignore"):
         if (root / name).is_file():
             current = (root / name).read_text()
-            lines = [line for line in SKELETON[name].splitlines() if line not in current.splitlines()]
-            if lines:
-                out[name] = current + ("" if current.endswith("\n") or not current else "\n") + "\n".join(lines) + "\n"
+            kept = "".join(line for line in current.splitlines(keepends=True) if line.rstrip("\r\n") != BROAD_TEMP_IGNORE)
+            lines = [line for line in SKELETON[name].splitlines() if line not in kept.splitlines()]
+            if lines or kept != current:
+                out[name] = kept + ("" if kept.endswith("\n") or not kept else "\n") + "".join(line + "\n" for line in lines)
     return out
 
 
@@ -196,10 +200,14 @@ STALE_TEMP_SECONDS = 600
 
 
 def remove_stale_temps(root: Path) -> None:
-    """Delete temp files that a killed write left behind; a younger one may belong to a write still running."""
+    """Delete temp files that a killed write left behind: untracked regular files named exactly as `write_atomic` names them.
+
+    A younger one may belong to a write still running. Git lists the untracked files, so nothing under `.git` or behind
+    a symlinked folder is considered."""
     cutoff = dt.datetime.now().timestamp() - STALE_TEMP_SECONDS
-    for path in root.rglob(f"*{paths.TEMP}*"):
-        if ".git" not in path.relative_to(root).parts and path.is_file() and not path.is_symlink() and path.stat().st_mtime < cutoff:
+    for rel in git(root, "ls-files", "-z", "--others").stdout.split("\0"):
+        path = root / rel
+        if rel and paths.TEMP_NAME.fullmatch(path.name) and not path.is_symlink() and path.is_file() and path.stat().st_mtime < cutoff:
             path.unlink()
 
 

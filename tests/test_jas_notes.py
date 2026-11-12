@@ -139,12 +139,41 @@ class NotesTests(Sandbox):
         self.assertTrue(fresh.exists())
         self.assertNotIn("jas-tmp", git(self.brain, "ls-files"))
 
-    def test_old_brains_gain_the_temp_file_ignore_line(self):
+    def test_cleanup_and_ignore_spare_files_that_only_look_like_temp_files(self):
+        import time
+
+        folder = self.brain / "Projects" / "example-app"
+        folder.mkdir(parents=True)
+        tracked, forced = folder / "report.jas-tmp-notes.md", folder / ".Log.md.jas-tmp-89abcdef"
+        tracked.write_text("a real report\n")
+        forced.write_text("committed on purpose\n")
+        git(self.brain, "add", "-f", str(tracked), str(forced))
+        git(self.brain, "commit", "-qm", "documents")
+        short, link, draft = folder / ".file.jas-tmp-1234", folder / ".hub.md.jas-tmp-0123abcd", folder / "draft.jas-tmp-v2.md"
+        short.write_text("not jas's\n")
+        draft.write_text("a new note\n")
+        link.symlink_to(tracked)
+        hour_ago = time.time() - 3600
+        for path in (tracked, forced, short, draft, link):
+            os.utime(path, (hour_ago, hour_ago), follow_symlinks=False)
+        self.ok("sync")
+        for path in (tracked, forced, short, draft):
+            self.assertTrue(path.exists(), path.name)
+        self.assertTrue(link.is_symlink())
+        files = git(self.brain, "ls-files").splitlines()
+        self.assertIn("Projects/example-app/report.jas-tmp-notes.md", files)
+        self.assertIn("Projects/example-app/draft.jas-tmp-v2.md", files)
+        self.assertEqual(git(self.brain, "status", "--porcelain", "--", str(tracked), str(forced)), "")
+
+    def test_old_brains_trade_the_broad_temp_file_ignore_line_for_the_exact_one(self):
         ignore = self.brain / ".gitignore"
-        ignore.write_text(".DS_Store\n")
+        ignore.write_text(".DS_Store\n*.jas-tmp-*\n")
         git(self.brain, "commit", "-qam", "old ignore file")
-        self.assertIn("*.jas-tmp-*", self.jas("doctor")[1])
+        self.assertIn("warn  temp files", self.jas("doctor")[1])
         self.ok("init", "--apply")
-        self.assertIn("*.jas-tmp-*", ignore.read_text().splitlines())
-        self.assertTrue(ignore.read_text().startswith(".DS_Store\n"))
+        lines = ignore.read_text().splitlines()
+        self.assertEqual(lines[0], ".DS_Store")
+        self.assertNotIn("*.jas-tmp-*", lines)
+        self.assertIn(".*.jas-tmp-" + "[0-9a-f]" * 8, lines)
         self.assertEqual(git(self.brain, "status", "--porcelain"), "")
+        self.assertIn("ok    temp files", self.jas("doctor")[1])

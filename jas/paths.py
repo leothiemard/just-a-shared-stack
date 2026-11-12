@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import re
 import stat
 import uuid
 from pathlib import Path
@@ -64,6 +65,8 @@ def brain_key(brain: Path) -> str:
 
 
 TEMP = ".jas-tmp-"
+TEMP_NAME = re.compile(rf"\..+{re.escape(TEMP)}[0-9a-f]{{8}}")
+TEMP_IGNORE = f".*{TEMP}" + "[0-9a-f]" * 8
 
 
 def write_atomic(path: Path, data: str | bytes) -> None:

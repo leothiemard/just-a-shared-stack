@@ -40,13 +40,14 @@ Agents run inside the project they work on, never from a special home folder. Th
 
 A work box adds a private **layer**: a directory shaped like this repository (`skills.json`, `skills/`, optional `rules/global.md`) with company skills and rules. It points at a company brain in zone `work`. `jas` refuses to read or sync a brain whose zone differs from the box's, so personal boxes never see work knowledge and the reverse. Skill names must be unique across layers; a duplicate is an error, never a silent override.
 
+
 ## The brain
 
 ```
 brain.json                         {"version":1,"zone":"personal"}
 README.md                          what this is; history is not instructions
 .gitattributes                     Log.md and Lessons/*.md merge=union, * text=auto eol=lf
-.gitignore                         ignores *.jas-tmp-*, the temp files of jas's atomic writes
+.gitignore                         ignores .<name>.jas-tmp-<8 hex>, the temp files of jas's atomic writes
 Projects/<project>/<project>.md    hub note, target 3,000 bytes or less
 Projects/<project>/Log.md          dated entries, newest first
 Projects/<project>/<Topic>.md      one subject per note
@@ -115,7 +116,7 @@ Each finished top-level agent session becomes a small Markdown file under `Sessi
 3. Stop with exit 1, before writing anything, on a detached HEAD. With a remote, stop with exit 1 when origin's URL names another repository than `brain.remote` in the box config (any URL form counts as the same repository). Sync fetches from and pushes to `brain.remote` itself (origin's URL when none is set), and only as a literal location: a URL starting `https://`, `ssh://`, `git://` or `file://`, `user@host:path`, or a filesystem path, made absolute. Anything else, a value equal to one of the brain's remote names, or one that a `url.*.pushInsteadOf` setting rewrites, stops sync with a message to put the full URL in `box.json`, so a push URL, a remote name or a rewrite in git config never sends the brain elsewhere. `jas init --brain` applies the same rule before it records the remote. Fetch every remote branch with an explicit refspec into `refs/jas/remote/` (pruned), so the brain's fetch config and tracking refs never decide what the remote has; when the remote has branches but none with the local branch's name, stop with exit 1 and name the branch it uses. Sync never creates a branch on a non-empty remote, and plain `jas sync` never publishes to an empty one: it commits locally, pushes nothing, and says to run `jas sync --first-push` (so does `jas init --brain` when it clones an empty remote). `--first-push` is the provisioning step: it is refused when the remote has a branch, fetches again right before the push and stops if a branch appeared, then pushes with a lease that requires the branch to be absent. A branch another writer creates between that last fetch and the push is not caught when its name differs; that race is accepted, since a person runs `--first-push` once, by hand, at setup time. An unreachable remote is one warning: export and commit still run, nothing is pushed.
 4. Export session digests (`--quick` skips this when the last export was under 6 hours ago).
 5. Refresh `Boxes/<box>.md`: zone, OS, stack revision, always-loaded context size, projects seen on this box.
-6. Delete temp files (`*.jas-tmp-*`) older than ten minutes that a killed write left in the brain, then commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
+6. Delete temp files older than ten minutes that a killed write left in the brain: untracked regular files, outside `.git`, named exactly `.<name>.jas-tmp-<8 lowercase hex>`. A tracked file, a symlink or any other name is never deleted. Then commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
 7. With a remote: check that the fetched remote branch's `brain.json` has this box's zone (exit 1 without rebasing or pushing when it does not), rebase local commits onto it, check the zone of the exact commit to push, push it with `--force-with-lease` set to the fetched commit, so a remote branch that moved since the fetch rejects the push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never a plain force.
 8. Record the sync time.
 
