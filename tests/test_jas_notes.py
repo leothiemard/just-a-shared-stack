@@ -123,3 +123,28 @@ class NotesTests(Sandbox):
         brain.write_skeleton(self.brain, "personal")
         self.assertNotIn(".gitattributes", brain.skeleton_missing(self.brain, "personal"))
         self.assertIn("merge: union", git(self.brain, "check-attr", "merge", "--", "Lessons/vercel.md"))
+
+    def test_temp_files_left_by_a_kill_are_never_committed(self):
+        import time
+
+        folder = self.brain / "Projects" / "example-app"
+        folder.mkdir(parents=True)
+        stale, fresh = folder / ".Log.md.jas-tmp-0123abcd", folder / ".Log.md.jas-tmp-4567cdef"
+        stale.write_text("half a private entry\n")
+        fresh.write_text("a write in progress\n")
+        hour_ago = time.time() - 3600
+        os.utime(stale, (hour_ago, hour_ago))
+        self.ok("sync")
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+        self.assertNotIn("jas-tmp", git(self.brain, "ls-files"))
+
+    def test_old_brains_gain_the_temp_file_ignore_line(self):
+        ignore = self.brain / ".gitignore"
+        ignore.write_text(".DS_Store\n")
+        git(self.brain, "commit", "-qam", "old ignore file")
+        self.assertIn("*.jas-tmp-*", self.jas("doctor")[1])
+        self.ok("init", "--apply")
+        self.assertIn("*.jas-tmp-*", ignore.read_text().splitlines())
+        self.assertTrue(ignore.read_text().startswith(".DS_Store\n"))
+        self.assertEqual(git(self.brain, "status", "--porcelain"), "")

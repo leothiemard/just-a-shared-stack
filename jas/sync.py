@@ -113,6 +113,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
             if result["written"]:
                 say(f"Exported {len(result['written'])} session digest(s).")
         write_if_changed(card, box_card(cfg, root, budget.measure()["total"]))
+        brain.remove_stale_temps(root)
         stamp = now().strftime("%Y-%m-%dT%H:%M:%SZ")
         if brain.commit_all(root, cfg["box"], f"brain: {cfg['box']} {stamp}"):
             say("Committed local changes.")

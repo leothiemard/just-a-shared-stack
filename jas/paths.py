@@ -47,12 +47,15 @@ def brain_key(brain: Path) -> str:
     return hashlib.sha1(str(brain.resolve()).encode()).hexdigest()[:12]
 
 
+TEMP = ".jas-tmp-"
+
+
 def write_atomic(path: Path, data: str | bytes) -> None:
     """Replace the file at `path` (through a symlink, never the link itself) so it holds either the old or the new content.
 
     The new content is written to a `0600` file and gets the old file's mode (or the umask default) only once it is complete."""
     target = path.resolve() if path.is_symlink() else path
-    temp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+    temp = target.with_name(f".{target.name}{TEMP}{uuid.uuid4().hex[:8]}")
     try:
         with open(temp, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as handle:
             handle.write(data.encode() if isinstance(data, str) else data)

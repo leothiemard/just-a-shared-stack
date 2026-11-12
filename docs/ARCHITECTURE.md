@@ -44,7 +44,7 @@ A work box adds a private **layer**: a directory shaped like this repository (`s
 brain.json                         {"version":1,"zone":"personal"}
 README.md                          what this is; history is not instructions
 .gitattributes                     Log.md and Lessons/*.md merge=union, * text=auto eol=lf
-.gitignore
+.gitignore                         ignores *.jas-tmp-*, the temp files of jas's atomic writes
 Projects/<project>/<project>.md    hub note, target 3,000 bytes or less
 Projects/<project>/Log.md          dated entries, newest first
 Projects/<project>/<Topic>.md      one subject per note
@@ -113,7 +113,7 @@ Each finished top-level agent session becomes a small Markdown file under `Sessi
 3. Stop with exit 1, before writing anything, on a detached HEAD. With a remote, fetch every remote branch with an explicit refspec into `refs/jas/remote/` (pruned), so the brain's fetch config and tracking refs never decide what the remote has; when the remote has branches but none with the local branch's name, stop with exit 1 and name the branch it uses. Sync never creates a branch on a non-empty remote; an empty remote takes the first push. An unreachable remote is one warning: export and commit still run, nothing is pushed.
 4. Export session digests (`--quick` skips this when the last export was under 6 hours ago).
 5. Refresh `Boxes/<box>.md`: zone, OS, stack revision, always-loaded context size, projects seen on this box.
-6. Commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
+6. Delete temp files (`*.jas-tmp-*`) older than ten minutes that a killed write left in the brain, then commit all changes as `brain: <box> <UTC timestamp>`, with a fallback identity when git has none.
 7. With a remote: check that the fetched remote branch's `brain.json` has this box's zone (exit 1 without rebasing or pushing when it does not), rebase local commits onto it, check the zone of the exact commit to push, push it with `--force-with-lease` set to the fetched commit, so a remote branch that moved since the fetch rejects the push. On a conflict, abort the rebase, keep the local commits, name the conflicting files and exit 1. Nothing is lost and nothing is pushed. Never a plain force.
 8. Record the sync time.
 
