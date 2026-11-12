@@ -41,7 +41,7 @@ On the new machine:
 curl -fsSL https://raw.githubusercontent.com/<owner>/just-a-stack/main/bootstrap.sh | sh -s -- --box linux-box --zone personal --brain <brain-git-url> --apply
 ```
 
-`bootstrap.sh` checks for git and Python, clones the stack to `~/Development/just-a-stack` (or `$JAS_STACK_DIR`), and runs `jas init` with your arguments. Drop `--apply` to preview first. Then run `jas sync`.
+`bootstrap.sh` checks for git and Python, clones the stack to `~/Development/just-a-stack` (or `$JAS_STACK_DIR`), and runs `jas init` with your arguments. A folder already there is used only when it is the top of a git checkout whose `origin` is the same repository as the clone URL (`$JAS_STACK_URL`, in any https, ssh or `git@host:` form) and holds `bin/jas` and `jas/cli.py`; anything else stops bootstrap. Drop `--apply` to preview first. Then run `jas sync`.
 
 ## Keep a box current
 

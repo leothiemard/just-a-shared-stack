@@ -17,7 +17,18 @@ for candidate in python3 /usr/bin/python3; do
 done
 [ -n "$python" ] || { echo "bootstrap: Python 3.9 or newer is required. Install it, then rerun." >&2; exit 1; }
 
-if [ -d "$dir/.git" ]; then
+# A repository URL as host/owner/repo in lower case, whatever its form (https, ssh://, scp-like git@host:owner/repo).
+repo_id() {
+  printf '%s\n' "$1" | sed -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#^[^@/]*@##' -e 's#:[0-9]*/#/#' -e 's#:#/#' -e 's#/*$##' -e 's#\.git$##' | tr 'A-Z' 'a-z'
+}
+
+if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || top=""
+  origin=$(git -C "$dir" remote get-url origin 2>/dev/null) || origin=""
+  if [ "$top" != "$(cd "$dir" && pwd -P)" ] || [ "$(repo_id "$origin")" != "$(repo_id "$repo")" ] || [ ! -x "$dir/bin/jas" ] || [ ! -f "$dir/jas/cli.py" ]; then
+    echo "bootstrap: $dir is not a checkout of $repo. Move it away, or set JAS_STACK_DIR to another folder, then rerun." >&2
+    exit 1
+  fi
   echo "Using the existing checkout at $dir"
 else
   git clone -q "$repo" "$dir"
