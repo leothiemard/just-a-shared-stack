@@ -10,13 +10,16 @@ To write a source:
 - `available()` returns `(True, "")`, or `(False, reason)` when the store is missing
   or its schema is not the one the source was written for. The pipeline and
   `doctor` print `<name> source disabled: <reason>` once; the source never raises.
-- `records()` yields top-level sessions only, each with its subagents already folded
-  in (`subagent_count`, `delegated`). It may skip sessions that are deleted or have
-  no completed turn; idle, `--since`, exclusion and change filters are the pipeline's.
+- `records(changed_after)` yields top-level sessions only, each with its subagents
+  already folded in (`subagent_count`, `delegated`). With `changed_after`, it may skip
+  sessions last updated at or before that time without loading them. It may skip
+  sessions that are deleted or have no completed turn; idle, `--since` and exclusion
+  filters are the pipeline's.
 - `projects()` lists `(name, path)` pairs for the box card.
 
-Config selects sources by spec: `t3`, `claude`, `codex`, or `json:/path/file.json`
-(a list of `SessionRecord` objects as JSON, used by tests).
+Config selects sources by spec in `sessions.sources`: `t3`, `claude`, `codex`, or
+`json:/path/file.json` (a list of `SessionRecord` objects as JSON, used by tests).
+`sessions.t3_store` overrides the T3 database path.
 """
 
 from __future__ import annotations
@@ -41,6 +44,8 @@ class SessionRecord:
     prompts: list[str] = field(default_factory=list)  # human prompts only, oldest first
     turn_finals: list[str] = field(default_factory=list)  # last assistant text of each turn
     tokens: dict[str, int] = field(default_factory=dict)  # e.g. {"input": n, "cached": n, "output": n}
+    turns: int = 0  # turns run; 0 means count prompts and finals
+    peak_context: int = 0  # largest context window use seen, in tokens
     subagent_count: int = 0
     delegated: list[dict[str, str]] = field(default_factory=list)  # {"title", "model", "status"} per child
     environment_id: str = ""  # T3 environment id, for opening the full thread
@@ -58,24 +63,27 @@ class Source:
     def available(self) -> tuple[bool, str]:
         raise NotImplementedError
 
-    def records(self) -> Iterator[SessionRecord]:
+    def records(self, changed_after: dt.datetime | None = None) -> Iterator[SessionRecord]:
         raise NotImplementedError
 
     def projects(self) -> list[tuple[str, str]]:
         return []
 
 
-def sources(specs: list[str]) -> list[Source]:
+def sources(settings: dict) -> list[Source]:
+    """The sources named in a box config's `sessions` section."""
     from jas.sessions import claude, codex, jsonfile, t3
 
-    registry = {cls.name: cls for cls in (t3.T3Source, claude.ClaudeSource, codex.CodexSource, jsonfile.JsonSource)}
-    out = []
-    for spec in specs:
+    registry = {cls.name: cls for cls in (claude.ClaudeSource, codex.CodexSource, jsonfile.JsonSource)}
+    out: list[Source] = []
+    for spec in settings.get("sources", []):
         name, _, arg = spec.partition(":")
-        if name not in registry:
-            out.append(Unknown(spec))
-        else:
+        if name == "t3":
+            out.append(t3.T3Source(arg, settings.get("t3_store", "")))
+        elif name in registry:
             out.append(registry[name](arg))
+        else:
+            out.append(Unknown(spec))
     return out
 
 
@@ -87,5 +95,5 @@ class Unknown(Source):
     def available(self) -> tuple[bool, str]:
         return False, "unknown source; use t3, claude, codex or json:/path in sessions.sources"
 
-    def records(self) -> Iterator[SessionRecord]:
+    def records(self, changed_after: dt.datetime | None = None) -> Iterator[SessionRecord]:
         return iter(())

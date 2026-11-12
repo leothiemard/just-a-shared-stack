@@ -37,11 +37,12 @@ class JsonSource(Source):
             return False, f"unrecognised schema in {self.arg}: {error}"
         return True, ""
 
-    def records(self) -> Iterator[SessionRecord]:
+    def records(self, changed_after: dt.datetime | None = None) -> Iterator[SessionRecord]:
         for row in self.load():
             values = {k: v for k, v in row.items() if k in FIELDS}
             values["started"], values["updated"] = timestamp(row["started"]), timestamp(row["updated"])
-            yield SessionRecord(**values)
+            if not changed_after or values["updated"] > changed_after:
+                yield SessionRecord(**values)
 
     def projects(self) -> list[tuple[str, str]]:
         return sorted({(row["project"], row["cwd"]) for row in self.load() if row.get("cwd") and not row.get("parent_id")})

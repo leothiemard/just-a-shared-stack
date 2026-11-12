@@ -83,7 +83,7 @@ def box_card(cfg: dict, root: Path, total: int) -> str:
     stack = config.stack_path(cfg)
     rev = brain.git(stack, "rev-parse", "--short", "HEAD", check=False).stdout.strip() or "unknown"
     projects = set()
-    for source in sources(cfg["sessions"]["sources"]):
+    for source in sources(cfg["sessions"]):
         if source.available()[0]:
             projects.update(source.projects())
     rows = []

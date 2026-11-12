@@ -131,7 +131,8 @@ def cmd_sessions(args) -> int:
     if args.json:
         print(json.dumps(rows, indent=2))
     for row in [] if args.json else rows:
-        print(f"{row['date']}  {row['box']}  {row['project']}  {row['title']}  {row['turns']} turns  {row['tokens']} tokens")
+        extra = (f"  peak {row['peak_context'] // 1000}K" if row["peak_context"] else "") + (f"  {row['subagents']} subagents" if row["subagents"] else "")
+        print(f"{row['date']}  {row['box']}  {row['project']}  {row['title']}  {row['turns']} turns  {row['tokens']} tokens{extra}")
     return 0
 
 

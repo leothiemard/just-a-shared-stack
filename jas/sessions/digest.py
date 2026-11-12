@@ -43,13 +43,13 @@ def frontmatter(rec: SessionRecord, box: str, zone: str) -> str:
         ("kind", "session"), ("id", rec.id), ("box", box), ("zone", zone), ("project", rec.project),
         ("title", rec.title), ("started", iso(rec.started)), ("updated", iso(rec.updated)),
         ("provider", rec.provider), ("model", rec.model), ("turns", turns(rec)), ("subagents", rec.subagent_count),
-        ("prs", rec.pr_urls), ("tokens", rec.tokens),
+        ("prs", rec.pr_urls), ("tokens", rec.tokens), ("peak_context", rec.peak_context),
         ("t3_environment_id", rec.environment_id), ("native_ref", rec.native_ref),
         ("branch", rec.branch), ("created_by", rec.created_by),
     ]
     lines = ["---"]
     for key, value in fields:
-        if key in ("t3_environment_id", "native_ref", "branch", "created_by") and not value:
+        if key in ("peak_context", "t3_environment_id", "native_ref", "branch", "created_by") and not value:
             continue
         if isinstance(value, dict):
             value = "{" + ", ".join(f"{k}: {v}" for k, v in value.items()) + "}"
@@ -60,7 +60,7 @@ def frontmatter(rec: SessionRecord, box: str, zone: str) -> str:
 
 
 def turns(rec: SessionRecord) -> int:
-    return max(len(rec.prompts), len(rec.turn_finals))
+    return rec.turns or max(len(rec.prompts), len(rec.turn_finals))
 
 
 def asked(prompts: list[str], chars: int) -> list[str]:

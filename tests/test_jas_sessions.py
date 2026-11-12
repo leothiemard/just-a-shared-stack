@@ -4,7 +4,7 @@ import json
 from jashelp import Sandbox
 
 from jas import brain
-from jas.sessions import SessionRecord, digest, scrub
+from jas.sessions import SessionRecord, digest, export, scrub
 
 NOW = dt.datetime.now(dt.timezone.utc)
 
@@ -63,7 +63,9 @@ class SessionsTests(Sandbox):
 
     def test_unchanged_sessions_are_skipped_and_continuations_overwrite(self):
         first = self.export([record("s1", updated_minutes_ago=200)])
-        self.assertEqual(self.export([record("s1", updated_minutes_ago=200)])["unchanged"], 1)
+        self.assertEqual(self.export([record("s1", updated_minutes_ago=200)])["written"], [])
+        state = export.state_path(self.brain)
+        state.write_text(json.dumps(dict(json.loads(state.read_text()), horizon=stamp(90))))
         continued = record("s1", updated_minutes_ago=60, turn_finals=["a", "b", "Continued and finished."])
         second = self.export([continued])
         self.assertEqual(second["written"], first["written"])
@@ -126,11 +128,19 @@ class SessionsTests(Sandbox):
         text = next((self.brain / "Sessions").rglob("*.md")).read_text()
         self.assertNotIn("supersecretvalue", text)
 
-    def test_stub_sources_report_not_implemented(self):
+    def test_stub_sources_report_only_when_listed(self):
         from jas.sessions import sources
 
-        for source in sources(["t3", "claude", "codex", "nope"]):
+        for source in sources({"sources": ["claude", "codex", "nope"]}):
             ok, reason = source.available()
             self.assertFalse(ok)
             self.assertTrue(reason)
             self.assertEqual(list(source.records()), [])
+        self.store.write_text("[]")
+        _, _, err = self.jas("sessions", "export")
+        self.assertNotIn("claude", err)
+        self.assertNotIn("codex", err)
+
+    def test_list_shows_peak_context_and_subagents(self):
+        self.export([record("s1", peak_context=250000, subagent_count=4)])
+        self.assertIn("1500 tokens  peak 250K  4 subagents", self.ok("sessions", "list"))

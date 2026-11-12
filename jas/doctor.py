@@ -50,7 +50,7 @@ def checks(cfg: dict) -> list[tuple[str, str, str]]:
         add(False, "rules", str(error))
     out += brain_checks(cfg)
     add(index.fts5_available(), "fts5", "SQLite FTS5 available" if index.fts5_available() else "this Python's sqlite3 lacks FTS5; use a python.org or Homebrew Python")
-    for source in sources(cfg["sessions"]["sources"]) if cfg["sessions"]["export"] else []:
+    for source in sources(cfg["sessions"]) if cfg["sessions"]["export"] else []:
         ok, reason = source.available()
         add(ok, "sessions", f"{source.name} source " + ("available" if ok else f"disabled: {reason}"), "warn")
     return out

@@ -19,7 +19,7 @@ DEFAULTS = {
     "stack": "",
     "layers": [],
     "brain": {"path": "~/brain", "remote": ""},
-    "sessions": {"export": True, "sources": ["t3"], "idle_minutes": 30, "exclude_projects": []},
+    "sessions": {"export": True, "sources": ["t3"], "t3_store": "", "idle_minutes": 30, "exclude_projects": []},
     "sync": {"max_age_minutes": 30},
 }
 
