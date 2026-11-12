@@ -236,3 +236,42 @@ class InitTests(Sandbox):
                 self.assertEqual(code, 1)
                 self.assertRegex(out, r"conflict\s+rules\s+~/.agents/AGENTS.md\s+.*marker")
                 self.assertEqual(canonical.read_text(), text)
+
+    def test_existing_repo_without_brain_json_is_not_adopted(self):
+        repo = self.base / "project"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        (repo / "notes.md").write_text("tracked\n")
+        git(repo, "add", "notes.md")
+        git(repo, "commit", "-q", "-m", "start")
+        (repo / ".env").write_text("UNRELATED=1\n")
+        before = tree(repo)
+        for extra in ([], ["--new-brain"]):
+            with self.subTest(extra):
+                code, out, err = self.jas("init", "--box", "mac", "--brain-path", str(repo), *extra, "--apply")
+                self.assertEqual(code, 1)
+                self.assertIn("brain.json", out + err)
+                self.assertEqual(tree(repo), before)
+
+    def test_cloned_repo_without_brain_json_is_refused(self):
+        source = self.base / "project"
+        source.mkdir()
+        git(source, "init", "-q")
+        (source / "notes.md").write_text("tracked\n")
+        git(source, "add", "notes.md")
+        git(source, "commit", "-q", "-m", "start")
+        code, _, err = self.jas("init", "--box", "mac", "--brain", str(source), "--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("brain.json", err)
+        self.assertNotIn("brain.json", git(source, "ls-tree", "-r", "--name-only", "HEAD"))
+        self.assertFalse((self.home / "brain" / "brain.json").exists())
+
+    def test_skeleton_fill_commits_only_the_skeleton(self):
+        self.ok(*INIT, "--apply")
+        brain = self.home / "brain"
+        git(brain, "rm", "-q", "README.md")
+        git(brain, "commit", "-q", "-m", "drop readme")
+        (brain / "scratch.txt").write_text("not mine to commit\n")
+        self.ok(*INIT, "--apply")
+        self.assertIn("README.md", git(brain, "show", "--name-only", "--format=", "HEAD"))
+        self.assertEqual(git(brain, "status", "--porcelain"), "?? scratch.txt\n")

@@ -123,16 +123,28 @@ def skeleton_missing(root: Path, zone: str) -> dict[str, str]:
     return out
 
 
-def write_skeleton(root: Path, zone: str) -> None:
-    for name, text in skeleton_missing(root, zone).items():
+def write_skeleton(root: Path, zone: str) -> list[str]:
+    missing = skeleton_missing(root, zone)
+    for name, text in missing.items():
         (root / name).write_text(text)
+    return sorted(missing)
 
 
 def create(root: Path, zone: str, box: str) -> None:
     root.mkdir(parents=True, exist_ok=True)
     git(root, "init", "-q", "-b", "main")
-    write_skeleton(root, zone)
-    commit_all(root, box, "brain: init")
+    commit_paths(root, box, "brain: init", write_skeleton(root, zone))
+
+
+def commit_paths(root: Path, box: str, message: str, names: list[str]) -> bool:
+    """Commit only `names`, so files jas did not write never ride along."""
+    if not names:
+        return False
+    git(root, "add", "--", *names)
+    if git(root, "diff", "--cached", "--quiet", "--", *names, check=False).returncode == 0:
+        return False
+    git(root, *identity(root, box), "commit", "-q", "-m", message, "--", *names)
+    return True
 
 
 def commit_all(root: Path, box: str, message: str) -> bool:
@@ -159,12 +171,13 @@ def import_plan(source: Path, root: Path) -> tuple[list[tuple[Path, Path]], list
     return copies, kept
 
 
-def import_notes(source: Path, root: Path) -> int:
+def import_notes(source: Path, root: Path) -> list[str]:
+    """Copy the planned files; returns their paths relative to the brain."""
     copies, _ = import_plan(source, root)
     for src, dest in copies:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
-    return len(copies)
+    return [dest.relative_to(root).as_posix() for _, dest in copies]
 
 
 # Markdown helpers shared with the index.

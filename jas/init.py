@@ -201,32 +201,33 @@ def brain_changes(cfg: dict, remote: str, new_brain: bool, import_dir: Path | No
     label = paths.tilde(root)
     box, zone = cfg["box"], cfg["zone"]
     out = []
-    if brain.is_repo(root):
+    if root.exists() and any(root.iterdir()):
         found = brain.zone_of(root)
-        if found and found != zone:
+        if not brain.is_repo(root) or found is None:
+            out.append(Change("brain", label, "conflict", "exists and is not a brain (a git repo with brain.json); --new-brain and --brain need an empty or missing "
+                                                          "path. Pick another --brain-path, and use --import-notes to bring notes in"))
+        elif found != zone:
             raise JasError(f"Brain {label} is zone {found!r}; this box is zone {zone!r}. Use --brain-path for a {zone} brain.")
-        missing = brain.skeleton_missing(root, zone)
-        if missing:
-            def fill(tx):
-                brain.write_skeleton(root, zone)
-                brain.commit_all(root, box, "brain: add skeleton files")
-            out.append(Change("brain", label, "update", "add " + ", ".join(sorted(missing)), fill, True))
         else:
-            out.append(Change("brain", label, "keep", f"zone {zone}"))
-        has_origin = brain.git(root, "remote", check=False).stdout.split()
-        if remote and "origin" not in has_origin:
-            out.append(Change("brain", label, "update", f"add remote origin {remote}", lambda tx: brain.git(root, "remote", "add", "origin", remote), True))
-    elif root.exists() and any(root.iterdir()):
-        out.append(Change("brain", label, "conflict", "folder exists and is not a git repo; pick another --brain-path and use --import-notes"))
+            missing = brain.skeleton_missing(root, zone)
+            if missing:
+                def fill(tx):
+                    brain.commit_paths(root, box, "brain: add skeleton files", brain.write_skeleton(root, zone))
+                out.append(Change("brain", label, "update", "add " + ", ".join(sorted(missing)), fill, True))
+            else:
+                out.append(Change("brain", label, "keep", f"zone {zone}"))
+            if remote and "origin" not in brain.git(root, "remote", check=False).stdout.split():
+                out.append(Change("brain", label, "update", f"add remote origin {remote}", lambda tx: brain.git(root, "remote", "add", "origin", remote), True))
     elif remote:
         def clone(tx):
             root.parent.mkdir(parents=True, exist_ok=True)
             brain.git(root.parent, "clone", "-q", remote, str(root))
             found = brain.zone_of(root)
+            if found is None and any(p.name != ".git" for p in root.iterdir()):
+                raise JasError(f"{remote} has files but no brain.json, so it is not a brain. Remove {label} and pass --brain with a brain repo's URL")
             if found and found != zone:
                 raise JasError(f"Cloned brain is zone {found!r}; this box is zone {zone!r}. Remove {label} and clone a {zone} brain.")
-            brain.write_skeleton(root, zone)
-            brain.commit_all(root, box, "brain: init")
+            brain.commit_paths(root, box, "brain: init", brain.write_skeleton(root, zone))
         out.append(Change("brain", label, "add", f"clone {remote}", clone, True))
     elif new_brain:
         out.append(Change("brain", label, "add", f"new {zone} brain", lambda tx: brain.create(root, zone, box), True))
@@ -238,8 +239,7 @@ def brain_changes(cfg: dict, remote: str, new_brain: bool, import_dir: Path | No
         copies, kept = brain.import_plan(import_dir, root)
 
         def run_import(tx):
-            brain.import_notes(import_dir, root)
-            brain.commit_all(root, box, "brain: import notes")
+            brain.commit_paths(root, box, "brain: import notes", brain.import_notes(import_dir, root))
         state = "add" if copies else "keep"
         out.append(Change("import", str(import_dir), state, f"{len(copies)} files to copy, {len(kept)} already present", run_import if copies else None, True))
     return out
