@@ -1,6 +1,6 @@
 # Third-party notices
 
-This private collection contains personal adaptations and preserved upstream skill files. No blanket license replaces the upstream licenses.
+This collection contains personal adaptations and preserved upstream skill files. No blanket license replaces the upstream licenses.
 
 - **pstack**, Copyright (c) 2026 Lauren Tan, MIT: `blast-radius` and `create-verification-skill`, including the feature-map examples. Only companion-skill names, project-local harness directories and Codex invocation metadata are adapted. License: [licenses/pstack.LICENSE](licenses/pstack.LICENSE).
 - **Matt Pocock skills**, Copyright (c) 2026 Matt Pocock, MIT: `diagnosing-bugs`, `grilling`, `handoff`, `retro` and `writing-for-agents`, including the reproduction helper, invocation metadata and mechanics reference. License: [licenses/mattpocock.LICENSE](licenses/mattpocock.LICENSE).
