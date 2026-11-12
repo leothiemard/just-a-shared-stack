@@ -17,18 +17,18 @@ def render(repos: list[Path]) -> str:
 
 
 def span(text: str, where: Path) -> tuple[int, int] | None:
-    """Where the block is: one begin then one end, each on its own line outside code fences; None when there is neither."""
+    """Where the block is: one begin then one end, each on its own line at column zero outside code fences; None when there is neither."""
     lines = text.split("\n")
     starts = [0]
     for line in lines:
         starts.append(starts[-1] + len(line) + 1)
-    found = [(i, line.strip()) for i, line in brain.outside_fences(lines) if line.strip() in (BEGIN, END)]
+    found = [(i, line.rstrip()) for i, line in brain.outside_fences(lines) if line.rstrip() in (BEGIN, END)]
     if not found:
         return None
     if [marker for _, marker in found] != [BEGIN, END]:
         raise JasError(f"{where} has ambiguous jas markers. Leave exactly one begin marker line followed by one end marker line, then rerun.")
     (b, _), (e, _) = found
-    return starts[b] + lines[b].index(BEGIN), starts[e] + lines[e].index(END) + len(END)
+    return starts[b], starts[e] + len(END)
 
 
 def current(text: str, where: Path) -> str | None:

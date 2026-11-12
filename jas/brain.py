@@ -27,7 +27,9 @@ SKELETON = {
     ".gitignore": f".DS_Store\n.obsidian/workspace*.json\n.trash/\n*{paths.TEMP}*\n",
 }
 SKIP_DIRS = {".git", ".obsidian", ".trash"}
-FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})(.*)$")
+FENCE = re.compile(r" {0,3}(`{3,}(?!.*`)|~{3,})(.*)$")
+QUOTE = re.compile(r" {0,3}> ?")
+ITEM = re.compile(r" {0,3}(?:[-*+]|\d{1,9}[.)])( {1,4}|$)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 PROJECT_NAME = re.compile(r"[^/\\]+")
 
@@ -239,17 +241,40 @@ def frontmatter(text: str) -> tuple[dict, int]:
 def fenced(lines: list[str]) -> tuple[list[bool], str]:
     """Per line, whether it belongs to a code fence (delimiters included), and the fence still open at the end ("" when none).
 
-    A fence closes only on a line of its own character, at least as long, with nothing but whitespace after it."""
-    mask, fence = [], ""
-    for line in lines:
-        match = FENCE.match(line)
-        mask.append(bool(fence or match))
+    Block quotes and list items are containers: a fence opens at most three spaces past its container's content column,
+    four or more is indented code, and a fence ends with its closer or with its container. A fence closes only on a line of
+    its own character, at least as long, with nothing but whitespace after it."""
+    mask, fence, items, depth = [], None, [], 0
+    for raw in lines:
+        rest, quotes = raw.expandtabs(4), 0
+        quote = QUOTE.match(rest)
+        while quote:
+            rest, quotes = rest[quote.end():], quotes + 1
+            quote = QUOTE.match(rest)
+        if quotes != depth:
+            items, depth = [], quotes
+        blank = not rest.strip()
+        indent = len(rest) - len(rest.lstrip(" "))
+        while items and not blank and indent < items[-1]:
+            items.pop()
+        if fence and (quotes < fence[1] or (not blank and indent < fence[2])):
+            fence = None
         if fence:
-            if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence) and not match.group(2).strip():
-                fence = ""
-        elif match:
-            fence = match.group(1)
-    return mask, fence
+            mask.append(True)
+            close = FENCE.match(rest, fence[2])
+            if close and close.group(1)[0] == fence[0][0] and len(close.group(1)) >= len(fence[0]) and not close.group(2).strip():
+                fence = None
+            continue
+        column = items[-1] if items else 0
+        item = ITEM.match(rest, column)
+        while item:
+            column = item.end() + (not item.group(1))
+            items.append(column)
+            item = ITEM.match(rest, column)
+        opener = FENCE.match(rest, column)
+        fence = (opener.group(1), quotes, column) if opener else None
+        mask.append(bool(opener))
+    return mask, fence[0] if fence else ""
 
 
 def outside_fences(lines: list[str]) -> list[tuple[int, str]]:

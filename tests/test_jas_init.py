@@ -259,6 +259,35 @@ class InitTests(Sandbox):
                 self.assertIn(example, text)
                 self.assertEqual(text.count(rules.BEGIN), 2)
 
+    def test_a_fence_opened_in_a_list_item_holds_its_indented_examples(self):
+        example = "- ```markdown\n  " + rules.BEGIN + "\n  example rules\n  " + rules.END + "\n  ```\n"
+        canonical = self.canonical_with("# Local\n\n" + example + "\n" + rules.BEGIN + "\nold\n" + rules.END + "\ntail\n")
+        self.ok(*INIT, "--apply")
+        text = canonical.read_text()
+        self.assertIn(example + "\n" + rules.BEGIN + "\n", text)
+        self.assertNotIn("\nold\n", text)
+        self.assertTrue(text.endswith(rules.END + "\ntail\n"))
+
+    def test_indented_code_neither_opens_a_fence_nor_holds_the_block(self):
+        canonical = self.home / ".agents" / "AGENTS.md"
+        canonical.parent.mkdir(parents=True)
+        for local in ("# Local\n\n    ```\n    indented code\n\n",
+                      "# Local\n\n    " + rules.BEGIN + "\n    example\n    " + rules.END + "\n\n"):
+            with self.subTest(local):
+                canonical.write_text(local + rules.BEGIN + "\nold\n" + rules.END + "\ntail\n")
+                self.ok(*INIT, "--apply")
+                text = canonical.read_text()
+                self.assertTrue(text.startswith(local + rules.BEGIN + "\n"), text)
+                self.assertNotIn("\nold\n", text)
+
+    def test_a_fence_in_a_nested_list_item_closes_on_its_own_closer(self):
+        example = "1. Step\n   - Detail\n     ```\n     code\n     ```\n"
+        canonical = self.canonical_with("# Local\n\n" + example + "\n" + rules.BEGIN + "\nold\n" + rules.END + "\ntail\n")
+        self.ok(*INIT, "--apply")
+        text = canonical.read_text()
+        self.assertEqual(text.count(rules.BEGIN), 1, text)
+        self.assertNotIn("\nold\n", text)
+
     def test_ambiguous_markers_are_a_conflict_and_the_file_is_kept(self):
         cases = {
             "only fenced markers": "```\n" + rules.BEGIN + "\n```\nlocal\n" + rules.END + "\n",

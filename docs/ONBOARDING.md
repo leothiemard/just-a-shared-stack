@@ -78,7 +78,7 @@ Commands you may use yourself: `jas doctor` (health and context budget), `jas se
 
 ## Add a rule
 
-Edit `rules/global.md`. Keep it short: every byte loads in every session, and `jas doctor` warns past 2,000 bytes for the whole file. Commit, push, then `jas update --apply` on each box. Never edit the block between the `jas:begin` and `jas:end` markers by hand; `jas update` replaces it.
+Edit `rules/global.md`. Keep it short: every byte loads in every session, and `jas doctor` warns past 2,000 bytes for the whole file. Commit, push, then `jas update --apply` on each box. Never edit the block between the `jas:begin` and `jas:end` markers by hand; `jas update` replaces it. A marker counts only on a line of its own at column zero outside code fences and indented code, so examples of the markers elsewhere in the file are left alone.
 
 ## Add a private layer
 
