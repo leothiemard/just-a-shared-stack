@@ -63,6 +63,16 @@ class RecallTests(Sandbox):
         text = self.ok("recall", "deploy", "--limit", "20", "--budget", "200", "--no-sync")
         self.assertLess(len(text.encode()) / 4, 260)
 
+    def test_one_file_fills_at_most_two_hits(self):
+        self.write("Projects/example-app/Deploys.md", "# Deploys\n" + "".join(f"\n## Deploy step {n}\nDeploy detail.\n" for n in range(6)))
+        paths = [h["path"] for h in self.recall("deploy", "--limit", "10")["hits"]]
+        self.assertEqual(paths.count("Projects/example-app/Deploys.md"), 2)
+        self.assertGreater(len(paths), 2)
+
+    def test_session_hits_are_labelled_with_the_session_title(self):
+        out = self.ok("recall", "redeployed", "--no-sync")
+        self.assertIn("-1234abcd.md § Fix preview deploys › Outcome   session", out)
+
     def test_zero_hits(self):
         code, out, _ = self.jas("recall", "kubernetes", "--no-sync")
         self.assertEqual((code, out), (0, "No hits for 'kubernetes'.\n"))

@@ -291,6 +291,11 @@ def add_lesson(root: Path, topic: str, claim: str, body: str, provenance: dict) 
     return path, near
 
 
+def clip_line(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def clip(text: str, limit: int, full: str) -> str:
     """At most `limit` bytes of `text`, with a visible notice when cut."""
     data = text.encode()

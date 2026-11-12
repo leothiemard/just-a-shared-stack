@@ -17,6 +17,7 @@ KINDS = tuple(KIND_WEIGHT)
 HALF_LIFE_DAYS = 180
 RECENCY_FLOOR = 0.6
 SNIPPET_CHARS = 240
+PER_FILE = 2  # hits shown from one file, so one long note cannot fill the answer
 COMMENT = re.compile(r"<!--.*?-->", re.S)
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 COLUMNS = "path, heading, trail, line, kind, project, box, date, body"
@@ -206,7 +207,8 @@ def snippet(hit: dict) -> str:
 
 
 def hit_lines(n: int, hit: dict) -> str:
-    label = f"{hit['path']} § {hit['heading']}" if hit["heading"] else hit["path"]
+    heading = hit["trail"] if hit["kind"] == "session" and hit["trail"] else hit["heading"]
+    label = f"{hit['path']} § {brain.clip_line(heading, 120)}" if heading else hit["path"]
     meta = [hit["kind"]]
     if hit["project"] and hit["kind"] != "hub":
         meta.append(hit["project"])
@@ -225,12 +227,17 @@ def recall(conn: sqlite3.Connection, root: Path, query: str, *, limit: int, budg
     hits = search(conn, query, **filters)
     if not hits:
         return json.dumps({"total": 0, "hits": []}) + "\n" if as_json else f"No hits for {query!r}.\n"
-    shown, body = [], ""
-    for hit in hits[:limit]:
+    shown, body, per_file = [], "", {}
+    for hit in hits:
+        if len(shown) == limit:
+            break
+        if per_file.get(hit["path"], 0) == PER_FILE:
+            continue
         line = hit_lines(len(shown) + 1, hit)
         if shown and len((body + line).encode()) / 4 > budget:
             break
         shown.append(hit)
+        per_file[hit["path"]] = per_file.get(hit["path"], 0) + 1
         body += line
     refs_path(root).write_text(json.dumps([{"path": h["path"], "line": h["line"], "heading": h["heading"]} for h in shown]))
     if as_json:

@@ -63,9 +63,21 @@ def turns(rec: SessionRecord) -> int:
     return rec.turns or max(len(rec.prompts), len(rec.turn_finals))
 
 
+def contained(text: str) -> str:
+    """Assistant Markdown that cannot open sections of its own: headings become bold, a cut fence is closed."""
+    lines, fenced = [], False
+    for line in text.split("\n"):
+        if brain.FENCE.match(line):
+            fenced = not fenced
+        elif not fenced:
+            line = re.sub(r"^#{1,6}\s+(.*?)\s*#*\s*$", r"**\1**", line)
+        lines.append(line)
+    return "\n".join(lines + (["```"] if fenced else []))
+
+
 def asked(prompts: list[str], chars: int) -> list[str]:
     def item(text: str) -> str:
-        return "- " + clip(text, chars).replace("\n", "\n  ")
+        return "- " + contained(clip(text, chars)).replace("\n", "\n  ")
 
     if len(prompts) <= 2 * KEEP_PROMPTS:
         return [item(p) for p in prompts]
@@ -76,7 +88,7 @@ def asked(prompts: list[str], chars: int) -> list[str]:
 def render_with(rec: SessionRecord, box: str, zone: str, keep_turns: int, keep_delegated: int, prompt_chars: int) -> str:
     out = [frontmatter(rec, box, zone), f"# {one_line(rec.title, 200) or rec.id}", "", "## Asked", ""]
     out += asked(rec.prompts, prompt_chars) or ["_No prompt recorded._"]
-    outcome = clip(rec.turn_finals[-1], OUTCOME_CHARS) if rec.turn_finals else "_No final assistant message._"
+    outcome = contained(clip(rec.turn_finals[-1], OUTCOME_CHARS)) if rec.turn_finals else "_No final assistant message._"
     out += ["", "## Outcome", "", outcome]
     earlier = rec.turn_finals[:-1]
     if earlier:

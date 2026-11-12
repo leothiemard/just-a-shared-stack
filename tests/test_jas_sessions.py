@@ -144,3 +144,14 @@ class SessionsTests(Sandbox):
     def test_list_shows_peak_context_and_subagents(self):
         self.export([record("s1", peak_context=250000, subagent_count=4)])
         self.assertIn("1500 tokens  peak 250K  4 subagents", self.ok("sessions", "list"))
+
+    def test_assistant_markdown_cannot_open_digest_sections(self):
+        rec = SessionRecord(
+            id="x", title="T", project="p", cwd="", started=NOW, updated=NOW,
+            prompts=["Run this:\n```sh\nmake " + "x" * 700],
+            turn_finals=["first", "## Question for you\nShould I?\n```\n# not a heading\n" + "y" * 3000],
+        )
+        text = digest.render(rec, "mac", "personal")
+        sections = [t for _, level, t in brain.headings(text.split("\n")) if level == 2]
+        self.assertEqual(sections, ["Asked", "Outcome", "Turns"])
+        self.assertIn("**Question for you**\nShould I?", text)
