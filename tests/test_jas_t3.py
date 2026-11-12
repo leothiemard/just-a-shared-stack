@@ -44,8 +44,8 @@ class T3SourceTests(Sandbox):
 
     def test_exports_finished_top_level_threads_only(self):
         result = self.export()
-        self.assertEqual(set(self.digests()), {"top", "agent-launched", "secret", "long", "scratchy"})
-        self.assertEqual(len(result["written"]), 5)
+        self.assertEqual(set(self.digests()), {"top", "agent-launched", "secret", "long", "scratchy", "imported"})
+        self.assertEqual(len(result["written"]), 6)
         self.assertEqual(result["skipped"], 1)  # the active thread; children, deleted and failed-only never leave the source
 
     def test_digest_fields_and_folded_children(self):
@@ -80,6 +80,12 @@ class T3SourceTests(Sandbox):
         self.assertIn("## Outcome\n\nAnswer for turn 19\n", text)
         self.assertIn("turns: 20", text)
 
+    def test_imported_history_without_runs(self):
+        self.export()
+        text = self.digests()["imported"]
+        self.assertIn("## Asked\n\n- Old question\n- Follow-up\n\n## Outcome\n\nFinal old answer\n\n## Turns\n\n1. Old answer\n", text)
+        self.assertIn("turns: 2", text)
+
     def test_scratch_workspace_and_secrets(self):
         self.export()
         found = self.digests()
@@ -96,7 +102,7 @@ class T3SourceTests(Sandbox):
         self.assertEqual(len(self.export()["written"]), 2)
         self.assertIn("Also fixed the docs.", self.digests()["top"])
         self.assertIn("active", self.digests())
-        self.assertEqual(len(list((self.brain / "Sessions").rglob("*.md"))), 6)
+        self.assertEqual(len(list((self.brain / "Sessions").rglob("*.md"))), 7)
 
     def test_incremental_runs_load_only_changed_threads(self):
         self.export()
@@ -112,7 +118,7 @@ class T3SourceTests(Sandbox):
         self.store.touch("secret", 40)
         result, ids = loaded()
         self.assertEqual((len(result["written"]), ids), (1, {"secret", "active"}))
-        self.assertEqual(loaded("--all")[1], {"top", "agent-launched", "secret", "long", "scratchy", "active"})
+        self.assertEqual(loaded("--all")[1], {"top", "agent-launched", "secret", "long", "scratchy", "imported", "empty-import", "active"})
 
     def test_store_is_never_written(self):
         before = (hashlib.sha256(self.store_path.read_bytes()).hexdigest(), self.store_path.stat().st_mtime_ns)
@@ -137,7 +143,7 @@ class T3SourceTests(Sandbox):
         self.store_path.rename(self.base / "moved.sqlite")
         self.export()
         (self.base / "moved.sqlite").rename(self.store_path)
-        self.assertEqual(len(self.export()["written"]), 5)
+        self.assertEqual(len(self.export()["written"]), 6)
 
     def test_missing_store_and_default_path(self):
         self.set_sessions(t3_store="")
@@ -159,8 +165,8 @@ class T3SourceTests(Sandbox):
         self.export()
         groups = json.loads(self.ok("sessions", "stats", "--by", "project", "--json"))
         app = next(g for g in groups if g["group"] == "example-app")
-        self.assertEqual((app["sessions"], app["turns"], app["input"], app["subagents"], app["long"], app["long_share"]), (4, 26, 2600, 3, 1, 0.25))
+        self.assertEqual((app["sessions"], app["turns"], app["input"], app["subagents"], app["long"], app["long_share"]), (5, 28, 2600, 3, 1, 0.2))
         table = self.ok("sessions", "stats", "--by", "week")
         self.assertRegex(table.splitlines()[1], r"^\d{4}-W\d{2} ")
-        self.assertRegex(table.splitlines()[-1], r"^total\s+5\s")
+        self.assertRegex(table.splitlines()[-1], r"^total\s+6\s")
         self.assertIn(">200K", table.splitlines()[0])

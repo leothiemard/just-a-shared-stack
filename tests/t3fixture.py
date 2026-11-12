@@ -159,6 +159,15 @@ def standard(path: Path) -> Store:
         prompt = f"Prompt number {n}" if n % 2 == 0 else None
         s.turn("long", prompt, f"Answer for turn {n}", at=1900 - n * 10)
 
+    s.thread("imported", title="Imported from v1", age=50000, updated=40000)
+    s.message("imported", "user", "Old question", None, 40010)
+    s.message("imported", "assistant", "Old progress", None, 40009)
+    s.message("imported", "assistant", "Old answer", None, 40008)
+    s.message("imported", "user", "Follow-up", None, 40005)
+    s.message("imported", "assistant", "Final old answer", None, 40001)
+    s.thread("empty-import", title="Imported without answers", updated=40000)
+    s.message("empty-import", "user", "Nobody answered", None, 40010)
+
     s.thread("scratchy", project="p-scratch", title="Quick scratch question")
     s.turn("scratchy", "What is a monad", "A monoid in the category of endofunctors.", at=500)
     return s

@@ -2,7 +2,9 @@
 
 The tables are internal to T3 Code and change often, so every table and column
 selected here is pinned in `PINNED` and checked before reading. Top-level threads
-(no parent, or a fork) become records; their descendants are folded in.
+(no parent, or a fork) with a completed run become records; their descendants are
+folded in. History imported from T3 Code v1 has messages but no runs; those threads
+are exported too, with turns split at each user message.
 """
 
 from __future__ import annotations
@@ -119,11 +121,14 @@ class T3Source(Source):
             with_runs = {row[0] for row in conn.execute(f"SELECT DISTINCT thread_id FROM {T}runs")}
             env = self.environment_id()
             for thread_id, project_id, title, created, updated, deleted, provider, *_ in threads:
-                if thread_id in parent or deleted or thread_id not in completed:
+                finished = thread_id in completed or thread_id not in with_runs
+                if thread_id in parent or deleted or not finished:
                     continue
                 if changed_after and timestamp(updated) <= changed_after:
                     continue
                 rec = load(conn, thread_id, with_runs)
+                if not rec["turn_finals"]:
+                    continue
                 root = roots.get(project_id) or ""
                 rec.update(
                     id=thread_id, title=title or "", project=project_key(root), started=timestamp(created),
@@ -157,16 +162,16 @@ def load(conn: sqlite3.Connection, thread_id: str, with_runs: set[str]) -> dict:
         f" FROM {T}messages WHERE thread_id = ? ORDER BY created_at, message_id",
         (thread_id,),
     )
-    first_user = True
+    users = 0
     for role, run_id, text, author, *markers in rows:
         text = text if isinstance(text, str) else ""
         if role == "user":
             human = author == "user" and not any(markers)
-            if (human or (first_user and created_by == "agent")) and text.strip():
+            if (human or (not users and created_by == "agent")) and text.strip():
                 prompts.append(text)
-            first_user = False
+            users += 1
         elif role == "assistant" and text.strip():
-            finals[run_id] = text
+            finals[run_id or f"imported-{users}"] = text  # the last one of each run wins
 
     tokens = {"input": 0, "cached": 0, "output": 0}
     peak = 0
@@ -199,16 +204,14 @@ def load(conn: sqlite3.Connection, thread_id: str, with_runs: set[str]) -> dict:
         )
         if child in with_runs
     ]
-    turn_finals = [finals[run] for run in runs if run in finals]
-    if not turn_finals and None in finals:
-        turn_finals = [finals[None]]
+    turn_finals = [finals[run] for run in runs if run in finals] if runs else list(finals.values())
     return {
         "cwd": payload.get("worktreePath") or "",
         "model": (payload.get("modelSelection") or {}).get("model") or "",
         "pr_urls": prs,
         "prompts": prompts,
         "turn_finals": turn_finals,
-        "turns": len(runs),
+        "turns": len(runs) or len(turn_finals),
         "tokens": tokens if any(tokens.values()) else {},
         "peak_context": peak,
         "delegated": delegated,
