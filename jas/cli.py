@@ -59,7 +59,7 @@ def cmd_path(args) -> int:
 
 def cmd_hub(args) -> int:
     root = brain.open_brain(config.load())
-    hub = brain.hub_path(root, brain.project_key(root, args.project))
+    hub = brain.within(root, brain.hub_path(root, brain.project_key(root, args.project)))
     if hub.is_file():
         rel = hub.relative_to(root).as_posix()
         print(brain.clip(hub.read_text(), HUB_MAX_BYTES, f"jas show {rel}"), end="")

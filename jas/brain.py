@@ -103,7 +103,7 @@ def inside(root: Path, path: Path) -> bool:
 def within(root: Path, path: Path) -> Path:
     """`path`, when it stays inside the brain; jas never reads or writes through a link that leads out."""
     if not inside(root, path):
-        raise JasError(f"{path} leads outside the brain through a symlink; jas does not read or write there. Replace the link with a real file or folder.")
+        raise JasError(f"{path} leads outside the brain; jas does not read or write there. If a symlink leads out, replace it with a real file or folder.")
     return path
 
 
@@ -256,7 +256,7 @@ def hub_path(root: Path, project: str) -> Path:
 
 def ensure_project(root: Path, project: str) -> Path:
     """The project folder, with a hub skeleton when the folder is new."""
-    folder = root / "Projects" / project
+    folder = within(root, root / "Projects" / project)
     if not folder.is_dir():
         folder.mkdir(parents=True)
         date = today()
@@ -268,7 +268,7 @@ def ensure_project(root: Path, project: str) -> Path:
 
 
 def add_log(root: Path, project: str, title: str, body: str, box: str) -> Path:
-    log = ensure_project(root, project) / "Log.md"
+    log = within(root, ensure_project(root, project) / "Log.md")
     title = " ".join(title.split())
     if not title:
         raise JasError("Log title is empty. Pass -t with a short title.")
@@ -328,7 +328,7 @@ def add_lesson(root: Path, topic: str, claim: str, body: str, provenance: dict) 
         raise JasError("Lesson claim is empty. Phrase the lesson as a one-line claim.")
     if len(body.split("\n")) > 4:
         raise JasError("Lesson body has more than four lines. Shorten it, or keep the detail in a project note.")
-    path = root / "Lessons" / f"{slug}.md"
+    path = within(root, root / "Lessons" / f"{slug}.md")
     text = path.read_text() if path.exists() else f"---\ntopic: {slug}\n---\n# {slug}\n"
     existing = lessons_in(text)
     if any(c.lower() == claim.lower() for c, _ in existing):

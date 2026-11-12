@@ -61,7 +61,7 @@ def markdown_files(root: Path) -> dict[str, Path]:
     found = {}
     for path in root.rglob("*.md"):
         rel = path.relative_to(root)
-        if path.is_file() and not any(part in brain.SKIP_DIRS for part in rel.parts):
+        if path.is_file() and brain.inside(root, path) and not any(part in brain.SKIP_DIRS for part in rel.parts):
             found[rel.as_posix()] = path
     return found
 
@@ -268,8 +268,8 @@ def show(root: Path, ref: str, max_bytes: int) -> str:
         rel, line = entry["path"], entry["line"]
     else:
         rel, _, heading = ref.partition("#")
-    path = (root / rel).resolve()
-    if not path.is_relative_to(root.resolve()) or not path.is_file():
+    path = brain.within(root, root / rel)
+    if not path.is_file():
         raise JasError(f"No file {rel!r} in the brain. Use a path from `jas recall` output.")
     text = path.read_text(errors="replace")
     lines = text.split("\n")

@@ -82,7 +82,7 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
             rec.subagent_count = children.get(rec.id, 0)
         result["written"].append(rel)
         if not dry_run:
-            path = root / rel
+            path = brain.within(root, root / rel)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(digest.render(scrub.record(rec), cfg["box"], cfg["zone"]))
             seen[rec.id] = stamp
@@ -101,6 +101,8 @@ def numbers(text: str) -> dict[str, int]:
 def listing(root: Path, since: str = "", box: str = "", project: str = "") -> list[dict]:
     rows = []
     for path in sorted((root / "Sessions").glob("*/*/*.md")):
+        if not brain.inside(root, path):
+            continue
         meta, _ = brain.frontmatter(path.read_text(errors="replace"))
         date = str(meta.get("updated", ""))[:10]
         if (since and date < since) or (box and meta.get("box") != box) or (project and str(meta.get("project", "")).lower() != project.lower()):

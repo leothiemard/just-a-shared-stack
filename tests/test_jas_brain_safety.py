@@ -1,6 +1,8 @@
+import datetime as dt
+import json
 import subprocess
 
-from jashelp import Sandbox, git
+from jashelp import Sandbox, git, tree
 
 
 class UnfinishedGitTests(Sandbox):
@@ -54,3 +56,66 @@ class UnfinishedGitTests(Sandbox):
         self.assertEqual(code, 1)
         self.assertIn("unmerged", err)
         self.assertNotIn("<<<<<<<", git(root, "show", "HEAD:note.md"))
+
+
+class ContainmentTests(Sandbox):
+    """No brain reader or writer follows a symlink out of the brain."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.base / "sessions.json"
+        self.store.write_text("[]")
+        self.root = self.new_box(sources=[f"json:{self.store}"])
+        self.outside = self.base / "outside"
+        self.outside.mkdir()
+        (self.outside / "example.md").write_text("# Outside\n\nunikeyword private text\n")
+        (self.outside / "Log.md").write_text("outside log\n")
+
+    def link(self, rel, target, folder=False):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target, target_is_directory=folder)
+
+    def refused(self, *argv, stdin=""):
+        before = tree(self.outside)
+        code, out, err = self.jas(*argv, stdin=stdin)
+        self.assertEqual(code, 1, out)
+        self.assertIn("outside the brain", err)
+        self.assertEqual(tree(self.outside), before)
+        return out
+
+    def test_project_folder_link(self):
+        self.link("Projects/example", self.outside, folder=True)
+        self.assertEqual(self.refused("hub", "example"), "")
+        self.refused("log", "-p", "example", "-t", "Entry", stdin="- body\n")
+        self.refused("show", "Projects/example/example.md")
+        self.assertIn("No hits", self.ok("recall", "unikeyword", "--no-sync"))
+
+    def test_dangling_log_link(self):
+        (self.root / "Projects" / "dangling").mkdir(parents=True)
+        self.link("Projects/dangling/Log.md", self.outside / "new.md")
+        self.refused("log", "-p", "dangling", "-t", "Entry")
+        self.assertFalse((self.outside / "new.md").exists())
+
+    def test_lessons_folder_link(self):
+        self.link("Lessons", self.outside, folder=True)
+        self.refused("lesson", "vercel", "Preview deploys ignore late env vars", "-p", "example-app")
+
+    def test_file_link(self):
+        self.link("leak.md", self.outside / "example.md")
+        self.assertIn("No hits", self.ok("recall", "unikeyword", "--no-sync"))
+        self.refused("show", "leak.md")
+
+    def test_session_and_box_folder_links(self):
+        (self.outside / "2026-01").mkdir()
+        (self.outside / "2026-01" / "digest.md").write_text("---\nkind: session\nbox: other\nupdated: 2026-01-02\n---\n# x\n")
+        self.link("Sessions/other", self.outside, folder=True)
+        self.assertEqual(json.loads(self.ok("sessions", "list", "--json")), [])
+        self.link("Sessions/mac", self.outside, folder=True)
+        updated = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat()
+        self.store.write_text(json.dumps([{"id": "s1", "title": "T", "project": "example-app", "cwd": "/work", "started": updated, "updated": updated,
+                                           "prompts": ["Do it"], "turn_finals": ["Done."]}]))
+        self.refused("sessions", "export")
+        self.store.write_text("[]")
+        self.link("Boxes", self.outside, folder=True)
+        self.refused("sync")
