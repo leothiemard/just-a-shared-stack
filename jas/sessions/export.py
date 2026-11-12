@@ -90,7 +90,7 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
             seen[rec.id] = stamp
         if complete and not since:
             state["horizon"] = (now - idle).isoformat()
-        state_path(root).parent.mkdir(parents=True, exist_ok=True)
+        paths.private_dir(state_path(root).parent)
         paths.write_atomic(state_path(root), json.dumps(state, indent=2, sort_keys=True) + "\n")
     return result
 

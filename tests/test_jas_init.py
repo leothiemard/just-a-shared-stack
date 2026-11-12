@@ -363,3 +363,26 @@ class InitTests(Sandbox):
         (brain / "README.md").symlink_to(outside)
         self.jas(*INIT, "--apply")
         self.assertFalse(outside.exists())
+
+
+class PrivateFilesTests(Sandbox):
+    def test_cache_and_config_hold_only_private_files_and_folders(self):
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "CLAUDE.md").write_text("mine\n")
+        old = os.umask(0o022)
+        try:
+            self.ok(*INIT, "--apply")
+            self.ok("log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+            self.ok("sync")
+            self.ok("recall", "private")
+            self.ok(*INIT, "--box", "mac-two", "--apply")
+        finally:
+            os.umask(old)
+        found = []
+        for top in (self.home / ".cache" / "just-a-stack", self.home / ".config" / "just-a-stack"):
+            found += [top, *top.rglob("*")]
+        self.assertTrue(any(p.name.endswith("-CLAUDE.md") for p in found if "backups" in p.parts), found)
+        self.assertTrue(any(p.suffix == ".sqlite" for p in found), found)
+        for path in found:
+            with self.subTest(str(path.relative_to(self.home))):
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)

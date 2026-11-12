@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -41,6 +42,7 @@ def connect(root: Path) -> sqlite3.Connection:
         raise JasError("This Python's SQLite lacks FTS5. Use a Python build whose sqlite3 includes FTS5 (python.org or Homebrew builds do).")
     path = db_path(root)
     with paths.Lock(path.with_suffix(".lock"), wait=True):
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
         conn = sqlite3.connect(str(path))
         build(conn, root)
     return conn

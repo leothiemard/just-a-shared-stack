@@ -34,6 +34,8 @@ Each machine is a **box**. Every box has a name (`mac`, `linux-box`) and belongs
    one per zone            (commit, rebase, push) brain clone
 ```
 
+jas creates its own folders, `~/.config/just-a-stack` (box config, restore backups) and `~/.cache/just-a-stack` (recall index, sync and export state), as `0700`, and every file it writes there is `0600`, since they hold brain and session content.
+
 Agents run inside the project they work on, never from a special home folder. The stack reaches them through globally linked skills and a short managed block in the global instruction file. The brain reaches them only on demand, through `jas`.
 
 A work box adds a private **layer**: a directory shaped like this repository (`skills.json`, `skills/`, optional `rules/global.md`) with company skills and rules. It points at a company brain in zone `work`. `jas` refuses to read or sync a brain whose zone differs from the box's, so personal boxes never see work knowledge and the reverse. Skill names must be unique across layers; a duplicate is an error, never a silent override.

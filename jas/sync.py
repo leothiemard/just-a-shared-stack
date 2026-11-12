@@ -31,7 +31,7 @@ def load_state(root: Path) -> dict:
 
 
 def save_state(root: Path, state: dict) -> None:
-    state_path(root).parent.mkdir(parents=True, exist_ok=True)
+    paths.private_dir(state_path(root).parent)
     paths.write_atomic(state_path(root), json.dumps(state, indent=2) + "\n")
 
 

@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +33,8 @@ class Transaction:
     def __init__(self) -> None:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         self.dir = paths.config_dir() / "backups" / f"{stamp}-{uuid.uuid4().hex[:8]}"
-        self.dir.mkdir(parents=True)
+        paths.private_dir(self.dir.parent)
+        self.dir.mkdir(mode=0o700)
         self.manifest = self.dir / "manifest.json"
         self.data = {"version": 1, "status": "applying", "entries": []}
         self.save()
@@ -64,7 +64,7 @@ class Transaction:
         backup = None
         if path.exists():
             backup = self.backup_path(path)
-            shutil.copyfile(path, backup)
+            paths.write_atomic(Path(backup), path.read_bytes())
         self.record({"type": "write", "path": str(path), "backup": backup, "sha256": hashlib.sha256(data).hexdigest()})
         paths.write_atomic(path, data)
 

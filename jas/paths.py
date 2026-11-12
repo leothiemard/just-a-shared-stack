@@ -43,6 +43,22 @@ def cache_dir() -> Path:
     return home() / ".cache" / "just-a-stack"
 
 
+def private(path: Path) -> bool:
+    """Whether `path` is in jas's own cache or config folder, whose files hold brain and session content."""
+    return any(Path(path).is_relative_to(folder) for folder in (cache_dir(), config_dir()))
+
+
+def private_dir(path: Path) -> Path:
+    """Create `path` with its missing parents; the ones in jas's own folders are 0700."""
+    if not path.is_dir():
+        private_dir(path.parent)
+        try:
+            path.mkdir(mode=0o700 if private(path) else 0o777)
+        except FileExistsError:
+            pass
+    return path
+
+
 def brain_key(brain: Path) -> str:
     return hashlib.sha1(str(brain.resolve()).encode()).hexdigest()[:12]
 
@@ -53,7 +69,8 @@ TEMP = ".jas-tmp-"
 def write_atomic(path: Path, data: str | bytes) -> None:
     """Replace the file at `path` (through a symlink, never the link itself) so it holds either the old or the new content.
 
-    The new content is written to a `0600` file and gets the old file's mode (or the umask default) only once it is complete."""
+    The new content is written to a `0600` file and gets its final mode only once it is complete: `0600` in jas's own
+    folders, else the old file's mode or the umask default."""
     target = path.resolve() if path.is_symlink() else path
     temp = target.with_name(f".{target.name}{TEMP}{uuid.uuid4().hex[:8]}")
     try:
@@ -61,7 +78,8 @@ def write_atomic(path: Path, data: str | bytes) -> None:
             handle.write(data.encode() if isinstance(data, str) else data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temp, stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o666 & ~umask())
+        if not private(target):
+            os.chmod(temp, stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o666 & ~umask())
         os.replace(temp, target)
     except BaseException:
         temp.unlink(missing_ok=True)
@@ -81,7 +99,7 @@ class Lock:
         self.path, self.wait, self.fd = path, wait, None
 
     def __enter__(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        private_dir(self.path.parent)
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | (0 if self.wait else fcntl.LOCK_NB))
