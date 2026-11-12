@@ -87,7 +87,10 @@ def write_if_changed(path: Path, text: str) -> None:
         paths.write_atomic(path, text)
 
 
-def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False) -> int:
+FIRST_PUSH_HINT = "The brain remote is empty; nothing was pushed. Publish this brain there once with: jas sync --first-push"
+
+
+def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False, first_push: bool = False) -> int:
     root = brain.open_brain(cfg)
 
     def say(message: str) -> None:
@@ -106,6 +109,10 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         has_origin = "origin" in brain.git(root, "remote", check=False).stdout.split()
         url = origin_url(root, cfg["brain"]["remote"]) if has_origin else ""
         upstream = fetch(root, url, branch, timeout) if has_origin else None
+        if first_push and not has_origin:
+            raise JasError("This brain has no remote; --first-push needs one. Add it with `jas init --brain <url> --apply`.")
+        if first_push and upstream:
+            raise not_empty()
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
         if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
@@ -125,9 +132,19 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
                 return 0
             if upstream is None:
                 return 0
+            if upstream == "":
+                if not first_push:
+                    say(FIRST_PUSH_HINT)
+                    return 0
+                if fetch(root, url, branch, timeout) != "":
+                    raise not_empty()
             return exchange(root, cfg["box"], cfg["zone"], url, branch, upstream, timeout, say, state, quiet)
         finally:
             save_state(root, state)
+
+
+def not_empty() -> JasError:
+    return JasError("The brain remote is not empty, so --first-push pushed nothing. Run `jas sync` to exchange with it.")
 
 
 def current_branch(root: Path) -> str:
@@ -168,7 +185,8 @@ def fetch(root: Path, url: str, branch: str, timeout: float) -> str | None:
     """Fetch every remote branch into `refs/jas/remote/`, then name the ref to exchange with, or "" when the remote has no branch.
 
     The refspec is explicit, so the brain's own fetch config and tracking refs never decide what the remote has.
-    None when the remote cannot be reached. Stops when the remote has branches but not this one: sync never creates a branch there."""
+    None when the remote cannot be reached. Stops when the remote has branches but not this one: sync never creates a branch there,
+    and publishes to a branchless remote only with --first-push."""
     try:
         brain.git(root, "fetch", "-q", "--prune", "--no-tags", url, f"+refs/heads/*:{REMOTE}*", timeout=timeout)
     except JasError as error:

@@ -10,12 +10,12 @@ class SyncTests(Sandbox):
         self.remote = self.base / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
         self.a, self.b = self.base / "a", self.base / "b"
-        for home, box in ((self.a, "mac"), (self.b, "linux-box")):
+        for home, box, first in ((self.a, "mac", ["--first-push"]), (self.b, "linux-box", [])):
             home.mkdir()
             self.use_home(home)
             self.ok("init", "--box", box, "--zone", "personal", "--brain", str(self.remote), "--apply")
             self.write_config(sources=[])
-            self.ok("sync")
+            self.ok("sync", *first)
 
     def write_config(self, section="sessions", **values):
         path = self.home / ".config" / "just-a-stack" / "box.json"
@@ -148,11 +148,12 @@ class SyncTests(Sandbox):
         self.assertIn("git switch main", err)
         self.assertEqual(git(self.remote, "branch", "--format=%(refname:short)").split(), ["main"])
 
-    def work_remote_on_trunk(self):
-        """A bare work-zone remote whose only branch is `trunk`."""
-        work = self.base / "work.git"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "trunk", str(work)], check=True)
-        seed = self.base / "seed"
+    def work_remote_on_trunk(self, work=None):
+        """A bare work-zone remote whose only branch is `trunk`; `work`, when given, is an existing empty one."""
+        if work is None:
+            work = self.base / "work.git"
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "trunk", str(work)], check=True)
+        seed = self.base / f"seed-{work.name}"
         subprocess.run(["git", "clone", "-q", str(work), str(seed)], check=True, capture_output=True)
         git(seed, "checkout", "-q", "-b", "trunk")
         (seed / "brain.json").write_text('{"version": 1, "zone": "work"}\n')
@@ -268,3 +269,73 @@ class SyncTests(Sandbox):
         self.assertEqual(code, 1, err)
         self.assertIn("pushInsteadOf", err)
         self.assertEqual(git(elsewhere, "for-each-ref"), "")
+
+    def point_a_at(self, remote):
+        git(self.a / "brain", "remote", "set-url", "origin", str(remote))
+        self.use_home(self.a)
+        self.write_config("brain", remote=str(remote))
+
+    def branches(self, remote):
+        return git(remote, "branch", "--format=%(refname:short)").split()
+
+    def test_plain_sync_never_publishes_to_an_empty_remote(self):
+        from unittest import mock
+        from jas import sync
+
+        empty = self.empty_remote("fresh.git")
+        self.point_a_at(empty)
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        real = sync.fetch
+
+        def then_another_writer(*args, **kwargs):
+            found = real(*args, **kwargs)
+            self.work_remote_on_trunk(empty)
+            return found
+
+        with mock.patch.object(sync, "fetch", then_another_writer):
+            code, out, err = self.on(self.a, "sync")
+        self.assertEqual(code, 0, err)
+        self.assertIn("jas sync --first-push", out)
+        self.assertEqual(self.branches(empty), ["trunk"])
+        self.assertIn("Private entry", git(self.a / "brain", "show", "HEAD:Projects/example-app/Log.md"))
+
+    def test_first_push_publishes_an_empty_remote_once(self):
+        empty = self.empty_remote("fresh.git")
+        self.point_a_at(empty)
+        code, out, err = self.on(self.a, "sync", "--first-push")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(git(empty, "rev-parse", "main"), git(self.a / "brain", "rev-parse", "HEAD"))
+        code, _, err = self.on(self.a, "sync", "--first-push")
+        self.assertEqual(code, 1)
+        self.assertIn("not empty", err)
+
+    def test_first_push_stops_when_the_remote_gains_a_branch_before_the_push(self):
+        from unittest import mock
+        from jas import sync
+
+        empty = self.empty_remote("fresh.git")
+        self.point_a_at(empty)
+        real, calls = sync.fetch, []
+
+        def then_another_writer(*args, **kwargs):
+            found = real(*args, **kwargs)
+            if not calls:
+                git(self.a / "brain", "push", "-q", str(empty), "HEAD:refs/heads/main")
+            calls.append(found)
+            return found
+
+        before = git(self.a / "brain", "rev-parse", "HEAD")
+        self.on(self.a, "log", "-t", "Private entry", "-p", "example-app", stdin="- private\n")
+        with mock.patch.object(sync, "fetch", then_another_writer):
+            code, _, err = self.on(self.a, "sync", "--first-push")
+        self.assertEqual(code, 1, err)
+        self.assertIn("not empty", err)
+        self.assertEqual(git(empty, "rev-parse", "main"), before)
+
+    def test_init_against_an_empty_remote_names_the_first_push(self):
+        empty = self.empty_remote("fresh.git")
+        home = self.base / "c"
+        home.mkdir()
+        self.use_home(home)
+        out = self.ok("init", "--box", "pi", "--zone", "personal", "--brain", str(empty), "--apply")
+        self.assertIn("jas sync --first-push", out)

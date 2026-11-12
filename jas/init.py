@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from jas import JasError, brain, config, paths, rules
+from jas import JasError, brain, config, paths, rules, sync
 
 ATTRIBUTION = {"commit": "", "pr": ""}
 
@@ -228,6 +228,8 @@ def brain_changes(cfg: dict, remote: str, new_brain: bool, import_dir: Path | No
             if found and found != zone:
                 raise JasError(f"Cloned brain is zone {found!r}; this box is zone {zone!r}. Remove {label} and clone a {zone} brain.")
             brain.commit_paths(root, box, "brain: init", brain.write_skeleton(root, zone))
+            if not brain.git(root, "for-each-ref", "refs/remotes/").stdout.strip():
+                print(sync.FIRST_PUSH_HINT)
         out.append(Change("brain", label, "add", f"clone {remote}", clone, True))
     elif new_brain:
         out.append(Change("brain", label, "add", f"new {zone} brain", lambda tx: brain.create(root, zone, box), True))

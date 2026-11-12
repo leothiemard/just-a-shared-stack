@@ -25,7 +25,7 @@ Git, Python 3.9 or newer with SQLite FTS5 (macOS system Python, python.org and H
    The preview prints one row per change (`add`, `update`, `keep`, `conflict`, `skip`) and changes nothing. `--apply` writes `~/.config/just-a-stack/box.json`, links the skills into `~/.agents/skills` and `~/.claude/skills`, links `~/.local/bin/jas`, writes the rules block into `~/.agents/AGENTS.md` (and links or updates `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`), clones the brain and creates its skeleton, then runs `jas doctor`. It prints a restore manifest path.
 
 4. If `jas doctor` says `~/.local/bin` is not on `PATH`, add the printed line to your shell profile.
-5. Run `jas sync` to push the brain skeleton.
+5. Run `jas sync --first-push` to publish the brain skeleton to the empty repository. Plain `jas sync` never pushes to a repository that has no branches; it commits locally and prints this hint instead. `--first-push` runs once, at setup, and is refused as soon as the repository has a branch.
 
 No git host yet? `jas init --new-brain` creates a local-only brain; add a remote later with `jas init --brain <url> --apply`.
 

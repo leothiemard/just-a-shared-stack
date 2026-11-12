@@ -143,7 +143,7 @@ def cmd_sessions(args) -> int:
 def cmd_sync(args) -> int:
     from jas import sync
 
-    return sync.run(config.load(), quick=args.quick)
+    return sync.run(config.load(), quick=args.quick, first_push=args.first_push)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -229,6 +229,7 @@ def parser() -> argparse.ArgumentParser:
 
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the brain.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")
+    p.add_argument("--first-push", action="store_true", help="publish this brain to an empty remote; refused once the remote has a branch")
     return top
 
 
