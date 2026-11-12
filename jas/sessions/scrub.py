@@ -17,23 +17,64 @@ PATTERNS = [
     (re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/-]{8,}=*"), r"\1" + R),
     (re.compile(r"(://[^/\s:@]+:)[^/\s@]+@"), r"\1" + R + "@"),
 ]
+# An `Authorization:` or `Proxy-Authorization:` header: the whole value, whatever the scheme.
+HEADER = re.compile(r"""(?i)\b((?:proxy-)?authorization[ \t]*:[ \t]*)(?=[^\s"'\\])[^\n]*""")
 # `key=value`, `key: value` and `"key": "value"` where the key is a credential word, alone or as a `_`, `-` or `.` suffix.
-CREDENTIAL = re.compile(
-    r"""(?<![\w.-])(["']?)((?:[\w.-]*[_.-])?(?:password|passwd|secret|token|api_key|apikey|access_key|auth|credentials?))\1(?![\w-])([ \t]*[:=][ \t]*)"""
-    r"""(?:(")(?:[^"\\\n]|\\.)+"|(')[^'\n]+'|[^\s"'&,;}]+)""",
+# The key's quotes may be escaped (`\"key\"`), as in JSON inside a string.
+KEY = re.compile(
+    r"""(?<![\w.-])(\\?["']|)((?:[\w.-]*[_.-])?(?:password|passwd|secret|token|api_key|apikey|access_key|auth|authorization|credentials?))\1(?![\w-])"""
+    r"""[ \t]*[:=][ \t]*""",
     re.I,
 )
+OPENING = re.compile(r"""\\?["']""")
+UNQUOTED = re.compile(r"""[^\s"'&,;}]+""")
 
 
-def credential(match: re.Match) -> str:
-    quote = match.group(4) or match.group(5) or ""
-    return match.group(1) + match.group(2) + match.group(1) + match.group(3) + quote + R + quote
+def closing(value: str, start: int, quote: str) -> int | None:
+    """The end of the quote that closes a value opened by `quote` (`"`, `'`, or escaped `\\"`, `\\'`), or None.
+
+    A plain quote closes at the next one after an even run of backslashes; an escaped quote at the next one after exactly one."""
+    char = quote[-1]
+    at = value.find(char, start)
+    while at != -1:
+        run = at - len(value[start:at].rstrip("\\")) - start
+        if (run % 2 == 0) if len(quote) == 1 else run == 1:
+            return at + 1
+        at = value.find(char, at + 1)
+    return None
+
+
+def credentials(value: str) -> str:
+    """Credential values replaced; when in doubt, more is redacted, never less.
+
+    A quoted value goes through its closing quote, across lines, or to the end of its line when it has none."""
+    out, pos = [], 0
+    while True:
+        match = KEY.search(value, pos)
+        if not match:
+            return "".join(out) + value[pos:]
+        start = match.end()
+        out.append(value[pos:start])
+        quote = OPENING.match(value, start)
+        if quote:
+            end = closing(value, quote.end(), quote.group())
+            if end is None:
+                line = value.find("\n", quote.end())
+                out.append(quote.group() + R)
+                pos = len(value) if line == -1 else line
+            else:
+                out.append(quote.group() + R + quote.group())
+                pos = end
+        else:
+            bare = UNQUOTED.match(value, start)
+            out.append(R if bare else "")
+            pos = bare.end() if bare else start
 
 
 def text(value: str) -> str:
     for pattern, replacement in PATTERNS:
         value = pattern.sub(replacement, value)
-    return CREDENTIAL.sub(credential, value)
+    return credentials(HEADER.sub(lambda m: m.group(1) + R, value))
 
 
 def value(item):

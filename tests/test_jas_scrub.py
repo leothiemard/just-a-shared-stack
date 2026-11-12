@@ -32,7 +32,17 @@ REDACTED = [
     ("'secret': 'x y'", f"'secret': '{R}'"),
     ("token=xyz password=hunter2 secret=s", f"token={R} password={R} secret={R}"),
     ("https://user:pa55word@example.invalid/repo", f"https://user:{R}@example.invalid/repo"),
-    ("Authorization: Bearer abc.def-123456", f"Authorization: Bearer {R}"),
+    ("Authorization: Bearer abc.def-123456", f"Authorization: {R}"),
+    ("Authorization: Basic dXNlcjpwYXNz", f"Authorization: {R}"),
+    ("curl -H 'Proxy-Authorization: Digest user=x, response=abc' https://example.invalid\nnext", f"curl -H 'Proxy-Authorization: {R}\nnext"),
+    ('"authorization": "Basic dXNlcjpwYXNz"', f'"authorization": "{R}"'),
+    ('password="line1\nPRIVATE_LINE2" after', f'password="{R}" after'),
+    ('token = "PRIVATE\nnext line', f'token = "{R}\nnext line'),
+    ("secret='PRIVATE\nnext line", f"secret='{R}\nnext line"),
+    ('{\\"password\\": \\"x\\"}', f'{{\\"password\\": \\"{R}\\"}}'),
+    ('{\\"api_key\\": \\"a\\\\\\"PRIVATE\\"}', f'{{\\"api_key\\": \\"{R}\\"}}'),
+    ("secret='it\\'s PRIVATE' tail", f"secret='{R}' tail"),
+    ('password="ends with backslash\\\\" tail', f'password="{R}" tail'),
     ("key sk-ant-abcdefghijklmnopqrstuvwxyz used", f"key {R} used"),
 ]
 KEPT = [

@@ -34,6 +34,27 @@ class SessionsTests(Sandbox):
         self.store.write_text(json.dumps(rows))
         return json.loads(self.ok("sessions", "export", "--json", *args))
 
+    def test_no_planted_secret_reaches_a_written_digest(self):
+        planted = ["PLANTED_A1", "PLANTED_B2", "PLANTED_C3", "PLANTED_D4", "dXNlcjpwYXNz", "PLANTED_E5", "PLANTED_F6", "PLANTED_G7"]
+        prompts = [
+            'Set password="line1\nPLANTED_A1" in the config',
+            'It still has token = "PLANTED_B2\nand the next line',
+            'curl -H "Authorization: Basic dXNlcjpwYXNz" https://example.invalid',
+        ]
+        finals = [
+            'The payload was {\\"password\\": \\"PLANTED_C3\\"}.',
+            "Exported secret='it\\'s PLANTED_D4' to the shell.",
+            "Proxy-Authorization: Negotiate PLANTED_E5",
+            '"client_secret": "PLANTED_F6"',
+            "Done; api_key=PLANTED_G7 is rotated.",
+        ]
+        result = self.export([record("leaky", title="Rotate token=PLANTED_G7", prompts=prompts, turn_finals=finals)])
+        self.assertEqual(len(result["written"]), 1)
+        for path in (self.brain / "Sessions").rglob("*.md"):
+            data = path.read_bytes()
+            for secret in planted:
+                self.assertNotIn(secret.encode(), data, path.name)
+
     def test_digest_from_fixture_store(self):
         rows = [
             record("top", pr_urls=["https://example.invalid/pr/1"], environment_id="env-1", native_ref="claude:abc"),
@@ -110,7 +131,7 @@ class SessionsTests(Sandbox):
             "github_pat_" + "B" * 40: "[redacted]",
             "xoxb-1234567890-abcdef": "[redacted]",
             "AKIAABCDEFGHIJKLMNOP": "[redacted]",
-            "Authorization: Bearer abc.def-123456": "Authorization: Bearer [redacted]",
+            "Authorization: Bearer abc.def-123456": "Authorization: [redacted]",
             "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----": "[redacted]",
             "export API_KEY=abc123 next": "export API_KEY=[redacted] next",
             "token=xyz password=hunter2 secret=s": "token=[redacted] password=[redacted] secret=[redacted]",
