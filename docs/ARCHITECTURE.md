@@ -40,6 +40,7 @@ Agents run inside the project they work on, never from a special home folder. Th
 
 A work box adds a private **layer**: a directory shaped like this repository (`skills.json`, `skills/`, optional `rules/global.md`) with company skills and rules. It points at a company brain in zone `work`. `jas` refuses to read or sync a brain whose zone differs from the box's, so personal boxes never see work knowledge and the reverse. Skill names must be unique across layers; a duplicate is an error, never a silent override.
 
+Threat model: the zone guard exists to prevent mistakes, such as a box pointed at the wrong brain, a wrong branch, a stale clone, or a redirect left in git config. It is not a defence against someone who controls the box's user account or its git configuration; that person can read every brain the box holds. Session digests are scrubbed for common credential shapes as defence in depth, not as a guarantee, and a brain remote must be a private repository.
 
 ## The brain
 
