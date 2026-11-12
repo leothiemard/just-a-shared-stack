@@ -105,3 +105,15 @@ class RecallTests(Sandbox):
             code, _, err = self.jas(*argv)
             self.assertEqual(code, 1, argv)
             self.assertIn("is zone 'personal'; this box is zone 'work'", err)
+
+    def test_budget_bounds_the_whole_output(self):
+        for i in range(8):
+            self.write(f"note{i}.md", "# Recall fixture\n" + "budgetterm relevant context details " * 12)
+        for budget in range(1, 400, 7):
+            out = self.ok("recall", "budgetterm", "--no-sync", "--budget", str(budget))
+            shown = int(out.split()[0])
+            self.assertGreaterEqual(shown, 1)
+            if shown > 1:
+                self.assertLessEqual(len(out.encode()), budget * 4, out)
+            tokens = int(out.splitlines()[0].split("~")[1].split()[0])
+            self.assertEqual(tokens, -(-len(out.encode()) // 4))

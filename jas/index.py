@@ -239,7 +239,7 @@ def recall(conn: sqlite3.Connection, root: Path, query: str, *, limit: int, budg
         if per_file.get(hit["path"], 0) == PER_FILE:
             continue
         line = hit_lines(len(shown) + 1, hit)
-        if shown and len((body + line).encode()) / 4 > budget:
+        if shown and len(rendered(body + line, len(shown) + 1, len(hits), status).encode()) > budget * 4:
             break
         shown.append(hit)
         per_file[hit["path"]] = per_file.get(hit["path"], 0) + 1
@@ -249,9 +249,18 @@ def recall(conn: sqlite3.Connection, root: Path, query: str, *, limit: int, budg
         keys = ("path", "heading", "trail", "kind", "project", "box", "date")
         rows = [dict({k: h[k] for k in keys}, ref=n, line=h["line"] + 1, score=round(h["score"], 3), snippet=snippet(h)) for n, h in enumerate(shown, 1)]
         return json.dumps({"total": len(hits), "hits": rows}, indent=2) + "\n"
-    footer = "Expand with: jas show 1\n"
-    tokens = (len(body.encode()) + len(footer) + 80) // 4
-    return f"{len(shown)} of {len(hits)} hits · ~{tokens} tokens · {status}\n{body}{footer}"
+    return rendered(body, len(shown), len(hits), status)
+
+
+def rendered(body: str, shown: int, total: int, status: str) -> str:
+    """The text answer; its header states its own size in tokens (bytes/4, rounded up)."""
+    tokens = 0
+    while True:
+        out = f"{shown} of {total} hits · ~{tokens} tokens · {status}\n{body}Expand with: jas show 1\n"
+        size = -(-len(out.encode()) // 4)
+        if size == tokens:
+            return out
+        tokens = size
 
 
 def section(lines: list[str], start: int) -> str:
