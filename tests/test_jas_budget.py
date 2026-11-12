@@ -1,6 +1,7 @@
 import json
+import re
 
-from jashelp import Sandbox
+from jashelp import Sandbox, git
 
 from jas import budget
 
@@ -44,3 +45,21 @@ class BudgetTests(Sandbox):
         self.assertEqual(report["mcp"], {"claude": ["docs", "search"], "codex": ["linear", "web"]})
         self.assertEqual(len(report["warnings"]), 2)
         self.assertIn("total always loaded", budget.table(report))
+
+    def test_project_rows_for_the_current_repo(self):
+        repo = self.base / "example-app"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        (repo / "AGENTS.md").write_text("a" * 9000)
+        (repo / "CLAUDE.md").symlink_to(repo / "AGENTS.md")
+        slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+        memory = self.home / ".claude" / "projects" / slug / "memory" / "MEMORY.md"
+        memory.parent.mkdir(parents=True)
+        memory.write_text("m" * 100)
+        report = budget.measure(repo)
+        rows = {i["name"]: i["bytes"] for i in report["items"] if i["group"] == "project"}
+        self.assertEqual(rows, {"example-app/AGENTS.md": 9000, f"auto-memory ~/.claude/projects/{slug}/memory/MEMORY.md": 100})
+        self.assertEqual(report["with_project"], report["total"] + 9100)
+        self.assertEqual(sum("example-app/AGENTS.md is 9000 bytes" in w for w in report["warnings"]), 1)
+        self.assertIn("total in this project", budget.table(report))
+        self.assertIsNone(budget.measure(self.base)["with_project"])

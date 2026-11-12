@@ -92,7 +92,7 @@ def run(as_json: bool = False) -> int:
         results = checks(cfg)
     except JasError as error:
         results = [("fail", "config", str(error))]
-    report = budget.measure()
+    report = budget.measure(Path.cwd())
     failed = any(status == "fail" for status, _, _ in results)
     if as_json:
         print(json.dumps({"checks": [{"status": s, "check": n, "detail": d} for s, n, d in results], "budget": report}, indent=2))

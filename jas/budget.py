@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from jas import paths
@@ -11,6 +12,8 @@ from jas import paths
 GLOBAL_FILE_MAX = 2000
 SKILL_DESCRIPTION_MAX = 500
 TOTAL_MAX = 20000
+PROJECT_FILE_MAX = 8000
+MEMORY_INDEX_MAX = 4000
 
 
 def read_json(path: Path) -> dict:
@@ -74,7 +77,34 @@ def mcp_servers(home: Path) -> dict[str, list[str]]:
     return {"claude": claude, "codex": codex}
 
 
-def measure() -> dict:
+def repo_root(cwd: Path) -> Path | None:
+    found = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return Path(found.stdout.strip()) if found.returncode == 0 else None
+
+
+def project_items(cwd: Path) -> tuple[list[dict], list[str]]:
+    """The current repo's instruction files and Claude's auto-memory index for it, when present."""
+    repo = repo_root(cwd)
+    if repo is None:
+        return [], []
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(repo))
+    candidates = [(repo / "AGENTS.md", PROJECT_FILE_MAX), (repo / "CLAUDE.md", PROJECT_FILE_MAX),
+                  (paths.home() / ".claude" / "projects" / slug / "memory" / "MEMORY.md", MEMORY_INDEX_MAX)]
+    items, warnings, seen = [], [], set()
+    for path, limit in candidates:
+        if not path.is_file() or path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        size = path.stat().st_size
+        name = f"{repo.name}/{path.name}" if path.parent == repo else f"auto-memory {paths.tilde(path)}"
+        items.append({"group": "project", "name": name, "count": 1, "bytes": size})
+        if size > limit:
+            warnings.append(f"{name} is {size} bytes (limit {limit}); move detail into docs or notes loaded on demand")
+    return items, warnings
+
+
+def measure(cwd: Path | None = None) -> dict:
+    """Always-loaded context on this box; with `cwd`, also the files loaded for that project (not in `total`)."""
     home = paths.home()
     items, warnings, seen = [], [], set()
     for path in [paths.canonical_rules(), *paths.linked_rules()]:
@@ -97,15 +127,23 @@ def measure() -> dict:
     total = sum(item["bytes"] for item in items)
     if total > TOTAL_MAX:
         warnings.append(f"always-loaded total is {total} bytes (limit {TOTAL_MAX})")
+    project, project_warnings = project_items(cwd) if cwd else ([], [])
+    items += project
+    warnings += project_warnings
     for item in items:
         item["tokens"] = item["bytes"] // 4
-    return {"items": items, "total": total, "tokens": total // 4, "mcp": mcp_servers(home), "warnings": warnings}
+    with_project = total + sum(item["bytes"] for item in project)
+    return {"items": items, "total": total, "tokens": total // 4, "with_project": with_project if project else None,
+            "mcp": mcp_servers(home), "warnings": warnings}
 
 
 def table(report: dict) -> str:
     rows = [f"{'bytes':>7} {'tokens':>7} {'count':>5}  item"]
-    rows += [f"{i['bytes']:>7} {i['tokens']:>7} {i['count']:>5}  {i['group']}: {i['name']}" for i in report["items"]]
+    rows += [f"{i['bytes']:>7} {i['tokens']:>7} {i['count']:>5}  {i['group']}: {i['name']}" for i in report["items"] if i["group"] != "project"]
     rows.append(f"{report['total']:>7} {report['tokens']:>7} {'':>5}  total always loaded")
+    if report.get("with_project"):
+        rows += [f"{i['bytes']:>7} {i['tokens']:>7} {i['count']:>5}  {i['group']}: {i['name']}" for i in report["items"] if i["group"] == "project"]
+        rows.append(f"{report['with_project']:>7} {report['with_project'] // 4:>7} {'':>5}  total in this project")
     for harness, names in report["mcp"].items():
         rows.append(f"{'':>7} {'':>7} {len(names):>5}  {harness} MCP servers" + (f": {', '.join(names)}" if names else ""))
     rows += [f"warning: {w}" for w in report["warnings"]]
