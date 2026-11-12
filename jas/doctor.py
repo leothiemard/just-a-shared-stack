@@ -44,7 +44,11 @@ def checks(cfg: dict) -> list[tuple[str, str, str]]:
             elif not path.is_file():
                 add(False, "rules", f"{paths.tilde(path)} missing; run jas update --apply", "fail" if path == canonical else "warn")
             else:
-                same = rules.current(path.read_bytes().decode(), path) == block
+                try:
+                    same = rules.current(path.read_bytes().decode(), path) == block
+                except JasError as error:
+                    add(False, "rules", str(error))
+                    continue
                 add(same, "rules", f"{paths.tilde(path)}: managed block " + ("current" if same else "missing or stale; run jas update --apply"))
     except (OSError, JasError) as error:
         add(False, "rules", str(error))

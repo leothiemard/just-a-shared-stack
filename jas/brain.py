@@ -190,17 +190,21 @@ def frontmatter(text: str) -> tuple[dict, int]:
     return {}, 0
 
 
-def headings(lines: list[str]) -> list[tuple[int, int, str]]:
-    """(line index, level, text) for each heading outside code fences."""
+def outside_fences(lines: list[str]) -> list[tuple[int, str]]:
+    """(line index, line) for each line outside code fences, fence lines excluded."""
     out, fenced = [], False
     for i, line in enumerate(lines):
         if FENCE.match(line):
             fenced = not fenced
-            continue
-        match = None if fenced else HEADING.match(line)
-        if match:
-            out.append((i, len(match.group(1)), match.group(2)))
+        elif not fenced:
+            out.append((i, line))
     return out
+
+
+def headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(line index, level, text) for each heading outside code fences."""
+    matches = ((i, HEADING.match(line)) for i, line in outside_fences(lines))
+    return [(i, len(m.group(1)), m.group(2)) for i, m in matches if m]
 
 
 # Projects, logs, hubs and lessons.

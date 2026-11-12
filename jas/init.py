@@ -156,9 +156,12 @@ def link_change(step: str, path: Path, target: Path, replace: bool) -> Change:
 def block_change(path: Path, block: str) -> Change:
     label = paths.tilde(path)
     text = path.read_bytes().decode() if path.exists() else ""
-    if rules.current(text, path) == block:
-        return Change("rules", label, "keep")
-    new = rules.with_block(text, block, path)
+    try:
+        if rules.current(text, path) == block:
+            return Change("rules", label, "keep")
+        new = rules.with_block(text, block, path)
+    except JasError as error:
+        return Change("rules", label, "conflict", str(error))
     return Change("rules", label, "update" if path.exists() else "add", "managed block", lambda tx: tx.write(path, new))
 
 

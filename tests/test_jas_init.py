@@ -205,3 +205,34 @@ class InitTests(Sandbox):
         self.ok("restore", manifest)
         after = {rel: v for rel, v in tree(self.home).items() if not rel.startswith(("brain", ".config/just-a-stack/backups", ".agents/skill-backups", ".claude/skill-backups"))}
         self.assertEqual(after, {**before, ".config": "/", ".config/just-a-stack": "/", ".agents": "/", ".claude": "/"})
+
+    def canonical_with(self, text):
+        canonical = self.home / ".agents" / "AGENTS.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text(text)
+        return canonical
+
+    def test_markers_in_a_code_fence_are_examples_not_the_block(self):
+        example = "```md\n" + rules.BEGIN + "\nexample rules\n" + rules.END + "\n```\n"
+        canonical = self.canonical_with("# Local\n\n" + example + "\nKeep this.\n" + rules.BEGIN + "\nold\n" + rules.END + "\ntail\n")
+        self.ok(*INIT, "--apply")
+        text = canonical.read_text()
+        self.assertIn(example + "\nKeep this.\n" + rules.BEGIN + "\n", text)
+        self.assertNotIn("\nold\n", text)
+        self.assertTrue(text.endswith(rules.END + "\ntail\n"))
+
+    def test_ambiguous_markers_are_a_conflict_and_the_file_is_kept(self):
+        cases = {
+            "only fenced markers": "```\n" + rules.BEGIN + "\n```\nlocal\n" + rules.END + "\n",
+            "two ends": rules.BEGIN + "\nold\n" + rules.END + "\nlocal\n" + rules.END + "\n",
+            "end before begin": rules.END + "\nlocal\n" + rules.BEGIN + "\n",
+            "two blocks": (rules.BEGIN + "\nold\n" + rules.END + "\n") * 2,
+        }
+        canonical = self.canonical_with("")
+        for name, text in cases.items():
+            with self.subTest(name):
+                canonical.write_text(text)
+                code, out, err = self.jas(*INIT, "--apply")
+                self.assertEqual(code, 1)
+                self.assertRegex(out, r"conflict\s+rules\s+~/.agents/AGENTS.md\s+.*marker")
+                self.assertEqual(canonical.read_text(), text)

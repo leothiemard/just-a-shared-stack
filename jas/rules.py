@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from jas import JasError
+from jas import JasError, brain
 
 BEGIN = "<!-- jas:begin (managed by just-a-stack; edit rules/global.md instead) -->"
 END = "<!-- jas:end -->"
@@ -17,15 +17,18 @@ def render(repos: list[Path]) -> str:
 
 
 def span(text: str, where: Path) -> tuple[int, int] | None:
-    start = text.find(BEGIN)
-    if start < 0:
-        if END in text:
-            raise JasError(f"{where} has `{END}` without its begin marker. Remove the stray marker, then rerun.")
+    """Where the block is: one begin then one end, each on its own line outside code fences; None when there is neither."""
+    lines = text.split("\n")
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line) + 1)
+    found = [(i, line.strip()) for i, line in brain.outside_fences(lines) if line.strip() in (BEGIN, END)]
+    if not found:
         return None
-    end = text.find(END, start)
-    if end < 0 or text.find(BEGIN, start + 1) >= 0:
-        raise JasError(f"{where} has unbalanced jas markers. Leave exactly one begin and one end marker, then rerun.")
-    return start, end + len(END)
+    if [marker for _, marker in found] != [BEGIN, END]:
+        raise JasError(f"{where} has ambiguous jas markers. Leave exactly one begin marker line followed by one end marker line, then rerun.")
+    (b, _), (e, _) = found
+    return starts[b] + lines[b].index(BEGIN), starts[e] + lines[e].index(END) + len(END)
 
 
 def current(text: str, where: Path) -> str | None:
