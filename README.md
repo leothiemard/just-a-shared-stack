@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.svg" width="128" height="128" alt="jass logo: a pixel-art stack of Jass cards with the ace of hearts on top"></p>
+<p align="center"><img src="assets/logo.svg" width="128" height="128" alt="jass logo: a pixel-art stack of Jass cards with the ace of diamonds on top"></p>
 <h1 align="center">jass</h1>
 <p align="center"><b>Just a Shared Stack.</b> Every box is dealt the same hand.</p>
 
