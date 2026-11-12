@@ -69,6 +69,7 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
         if rec.parent_id:
             children[rec.parent_id] = children.get(rec.parent_id, 0) + 1
     result = {"written": [], "unchanged": 0, "skipped": 0}
+    pending = []  # every path is checked before the first digest is written
     for rec in records:
         stamp = digest.iso(rec.updated)
         if rec.parent_id or rec.project.lower() in excluded or now - rec.updated < idle or (since and rec.updated.date().isoformat() < since):
@@ -81,12 +82,12 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
         if not rec.subagent_count:
             rec.subagent_count = children.get(rec.id, 0)
         result["written"].append(rel)
-        if not dry_run:
-            path = brain.within(root, root / rel)
+        pending.append((brain.within(root, root / rel), rec, stamp))
+    if not dry_run:
+        for path, rec, stamp in pending:
             path.parent.mkdir(parents=True, exist_ok=True)
             paths.write_atomic(path, digest.render(scrub.record(rec), cfg["box"], cfg["zone"]))
             seen[rec.id] = stamp
-    if not dry_run:
         if complete and not since:
             state["horizon"] = (now - idle).isoformat()
         state_path(root).parent.mkdir(parents=True, exist_ok=True)

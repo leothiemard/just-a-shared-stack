@@ -118,6 +118,16 @@ class ContainmentTests(Sandbox):
         self.refused("sync")
         self.assertFalse((self.root / "Sessions").exists())
 
+    def test_one_digest_folder_link_stops_the_whole_export(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        rows = [{"id": sid, "title": "T", "project": "example-app", "cwd": "/work", "started": started.isoformat(),
+                 "updated": (now - dt.timedelta(hours=2)).isoformat(), "prompts": ["Do it"], "turn_finals": ["Done."]}
+                for sid, started in (("old", now - dt.timedelta(days=70)), ("new", now - dt.timedelta(hours=3)))]
+        self.store.write_text(json.dumps(rows))
+        self.link(f"Sessions/mac/{rows[1]['started'][:7]}", self.outside, folder=True)
+        self.refused("sessions", "export")
+        self.assertEqual([p for p in (self.root / "Sessions" / "mac").rglob("*.md")], [])
+
     def test_a_brain_json_that_leads_outside_is_no_brain(self):
         (self.outside / "brain.json").write_text('{"version": 1, "zone": "personal"}\n')
         (self.root / "brain.json").unlink()
