@@ -1,4 +1,6 @@
-# just-a-stack
+<p align="center"><img src="assets/logo.svg" width="128" height="128" alt="jass logo: a pixel-art Jass card with an acorn, on top of a deck"></p>
+<h1 align="center">jass</h1>
+<p align="center"><b>Just a Shared Stack.</b> Every box is dealt the same hand.</p>
 
 Twenty portable skills shared between two independent machines. Borrowed workflows follow their upstream sources, with small documented compatibility patches. pstack-t3, Impeccable and other plugins remain independently maintained. The GitHub repository and T3 project are named `just-a-stack`. Existing checkouts can keep their `agent-skills` folder name so installed links continue working. Each machine keeps its own agents, credentials and project configuration. Company-specific workflows live separately on the work machine.
 
@@ -27,6 +29,8 @@ Twenty portable skills shared between two independent machines. Borrowed workflo
 | lore | Recall and record shared knowledge across projects and boxes with `jass`. |
 
 ## Stack, lore, boxes
+
+The name is Jass, the Swiss card game. A hand of Jass depends on the deal; here the deck is stacked, so every box starts from the same cards.
 
 This repository is the **stack**: skills, a short managed block of global rules, and the `jass` CLI. A private **lore** repository holds what agents learn: project notes, cross-project lessons and digests of past sessions, shared by every machine (**box**) in the same zone. One command sets up a box:
 
