@@ -1,7 +1,9 @@
+import io
 import json
 import os
 import re
 from pathlib import Path
+from unittest import mock
 
 from jashelp import Sandbox, git, tree
 
@@ -212,6 +214,56 @@ class InitTests(Sandbox):
         canonical.parent.mkdir(parents=True)
         canonical.write_text(text)
         return canonical
+
+    def test_restore_works_after_a_write_that_failed_partway(self):
+        canonical = self.canonical_with("ORIGINAL\n")
+        real_open = io.open
+
+        class DiskFull:
+            def __init__(self, file):
+                self.file = file
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.file.close()
+
+            def write(self, data):
+                self.file.write(data[:1])
+                self.file.flush()
+                raise OSError(28, "No space left on device")
+
+            def __getattr__(self, name):
+                return getattr(self.file, name)
+
+        def failing_open(file, mode="r", *args, **kwargs):
+            handle = real_open(file, mode, *args, **kwargs)
+            writing = any(flag in mode for flag in "wxa")
+            return DiskFull(handle) if writing and Path(file).parent == canonical.parent else handle
+
+        with mock.patch("io.open", failing_open):
+            code, _, err = self.jas(*INIT, "--apply")
+        self.assertEqual(code, 1)
+        self.assertEqual(canonical.read_text(), "ORIGINAL\n")
+        self.assertEqual([p.name for p in canonical.parent.iterdir() if p.is_file()], ["AGENTS.md"])
+        self.ok("restore", re.search(r"jas restore (.+manifest\.json)", err).group(1))
+        self.assertEqual(canonical.read_text(), "ORIGINAL\n")
+
+    def test_a_linked_rules_file_is_written_through_and_stays_a_link(self):
+        real = self.base / "dotfiles" / "CLAUDE.md"
+        real.parent.mkdir()
+        real.write_text("# Mine\n")
+        link = self.home / ".claude" / "CLAUDE.md"
+        link.parent.mkdir()
+        link.symlink_to(real)
+        out = self.ok(*INIT, "--apply")
+        self.assertTrue(link.is_symlink())
+        self.assertIn(rules.BEGIN, real.read_text())
+        self.assertTrue(real.read_text().endswith("# Mine\n"))
+        self.ok("restore", self.manifest(out))
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(real.read_text(), "# Mine\n")
 
     def test_markers_in_a_code_fence_are_examples_not_the_block(self):
         example = "```md\n" + rules.BEGIN + "\nexample rules\n" + rules.END + "\n```\n"

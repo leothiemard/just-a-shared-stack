@@ -40,7 +40,7 @@ class Transaction:
         self.save()
 
     def save(self) -> None:
-        self.manifest.write_text(json.dumps(self.data, indent=2) + "\n")
+        paths.write_atomic(self.manifest, json.dumps(self.data, indent=2) + "\n")
 
     def record(self, entry: dict) -> None:
         self.data["entries"].append(entry)
@@ -66,7 +66,7 @@ class Transaction:
             backup = self.backup_path(path)
             shutil.copyfile(path, backup)
         self.record({"type": "write", "path": str(path), "backup": backup, "sha256": hashlib.sha256(data).hexdigest()})
-        path.write_bytes(data)
+        paths.write_atomic(path, data)
 
     def link(self, path: Path, target: Path) -> None:
         self.mkdirs(path.parent)
@@ -378,7 +378,7 @@ def restore(manifest_path: Path) -> None:
         path, backup = Path(entry.get("path", "")), entry.get("backup")
         if entry["type"] == "write" and done:
             if backup:
-                shutil.copyfile(backup, path)
+                paths.write_atomic(path, Path(backup).read_bytes())
             else:
                 path.unlink()
         elif entry["type"] == "link":
@@ -394,4 +394,4 @@ def restore(manifest_path: Path) -> None:
             except OSError:
                 pass
     manifest["status"] = "restored"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    paths.write_atomic(manifest_path, json.dumps(manifest, indent=2) + "\n")

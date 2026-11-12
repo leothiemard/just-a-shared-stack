@@ -5,6 +5,8 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import stat
+import uuid
 from pathlib import Path
 
 STACK = Path(__file__).resolve().parents[1]
@@ -43,6 +45,23 @@ def cache_dir() -> Path:
 
 def brain_key(brain: Path) -> str:
     return hashlib.sha1(str(brain.resolve()).encode()).hexdigest()[:12]
+
+
+def write_atomic(path: Path, data: str | bytes) -> None:
+    """Replace the file at `path` (through a symlink, never the link itself) so it holds either the old or the new content."""
+    target = path.resolve() if path.is_symlink() else path
+    temp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with temp.open("xb") as handle:
+            handle.write(data.encode() if isinstance(data, str) else data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            os.chmod(temp, stat.S_IMODE(target.stat().st_mode))
+        os.replace(temp, target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 class Lock:
