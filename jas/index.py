@@ -181,7 +181,7 @@ def search(conn: sqlite3.Connection, query: str, project: str = "", box: str = "
         where.append("box = ?")
         args.append(box)
     if since:
-        where.append("date != '' AND date >= ?")
+        where.append("(date = '' OR date >= ?)")
         args.append(since)
     sql = f"SELECT {COLUMNS}, bm25(chunks, 4.0, 1.0) FROM chunks WHERE {' AND '.join(where)}"
     hits = []

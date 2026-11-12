@@ -44,6 +44,11 @@ class RecallTests(Sandbox):
         self.assertEqual({h["kind"] for h in self.recall("deploys", "--kind", "log")["hits"]}, {"log"})
         self.assertEqual({h["box"] for h in self.recall("deploys", "--box", "linux-box")["hits"]}, {"linux-box"})
         self.assertNotIn("log", {h["kind"] for h in self.recall("deploys", "--since", "5w")["hits"]})
+        self.write("Projects/infra/Deploys.md", "# Deploys\n\nUndated deploys checklist.\n")
+        self.write("Projects/infra/Old.md", "---\nupdated: 2024-01-01\n---\n# Old\n\nOld deploys checklist.\n")
+        recent = {h["path"] for h in self.recall("deploys", "checklist", "--since", "5w")["hits"]}
+        self.assertIn("Projects/infra/Deploys.md", recent)
+        self.assertNotIn("Projects/infra/Old.md", recent)
         self.assertEqual(self.recall("deploys", "--project", "other-app")["total"], 0)
         self.assertEqual(len(self.recall("deploys", "--project", "EXAMPLE-APP")["hits"]), 3)
 
