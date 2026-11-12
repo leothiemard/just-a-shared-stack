@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -42,6 +43,29 @@ def cache_dir() -> Path:
 
 def brain_key(brain: Path) -> str:
     return hashlib.sha1(str(brain.resolve()).encode()).hexdigest()[:12]
+
+
+class Lock:
+    """An advisory lock on `path` for the `with` block. The kernel drops it when the process exits, so a crash never leaves it held."""
+
+    def __init__(self, path: Path, wait: bool = False) -> None:
+        self.path, self.wait, self.fd = path, wait, None
+
+    def __enter__(self) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if self.wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            os.close(fd)
+            return False
+        self.fd = fd
+        return True
+
+    def __exit__(self, *exc) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
 
 
 def skill_roots() -> list[Path]:

@@ -40,8 +40,14 @@ def connect(root: Path) -> sqlite3.Connection:
     if not fts5_available():
         raise JasError("This Python's SQLite lacks FTS5. Use a Python build whose sqlite3 includes FTS5 (python.org or Homebrew builds do).")
     path = db_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    with paths.Lock(path.with_suffix(".lock"), wait=True):
+        conn = sqlite3.connect(str(path))
+        build(conn, root)
+    return conn
+
+
+def build(conn: sqlite3.Connection, root: Path) -> None:
+    """Create or migrate the schema, then reindex changed files. Callers hold the index lock."""
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
     if not row or row[0] != SCHEMA:
@@ -54,7 +60,6 @@ def connect(root: Path) -> sqlite3.Connection:
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (SCHEMA,))
         conn.commit()
     refresh(conn, root)
-    return conn
 
 
 def markdown_files(root: Path) -> dict[str, Path]:

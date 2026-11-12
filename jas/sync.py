@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 import platform
 import re
 import sys
-import time
 from pathlib import Path
 
 from jas import JasError, brain, budget, config, paths
 from jas.sessions import export, sources
 
-LOCK_STALE_SECONDS = 600
 QUICK_EXPORT_SECONDS = 6 * 3600
 
 
@@ -52,27 +49,8 @@ def synced_label(root: Path) -> str:
     return f"synced {minutes} min ago" if minutes < 120 else f"synced {minutes // 60} h ago" if minutes < 2880 else f"synced {minutes // 1440} days ago"
 
 
-class Lock:
-    def __init__(self, root: Path) -> None:
-        self.path = paths.cache_dir() / f"sync-{paths.brain_key(root)}.lock"
-        self.held = False
-
-    def __enter__(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
-            try:
-                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-                self.held = True
-                return True
-            except FileExistsError:
-                if time.time() - self.path.stat().st_mtime < LOCK_STALE_SECONDS:
-                    return False
-                self.path.unlink()
-        return False
-
-    def __exit__(self, *exc) -> None:
-        if self.held:
-            self.path.unlink()
+def lock(root: Path) -> paths.Lock:
+    return paths.Lock(paths.cache_dir() / f"sync-{paths.brain_key(root)}.lock")
 
 
 def strip_credentials(url: str) -> str:
@@ -116,7 +94,7 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
         if not quiet:
             print(message)
 
-    with Lock(root) as held:
+    with lock(root) as held:
         if not held:
             say("Another jas sync is running for this brain; skipped.")
             return 0

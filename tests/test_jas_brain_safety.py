@@ -1,8 +1,11 @@
 import datetime as dt
 import json
+import os
 import subprocess
 
 from jashelp import Sandbox, git, tree
+
+from jas import sync
 
 
 class UnfinishedGitTests(Sandbox):
@@ -119,3 +122,17 @@ class ContainmentTests(Sandbox):
         self.store.write_text("[]")
         self.link("Boxes", self.outside, folder=True)
         self.refused("sync")
+
+
+class SyncLockTests(Sandbox):
+    def test_a_held_lock_is_never_granted_twice_however_old(self):
+        root = self.new_box()
+        with sync.lock(root) as held:
+            self.assertTrue(held)
+            os.utime(sync.lock(root).path, (0, 0))
+            code, out, _ = self.jas("sync")
+            self.assertEqual(code, 0)
+            self.assertIn("Another jas sync is running", out)
+            self.assertFalse((root / "Boxes").exists())
+        self.assertTrue(sync.lock(root).path.exists())
+        self.assertIn("Local-only brain", self.ok("sync"))
