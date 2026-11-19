@@ -29,7 +29,7 @@ reduce review and cache-rebuild costs. Upstream pins are unchanged.
 
 Theo's four other folders and Matt's five folders are copied without local modifications. The complete patches are:
 
-- [council](patches/tstack-council.patch): retain the user-selected Opus / Sol / Astra / Gemini Neon panel, with Neon as the only allowed Gemini model (added 2026-11-19); bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only reviewer after round 1 and escalate contradictions.
+- [council](patches/tstack-council.patch): retain the user-selected Gemini Neon / Opus / Fable panel, with Neon as the only allowed Gemini model (2026-11-19); bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only Fable reviewer after round 1 and escalate contradictions.
 - [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context.
 - [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context.
 

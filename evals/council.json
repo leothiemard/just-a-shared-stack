@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "Council this design proposal before we write code. Do not implement anything.",
-      "expected_output": "Dispatch Claude Opus, GPT-6.1 Sol, GPT-6 Astra and Gemini 4 Neon (Antigravity) at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
+      "expected_output": "Dispatch Gemini 4 Neon (Antigravity), Claude Opus and Claude Fable 5.2 at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
       "files": []
     },
     {
       "id": 2,
       "prompt": "Council this code change. Gemini Neon cannot run. Can you use Gemini Argon instead?",
-      "expected_output": "Report Gemini Neon as unavailable instead of substituting. Neon is the only allowed Gemini model, through Antigravity or any other provider such as fx; the default panel is Opus / Sol / Astra / Neon.",
+      "expected_output": "Report Gemini Neon as unavailable instead of substituting. Neon is the only allowed Gemini model, through Antigravity or any other provider such as fx; the default panel is Neon / Opus / Fable.",
       "files": []
     },
     {
