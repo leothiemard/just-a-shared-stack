@@ -18,6 +18,12 @@
       "prompt": "The council has completed two code-review passes for an open PR, and one reviewer omitted its score. Where do the results go?",
       "expected_output": "Update the PR description with the round count and a per-delegate, per-round score table before the model/harness line. Use no score for the missing value, do not invent it and do not add a comment just for this report.",
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "It is 2026-11-25. Council round 1 left two should findings, which you fixed. Who reviews round 2?",
+      "expected_output": "One Gemini Neon follow-up reviewer (trial through 2026-12-03) on the diff since the last review plus open findings. From 2026-12-04 the follow-up reviewer is Claude Fable. If Neon is unavailable, report it instead of substituting.",
+      "files": []
     }
   ]
 }
