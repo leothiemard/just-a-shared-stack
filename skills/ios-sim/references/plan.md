@@ -32,8 +32,8 @@ A plan is JSON: an object with `steps`, or a bare array of steps. Check one with
 | `textSize`, `appearance` | Set before the first step. |
 | `device` | UDID or name of the simulator. `--device` overrides it. |
 | `expectShot` | `[width, height]` in pixels. Any screenshot of another size fails. An iPhone 15 is `[1179, 2556]`. |
-| `failOnConsoleErrors` | `true` fails the run if the page logged errors since its last load. |
-| `restore` | Default `true`: put Text Size and appearance back at the end. |
+| `failOnConsoleErrors` | `true` fails the run if the page logged errors since its last load. A missing `/favicon.ico` does not count (nor in `noConsoleErrors`). |
+| `restore` | Default `true`: put Text Size and appearance back at the end, also after a failure, a crash, Ctrl-C or SIGTERM. |
 | `vars` | Defaults for `${NAME}` placeholders. `--var NAME=value` overrides them. An unknown name is an error. |
 
 ## Steps
@@ -42,11 +42,11 @@ Each step is an object with one action key. It may also carry `name`, `timeout` 
 
 | Action | Short form | Long form |
 | --- | --- | --- |
-| `open` | `"https://…"` | `{"url", "newTab": false}`: navigates the current tab and waits for `load`. `newTab` opens the URL through the device. |
+| `open` | `"https://…"` | `{"url", "newTab": false}`: navigates the current tab and waits for `load`. `newTab` opens the URL through the device. Fails when Safari shows its error page instead. `about:blank` blanks the current tab. |
 | `wait` | `500` (ms) | `{"selector"}`, `{"text"}` (in `innerText`), `{"js"}` (truthy), or `{"ms"}`. Default timeout 15 s. |
-| `eval` | `"expression"` | `{"js", "body": false}` or `{"file"}`: a function body that uses `return`. Promises are awaited. `"as": "key"` stores the value in `report.values.key`. |
-| `tap` | `"css selector"` | `{"selector"}`, `{"label"}` (accessibility label, such as a Safari button), or `{"at": [x, y]}` in screen points. |
-| `type` | `"text"` | `{"text", "selector", "enter": false, "keepKeyboard": false}`. `selector` taps the field first. The keyboard is dismissed afterwards unless `keepKeyboard` is true. |
+| `eval` | `"expression"` | `{"js", "body": false}` or `{"file"}`: an expression, or a function body that uses `return`. Promises are awaited. `"as": "key"` stores the value in `report.values.key`. |
+| `tap` | `"css selector"` | `{"selector", "first": false}` (one match, or the first with `first`; fails if covered), `{"label", "contains": false}` (the exact accessibility label, such as a Safari button; `contains` matches part of it), or `{"at": [x, y]}` in screen points. |
+| `type` | `"text"` | `{"text", "selector", "first": false, "enter": false, "keepKeyboard": false}`. `selector` taps the field first and fails unless it then has focus. The keyboard is dismissed afterwards unless `keepKeyboard` is true. |
 | `scroll` | `"down"`, `"up"`, `"top"`, `"bottom"`, or a selector | `{"direction", "amount"}` is a real swipe (amount is a fraction of the screen, up to 0.8). `{"to": selector}` uses `scrollIntoView`. |
 | `shot` | `"name"` | `{"name"}`. Saved as `NN-name.png` and checked for size and blankness. |
 | `audit` | `true` | `{"script", "failOn": "fail", "ignore": [rules], "minTarget": 44, "minInputFont": 16, "minTextFont": 11}`. `failOn` is `fail`, `warn` (warnings fail too) or `none` (record only). |
@@ -65,18 +65,23 @@ A step error (the page never loaded, or an element is missing) stops the run, un
 
 ## A project audit script
 
-A file holding a function body that returns `{findings: [...]}` or a bare array of findings. iosim evaluates it in the page, after `const __opts = {...}` (the step's options). A finding is `{rule, severity: "fail" | "warn", message, selector?, rect?}`. A finding with no severity counts as `fail`. Start from the built-in `scripts/audit.js`, which follows the same contract. To run both, use two audit steps.
+iosim accepts the file in either shape, unchanged:
+
+- **An expression**, as written for Playwright's `page.evaluate` or T3's `preview_evaluate`: for example `(async () => { …; return problems; })();`. Comments and a trailing `;` are fine.
+- **A function body** that uses `return`.
+
+iosim tries the file as an expression first and, only if it does not parse, as a body. Either way it may give a promise, and `__opts` (the step's options) is defined before it runs. The value is a bare array of findings (`[]` means the page passed) or `{findings: [...]}`. A finding is `{rule, severity: "fail" | "warn", message, selector?, rect?}`. `element` and `detail` are read as `selector` and `message`. A finding with no severity counts as `fail`. The built-in `scripts/audit.js` is a function body. To run both, use two audit steps.
 
 ## report.json
 
 | Field | Content |
 | --- | --- |
-| `passed` | Whether the run passed. Also the exit code. |
-| `failures[]` | `{step, kind, message, detail?, optional?}`. |
+| `passed` | True only when every step ran and nothing but `optional` steps failed. A crash, Ctrl-C or SIGTERM leaves it false. Also the exit code. |
+| `failures[]` | `{step, kind, message, detail?, optional?}`. `kind` is the step's, or `crash`, `interrupted`, `restore` or `console`. |
 | `steps[]` | `{step, kind, ok, ms, result or error}`. |
 | `shots[]` | Path, size, points, luminance statistics, `problems`, and the Text Size at capture. |
 | `audits[]` | The viewport, root and body font sizes, `findings`, `counts`, and the Text Size. |
 | `values` | The `eval … as` results. |
 | `console` | Errors since the last page load, read at the end of the run. |
 | `video`, `contactSheet` | Path and details, or `{error, fix}`. |
-| `device`, `driver`, `initial`, `restored`, `seconds` | Run metadata. |
+| `device`, `driver`, `initial`, `restored`, `seconds` | Run metadata. `interrupted` or `crashed` says why a run ended early. |

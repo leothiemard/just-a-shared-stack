@@ -31,6 +31,22 @@ function visible(el) {
   const r = el.getBoundingClientRect();
   return r.width > 0 && r.height > 0;
 }
+// The visually hidden pattern (a skip link, screen-reader text): a 1 px box, clipped away, or parked off screen.
+function visuallyHidden(el) {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 1 || r.height <= 1) return true;
+  if (r.right <= 0 || r.bottom <= 0 || r.left >= vw + 1000) return true;
+  const s = getComputedStyle(el);
+  return /rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)/.test(s.clip) || /inset\(50%\)/.test(s.clipPath);
+}
+// Inside a container that scrolls or clips sideways, and that container itself fits: a carousel, not a page overflow.
+function inSidewaysScroller(el) {
+  for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    const ox = getComputedStyle(n).overflowX;
+    if (ox !== "visible" && n.getBoundingClientRect().right <= vw + 1) return true;
+  }
+  return false;
+}
 function add(rule, severity, message, el, extra) {
   findings.push(Object.assign({rule, severity, message, selector: el ? describe(el) : null}, el ? {rect: box(el.getBoundingClientRect())} : {}, extra || {}));
 }
@@ -42,7 +58,7 @@ if (scrollWidth > vw + 1) {
   const wide = [];
   for (const el of document.body ? document.body.querySelectorAll("*") : []) {
     const r = el.getBoundingClientRect();
-    if (r.right > vw + 1 && r.width > 0 && visible(el)) {
+    if (r.right > vw + 1 && r.width > 0 && visible(el) && !inSidewaysScroller(el)) {
       // Report the outermost offenders only.
       if (!wide.some((w) => w.contains(el))) wide.push(el);
     }
@@ -53,11 +69,11 @@ if (scrollWidth > vw + 1) {
   }
 }
 
-// 2. Tap targets smaller than minTarget x minTarget CSS px. Links inside running text are warnings (WCAG's inline exception).
+// 2. Tap targets smaller than minTarget x minTarget CSS px (CSS px equal points at zoom 1). Visually hidden elements are skipped. Links inside running text are warnings (WCAG's inline exception).
 const interactive = "a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=checkbox], [role=switch], [role=tab], [role=menuitem], [onclick], [tabindex]:not([tabindex='-1'])";
 let small = 0;
 for (const el of document.querySelectorAll(interactive)) {
-  if (!visible(el) || el.disabled) continue;
+  if (!visible(el) || el.disabled || visuallyHidden(el)) continue;
   const r = el.getBoundingClientRect();
   if (r.width >= opts.minTarget && r.height >= opts.minTarget) continue;
   // A label wrapping a small checkbox counts as the target.
@@ -73,10 +89,10 @@ for (const el of document.querySelectorAll(interactive)) {
     `${Math.round(r.width)}x${Math.round(r.height)} px, under ${opts.minTarget}x${opts.minTarget}`, el);
 }
 
-// 3. Text inputs under minInputFont px: iOS Safari zooms the page when they get focus.
+// 3. Text inputs under minInputFont px: iOS Safari zooms the page when they get focus. Readonly and disabled ones cannot get typing focus.
 const zoomTypes = new Set(["", "text", "search", "email", "url", "tel", "password", "number", "date", "datetime-local", "month", "time", "week"]);
 for (const el of document.querySelectorAll("input, textarea, select, [contenteditable=''], [contenteditable=true]")) {
-  if (!visible(el)) continue;
+  if (!visible(el) || el.disabled || el.readOnly) continue;
   if (el.tagName === "INPUT" && !zoomTypes.has((el.getAttribute("type") || "").toLowerCase())) continue;
   const size = parseFloat(getComputedStyle(el).fontSize);
   if (size < opts.minInputFont) add("input-zoom", "fail", `font-size ${size}px; iOS zooms on focus under ${opts.minInputFont}px`, el, {fontSize: size});

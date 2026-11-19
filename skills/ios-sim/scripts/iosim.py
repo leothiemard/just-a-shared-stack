@@ -5,12 +5,14 @@ Run `iosim --help`, or read the ios-sim skill's references/cli.md.
 
 import argparse
 import base64
+import fcntl
 import json
 import os
 import platform
 import re
 import shlex
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -54,6 +56,18 @@ class IosimError(Exception):
         self.code = code
 
 
+class PageError(IosimError):
+    """The page's own JavaScript threw (as opposed to a lost connection or a timeout)."""
+
+
+class PageSyntaxError(PageError):
+    """The source did not parse. Raised before anything ran, so trying another reading of it is safe."""
+
+
+class Terminated(BaseException):
+    """SIGTERM, turned into an exception so a run still restores the device and writes its report."""
+
+
 # ---------------------------------------------------------------- pure helpers
 
 
@@ -86,12 +100,18 @@ def unwrap_from_target(message):
         return None
 
 
-def js_program(source, is_body=False):
+def strip_expression(source):
+    """An expression file may end with `;` (written for page.evaluate): drop trailing semicolons so it fits in ( )."""
+    return re.sub(r"[\s;]+$", "", source)
+
+
+def js_program(source, is_body=False, prelude=""):
     """Wrap an expression (or, with is_body, a function body that uses `return`) so the page
-    always answers with a JSON string: {"ok": true, "value": ...} or {"ok": false, "error": ...}."""
-    inner = "{\n" + source + "\n}" if is_body else "(\n" + source + "\n)"
+    always answers with a JSON string: {"ok": true, "value": ...} or {"ok": false, "error": ...}.
+    `prelude` runs first in the same scope (iosim uses it to define `__opts` for audit scripts)."""
+    inner = "{\n" + source + "\n}" if is_body else "(\n" + strip_expression(source) + "\n)"
     return (
-        "(async () => { try { const __v = await (async () => " + inner + ")();"
+        "(async () => { " + prelude + " try { const __v = await (async () => " + inner + ")();"
         " return JSON.stringify({ok: true, value: __v === undefined ? null : __v}); }"
         " catch (e) { return JSON.stringify({ok: false, error: String(e) + (e && /:\\d/.test(e.stack || '') ? ' at ' + e.stack : '')}); } })()"
     )
@@ -121,30 +141,90 @@ def url_matches(current, wanted):
     return c.netloc == w.netloc and (c.path or "/").startswith((w.path or "/").rstrip("/") or "/")
 
 
+def is_http(url):
+    return urllib.parse.urlsplit(url or "").scheme in ("http", "https")
+
+
+def load_failure(requested, final_href):
+    """Safari shows its own error page (a data: or about: URL) when a page cannot load. A real redirect, even to
+    another origin, lands on another http(s) page. Return a message when the requested http(s) URL did not load."""
+    if is_http(requested) and not is_http(final_href):
+        return f"Safari could not load {requested}: it shows its own error page ({(final_href or '')[:40]})"
+    return None
+
+
 def contents_to_points(rect, origin):
     """Centre of a CSS-pixel viewport rect, in screen points, given the web content origin on screen."""
     return (round(origin[0] + rect["x"] + rect["width"] / 2, 1), round(origin[1] + rect["y"] + rect["height"] / 2, 1))
 
 
-def web_origin_from_snapshot(nodes, title=None):
-    """Find where Safari's web content starts on screen from an agent-device snapshot: the first
-    node under a WebView whose rect is narrower in height than the WebView itself (the web area
-    sits below the status bar). Returns (x, y) or None."""
-    webviews = [n for n in nodes if n.get("type") == "WebView" and n.get("rect")]
-    if not webviews:
+def webview_subtree(nodes):
+    """The nodes inside Safari's outermost WebView (page content only, not Safari's toolbar)."""
+    for i, n in enumerate(nodes):
+        if n.get("type") == "WebView":
+            depth = n.get("depth", 0)
+            out = [n]
+            for m in nodes[i + 1:]:
+                if m.get("depth", 0) <= depth:
+                    break
+                out.append(m)
+            return out
+    return []
+
+
+def web_origin_from_anchors(nodes, anchors, tolerance=2.5):
+    """Where the page's (0, 0) sits on screen, from elements seen both ways: each anchor is a page element with its
+    accessible name and its rect in visual-viewport CSS px (points at zoom 1); a node of the accessibility snapshot
+    inside the WebView with the same label and size gives screen - page. The offset most anchors agree on wins.
+    Returns {"origin": (x, y), "anchors": n, "target": bool} or None."""
+    content = [n for n in webview_subtree(nodes) if n.get("rect") and n.get("label")]
+    votes = {}
+    for a in anchors:
+        label = (a.get("label") or "").strip()
+        if not label:
+            continue
+        for n in content:
+            r = n["rect"]
+            if n["label"].strip() != label:
+                continue
+            if abs(r["width"] - a["width"]) > tolerance or abs(r["height"] - a["height"]) > tolerance:
+                continue
+            # The AX frame can be the CSS box rounded outward: compare centres, not corners.
+            dx = (r["x"] + r["width"] / 2) - (a["x"] + a["width"] / 2)
+            dy = (r["y"] + r["height"] / 2) - (a["y"] + a["height"] / 2)
+            key = (round(dx), round(dy))
+            entry = votes.setdefault(key, {"ids": set(), "target": False})
+            entry["ids"].add(a.get("id", label))
+            entry["target"] = entry["target"] or bool(a.get("target"))
+    if not votes:
         return None
-    full = webviews[-1]["rect"]
-    depth = webviews[-1].get("depth", 0)
-    start = nodes.index(webviews[-1])
-    for n in nodes[start + 1:]:
-        if n.get("depth", 0) <= depth:
-            break
+    # Close keys (one point apart from rounding) count together.
+    best = None
+    for key in votes:
+        ids, target = set(), False
+        for other, entry in votes.items():
+            if abs(other[0] - key[0]) <= 1 and abs(other[1] - key[1]) <= 1:
+                ids |= entry["ids"]
+                target = target or entry["target"]
+        score = (len(ids), target, len(votes[key]["ids"]))
+        if best is None or score > best[0]:
+            best = (score, key, len(ids), target)
+    _, key, count, target = best
+    return {"origin": (float(key[0]), float(key[1])), "anchors": count, "target": target}
+
+
+def web_origin_from_title(nodes, title):
+    """Fallback: the node inside the WebView that carries the document's title, spans its width and starts below
+    its top (the web area under the status bar). Only a node labelled with the title counts."""
+    sub = webview_subtree(nodes)
+    if not sub or not title:
+        return None
+    full = sub[0].get("rect") or {}
+    for n in sub[1:]:
         r = n.get("rect")
-        if not r:
+        if not r or n.get("label") != title:
             continue
-        if title and n.get("label") and n.get("label") != title:
-            continue
-        if r["y"] > full["y"] and r["width"] >= full["width"] * 0.9:
+        if r["y"] > full.get("y", 0) and r["x"] == full.get("x", 0) and r["width"] >= full.get("width", 0) - 1:
             return (r["x"], r["y"])
     return None
 
@@ -200,6 +280,7 @@ class WebSocket:
         )
         self.sock.sendall(request.encode())
         self.buf = b""
+        self.partial = b""
         while b"\r\n\r\n" not in self.buf:
             chunk = self.sock.recv(4096)
             if not chunk:
@@ -212,42 +293,65 @@ class WebSocket:
     def send(self, text):
         self.sock.sendall(ws_frame(text))
 
-    def _read(self, n):
-        while len(self.buf) < n:
-            chunk = self.sock.recv(65536)
-            if not chunk:
-                raise ConnectionError("WebSocket closed")
-            self.buf += chunk
-        out, self.buf = self.buf[:n], self.buf[n:]
-        return out
+    def _frame(self):
+        """Take one whole frame off the buffer, or return None (buffer untouched) when it is not all here yet."""
+        buf = self.buf
+        if len(buf) < 2:
+            return None
+        b0, b1 = buf[0], buf[1]
+        n, pos = b1 & 0x7F, 2
+        if n == 126:
+            if len(buf) < 4:
+                return None
+            n, pos = struct.unpack(">H", buf[2:4])[0], 4
+        elif n == 127:
+            if len(buf) < 10:
+                return None
+            n, pos = struct.unpack(">Q", buf[2:10])[0], 10
+        mask = None
+        if b1 & 0x80:
+            if len(buf) < pos + 4:
+                return None
+            mask, pos = buf[pos:pos + 4], pos + 4
+        if len(buf) < pos + n:
+            return None
+        data = buf[pos:pos + n]
+        self.buf = buf[pos + n:]
+        if mask:
+            data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+        return b0, data
 
     def recv(self, timeout):
-        """Return the next text message, or None on timeout."""
-        self.sock.settimeout(max(timeout, 0.01))
-        message = b""
-        try:
-            while True:
-                b0, b1 = self._read(2)
-                opcode, n = b0 & 0x0F, b1 & 0x7F
-                if n == 126:
-                    n = struct.unpack(">H", self._read(2))[0]
-                elif n == 127:
-                    n = struct.unpack(">Q", self._read(8))[0]
-                mask = self._read(4) if b1 & 0x80 else None
-                data = self._read(n)
-                if mask:
-                    data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-                if opcode == 0x8:
-                    raise ConnectionError("WebSocket closed by peer")
-                if opcode == 0x9:
-                    self.sock.sendall(ws_frame(data, opcode=0xA))
-                    continue
-                if opcode in (0x1, 0x2, 0x0):
-                    message += data
-                    if b0 & 0x80:
-                        return message.decode("utf-8", errors="replace")
-        except socket.timeout:
-            return None
+        """Return the next text message, or None on timeout. A timeout never loses part of a frame: bytes stay
+        buffered until the whole frame has arrived."""
+        deadline = time.time() + max(timeout, 0.01)
+        while True:
+            frame = self._frame()
+            if frame is None:
+                left = deadline - time.time()
+                if left <= 0:
+                    return None
+                self.sock.settimeout(left)
+                try:
+                    chunk = self.sock.recv(65536)
+                except socket.timeout:
+                    return None
+                if not chunk:
+                    raise ConnectionError("WebSocket closed")
+                self.buf += chunk
+                continue
+            b0, data = frame
+            opcode = b0 & 0x0F
+            if opcode == 0x8:
+                raise ConnectionError("WebSocket closed by peer")
+            if opcode == 0x9:
+                self.sock.sendall(ws_frame(data, opcode=0xA))
+                continue
+            if opcode in (0x1, 0x2, 0x0):
+                self.partial += data
+                if b0 & 0x80:
+                    message, self.partial = self.partial, b""
+                    return message.decode("utf-8", errors="replace")
 
     def close(self):
         try:
@@ -267,6 +371,7 @@ class Inspector:
         self.ws = WebSocket(ws_url, timeout=timeout)
         self.target = None
         self.next_id = 1
+        self.sent = 0
         self.events = []
         deadline = time.time() + timeout
         while self.target is None and time.time() < deadline:
@@ -305,6 +410,7 @@ class Inspector:
         cid = self.next_id
         self.next_id += 1
         self.ws.send(json.dumps(wrap_for_target(self.target, cid, method, params)))
+        self.sent += 1
         deadline = time.time() + timeout
         while time.time() < deadline:
             msg = self._recv(deadline - time.time())
@@ -324,25 +430,34 @@ class Inspector:
         while time.time() < deadline:
             self._recv(deadline - time.time())
 
-    def evaluate(self, source, is_body=False, timeout=30.0):
-        """Evaluate in the page, await a returned promise, and return the JSON value."""
+    def evaluate(self, source, is_body=False, timeout=30.0, prelude=""):
+        """Evaluate in the page, await a returned promise, and return the JSON value. is_body="auto" reads the
+        source as an expression first and, only if that does not parse, as a function body."""
+        if is_body == "auto":
+            try:
+                return self.evaluate(source, False, timeout, prelude)
+            except PageSyntaxError:
+                return self.evaluate(source, True, timeout, prelude)
         # WebKit ignores awaitPromise on Runtime.evaluate: get the promise object, then await it.
-        result = self.call("Runtime.evaluate", {"expression": js_program(source, is_body), "returnByValue": False}, timeout=timeout)
+        result = self.call("Runtime.evaluate", {"expression": js_program(source, is_body, prelude), "returnByValue": False}, timeout=timeout)
         remote = result.get("result", {})
         if result.get("wasThrown"):
-            raise IosimError("page threw: " + str(remote.get("description") or remote.get("value")))
+            text = str(remote.get("description") or remote.get("value"))
+            # The wrapper catches everything that runs, so a throw here is the program failing to parse.
+            cls = PageSyntaxError if "SyntaxError" in text or remote.get("className") == "SyntaxError" else PageError
+            raise cls("page threw: " + text)
         value = remote.get("value")
         if remote.get("type") == "object" and "objectId" in remote:
             awaited = self.call("Runtime.awaitPromise", {"promiseObjectId": remote["objectId"], "returnByValue": True}, timeout=timeout)
             if awaited.get("wasThrown"):
-                raise IosimError("page threw: " + str(awaited.get("result", {}).get("description")))
+                raise PageError("page threw: " + str(awaited.get("result", {}).get("description")))
             value = awaited.get("result", {}).get("value")
         try:
             answer = json.loads(value)
         except (TypeError, ValueError):
             raise IosimError(f"unexpected evaluate result: {remote!r}")
         if not answer.get("ok"):
-            raise IosimError("page error: " + str(answer.get("error")))
+            raise PageError("page error: " + str(answer.get("error")))
         return answer.get("value")
 
     def close(self):
@@ -409,6 +524,49 @@ def pid_alive(pid):
         return False
 
 
+def pid_command(pid):
+    """The command line of a running process, or None."""
+    try:
+        proc = subprocess.run(["ps", "-p", str(int(pid)), "-o", "command="], capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() or None
+
+
+def pid_is(pid, *names):
+    """Whether a saved pid is still the process iosim started. After a reboot or a long time the number can belong to
+    an unrelated process, which must never be signalled."""
+    if not pid_alive(pid):
+        return False
+    command = pid_command(pid)
+    return bool(command) and any(n in command for n in names)
+
+
+class FileLock:
+    """An exclusive lock on a file in IOSIM_HOME, so two iosim commands at once do not both start a proxy."""
+
+    def __init__(self, name, timeout=60):
+        self.path = state_dir() / name
+        self.timeout = timeout
+
+    def __enter__(self):
+        self.fh = open(self.path, "w")
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except OSError:
+                if time.time() > deadline:
+                    self.fh.close()
+                    raise IosimError(f"another iosim command holds {self.path.name}", "wait for it to finish, then retry")
+                time.sleep(0.1)
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
 def is_mac():
     return platform.system() == "Darwin"
 
@@ -464,13 +622,28 @@ def booted_device(spec=None):
     return d
 
 
-def latest_ios_runtime():
-    data = json.loads(simctl("list", "runtimes", "-j").stdout)
-    runtimes = [r for r in data.get("runtimes", []) if r.get("platform", "iOS") == "iOS" and "iOS" in r.get("name", "") and r.get("isAvailable")]
-    if not runtimes:
+def pick_runtime(runtimes, device_type=None):
+    """The newest available iOS runtime, and when a device type identifier is given, the newest that supports it.
+    Two runtimes can share a version (a general one and one made for a single new device); sorting by version alone
+    can pick the one that refuses the type."""
+    usable = [r for r in runtimes if r.get("platform", "iOS") == "iOS" and "iOS" in r.get("name", "") and r.get("isAvailable")]
+    if not usable:
         raise IosimError("no iOS Simulator runtime is installed", "install one: xcodebuild -downloadPlatform iOS (or Xcode > Settings > Components)")
-    runtimes.sort(key=lambda r: [int(x) for x in re.findall(r"\d+", r.get("version", "0"))])
-    return runtimes[-1]
+    if device_type:
+        fits = [r for r in usable if "supportedDeviceTypes" not in r
+                or any(t.get("identifier") == device_type for t in r.get("supportedDeviceTypes") or [])]
+        if not fits:
+            raise IosimError(f"no installed iOS runtime supports {device_type.rsplit('.', 1)[-1]}",
+                             "pick another --type (xcrun simctl list devicetypes), or install a newer runtime")
+        usable = fits
+    # Newest version first; among equal versions, the runtime that supports the most device types.
+    usable.sort(key=lambda r: ([int(x) for x in re.findall(r"\d+", r.get("version", "0"))], len(r.get("supportedDeviceTypes") or [])))
+    return usable[-1]
+
+
+def latest_ios_runtime(device_type=None):
+    data = json.loads(simctl("list", "runtimes", "-j").stdout)
+    return pick_runtime(data.get("runtimes", []), device_type)
 
 
 def ensure_device(type_name=DEFAULT_DEVICE_TYPE, name=None, boot=True):
@@ -489,7 +662,7 @@ def ensure_device(type_name=DEFAULT_DEVICE_TYPE, name=None, boot=True):
         dtype = next((t for t in types if t["name"] == type_name), None)
         if not dtype:
             raise IosimError(f"unknown device type {type_name!r}", "list them with `xcrun simctl list devicetypes`")
-        runtime = latest_ios_runtime()
+        runtime = latest_ios_runtime(dtype["identifier"])
         udid = simctl("create", wanted, dtype["identifier"], runtime["identifier"]).stdout.strip()
         found = {"udid": udid, "name": wanted, "state": "Shutdown", "runtime": runtime["identifier"].rsplit(".", 1)[-1], "type": type_name}
         created = True
@@ -515,10 +688,63 @@ def appearance_get(udid):
 # ---------------------------------------------------------------- agent-device driver
 
 
+def in_use_fix(session, command):
+    return (f"the device is claimed by agent-device session {session!r}. If that session is yours (an earlier agent-device "
+            f"command of this task), close it: run that command with `close`, and inside T3 also call device_close for "
+            f"the device, then device_open again and export the new command. If it belongs to another agent or task, "
+            f"do not close it: wait for it to finish, or ask the user. (Your command: {command})")
+
+
+def device_in_use(data):
+    """The session named by an agent-device DEVICE_IN_USE error, else None."""
+    err = data.get("error") if isinstance(data, dict) else None
+    if isinstance(err, dict) and err.get("code") == "DEVICE_IN_USE":
+        details = err.get("details") or {}
+        if details.get("reason", "").startswith(("apple_simulator_recording", "native_")):
+            return None
+        return details.get("session") or "unknown"
+    return None
+
+
+def pick_label_node(nodes, text):
+    """The one snapshot node whose label contains `text` (case-insensitive). Wrappers that share a label and nest
+    collapse to the innermost; distinct matches are ambiguous."""
+    want = text.lower()
+    hits = [n for n in nodes if n.get("rect") and want in (n.get("label") or "").lower()]
+
+    def inside(a, b):
+        ra, rb = a["rect"], b["rect"]
+        return (ra["x"] >= rb["x"] - 0.5 and ra["y"] >= rb["y"] - 0.5 and ra["x"] + ra["width"] <= rb["x"] + rb["width"] + 0.5
+                and ra["y"] + ra["height"] <= rb["y"] + rb["height"] + 0.5)
+
+    inner = [n for n in hits if not any(m is not n and m.get("label") == n.get("label") and inside(m, n) for m in hits)]
+    labels = sorted({n.get("label") for n in inner})
+    if not inner:
+        raise IosimError(f"no element's accessibility label contains {text!r}", "check the labels with `agent-device snapshot`, or tap --selector")
+    if len(inner) > 1:
+        raise IosimError(f"{len(inner)} elements' labels contain {text!r}: {', '.join(repr(l) for l in labels[:8])}",
+                         "use a longer --label, an exact one without --contains, or tap --selector")
+    return inner[0]
+
+
+def check_bound_device(data, udid):
+    """agent-device's `open` answers with the device it acted on. A command bound to another simulator (T3's
+    device_open binds one) would send taps there while JavaScript goes to `udid`: refuse."""
+    got = (data or {}).get("device_udid") or (data or {}).get("id") if isinstance(data, dict) else None
+    if not got:
+        raise IosimError("could not tell which simulator the agent-device command drives (its open answered no device_udid)",
+                         "pass an agent-device command bound to this simulator, or unset IOSIM_AGENT_DEVICE to use agent-device from PATH")
+    if got != udid:
+        raise IosimError(f"the agent-device command drives simulator {got}, but iosim resolved {udid}",
+                         f"pass --device {got} (or set IOSIM_DEVICE) to match the command, or call device_open for {udid} and export that command")
+    return got
+
+
 class Driver:
     """Device actions. A given agent-device command (--agent-device or IOSIM_AGENT_DEVICE, for example the one T3's
-    device_open returned) is used as is for every launch, tap, text entry, screenshot, recording and setting. Otherwise
-    an agent-device on PATH gets --platform/--udid added, and simctl covers what it can."""
+    device_open returned) is used as is for every launch, tap, text entry, screenshot, recording and setting, after
+    checking it drives the resolved simulator. Otherwise an agent-device on PATH gets --platform/--udid/--session
+    added, and simctl covers what it can."""
 
     def __init__(self, udid, given=None):
         self.udid = udid
@@ -528,12 +754,16 @@ class Driver:
             self.mode = "agent-device (given)"
         else:
             found = which("agent-device")
-            self.ad = [found, "--platform", "ios", "--udid", udid, "--session", "iosim"] if found else None
+            self.ad = [found, "--platform", "ios", "--udid", udid, "--session", f"iosim-{udid}"] if found else None
             self.mode = "agent-device (PATH)" if found else "simctl"
         self.session_opened = False
+        self.session_name = None
 
     def describe(self):
-        return {"mode": self.mode, "agentDevice": " ".join(shlex.quote(a) for a in self.ad) if self.ad else None}
+        return {"mode": self.mode, "agentDevice": self.command_text(), "session": self.session_name}
+
+    def command_text(self):
+        return " ".join(shlex.quote(a) for a in self.ad) if self.ad else None
 
     def require_ad(self, what):
         if not self.ad:
@@ -553,33 +783,64 @@ class Driver:
             except ValueError:
                 data = None
         if proc.returncode != 0 or (isinstance(data, dict) and data.get("success") is False):
+            claimed = device_in_use(data)
+            if claimed:
+                raise IosimError(f"agent-device {args[0]} failed: the simulator is in use by session {claimed!r}",
+                                 in_use_fix(claimed, " ".join(shlex.quote(a) for a in (ad or self.ad))))
             err = data.get("error") if isinstance(data, dict) else None
             msg = (err.get("message") if isinstance(err, dict) else err) or (proc.stderr or out).strip()[:800]
-            raise IosimError(f"agent-device {args[0]} failed: {msg}")
+            hint = err.get("hint") if isinstance(err, dict) else None
+            raise IosimError(f"agent-device {args[0]} failed: {msg}", hint)
         return data.get("data", data) if isinstance(data, dict) else out
 
+    def _opened(self, data):
+        check_bound_device(data, self.udid)
+        self.session_opened = True
+        self.session_name = data.get("session") if isinstance(data, dict) else None
+        write_state(f"agent-device-{self.udid}.json", {"command": self.ad, "session": self.session_name, "at": time.time()})
+
     def ensure_session(self):
-        """agent-device input, snapshots and recordings need an app session: open Safari once per process."""
+        """agent-device input, snapshots and recordings need an app session: open Safari once per process. Its answer
+        names the simulator, which must be the one iosim resolved."""
         if self.ad and not self.session_opened:
-            self.ad_run("open", SAFARI)
-            self.session_opened = True
+            self._opened(self.ad_run("open", SAFARI))
 
     def open_url(self, url):
         if self.ad:
-            self.ad_run("open", SAFARI, url)
-            self.session_opened = True
+            self._opened(self.ad_run("open", SAFARI, url))
         else:
             simctl("openurl", self.udid, url)
+
+    def close(self):
+        """Close this command's own agent-device session (never another one). Returns what happened."""
+        if not self.ad:
+            return {"closed": False, "why": "no agent-device in use"}
+        try:
+            self.ad_run("close", timeout=60)
+            result = {"closed": True}
+        except IosimError as e:
+            result = {"closed": False, "why": str(e)}
+        write_state(f"agent-device-{self.udid}.json", None)
+        return result
 
     def tap(self, x, y):
         self.require_ad("tap")
         self.ensure_session()
         return self.ad_run("press", str(x), str(y))
 
-    def tap_label(self, label):
+    def tap_label(self, label, contains=False):
+        """Exact accessibility label through agent-device; with contains, a case-insensitive substring match on a
+        fresh snapshot, which must name one element."""
         self.require_ad("tap")
         self.ensure_session()
-        return self.ad_run("press", f"label={json.dumps(label)}")
+        if not contains:
+            return self.ad_run("press", f"label={json.dumps(label)}")
+        snap = self.snapshot()
+        node = pick_label_node((snap or {}).get("nodes", []) if isinstance(snap, dict) else [], label)
+        r = node["rect"]
+        x, y = round(r["x"] + r["width"] / 2, 1), round(r["y"] + r["height"] / 2, 1)
+        self.ad_run("press", str(x), str(y))
+        return {"matched": node.get("label"), "x": x, "y": y}
 
     def type_text(self, text):
         self.require_ad("type")
@@ -588,6 +849,7 @@ class Driver:
 
     def keyboard(self, action):
         self.require_ad("keyboard")
+        self.ensure_session()
         return self.ad_run("keyboard", action)
 
     def scroll(self, direction, amount=None):
@@ -641,7 +903,7 @@ class Driver:
                 self.ad_run("record", "stop", timeout=300, ad=self.ad or st.get("agentDevice"))
             else:
                 pid = st["pid"]
-                if pid_alive(pid):
+                if pid_is(pid, "simctl", "recordVideo"):
                     os.kill(pid, 2)  # SIGINT lets simctl finish the file
                     for _ in range(100):
                         if not pid_alive(pid):
@@ -660,6 +922,7 @@ class Driver:
     def set_text_size(self, size):
         size = normalize_text_size(size)
         if self.ad:
+            self.ensure_session()
             self.ad_run("settings", "text-size", size)
         else:
             simctl("ui", self.udid, "content_size", size)
@@ -669,6 +932,7 @@ class Driver:
         if mode not in ("light", "dark"):
             raise IosimError("appearance is light or dark", code=2)
         if self.ad:
+            self.ensure_session()
             self.ad_run("settings", "appearance", mode)
         else:
             simctl("ui", self.udid, "appearance", mode)
@@ -682,7 +946,7 @@ def proxy_status(udid):
     st = read_state(f"proxy-{udid}.json")
     if not st:
         return None
-    if not pid_alive(st.get("pid")):
+    if not pid_is(st.get("pid"), "ios_webkit_debug_proxy"):
         write_state(f"proxy-{udid}.json", None)
         return None
     return st
@@ -706,7 +970,7 @@ def web_inspector_socket(udid):
 
 def proxy_stop(udid):
     st = read_state(f"proxy-{udid}.json")
-    if st and pid_alive(st.get("pid")):
+    if st and pid_is(st.get("pid"), "ios_webkit_debug_proxy"):
         os.kill(st["pid"], 15)
         for _ in range(30):
             if not pid_alive(st["pid"]):
@@ -717,7 +981,13 @@ def proxy_stop(udid):
 
 
 def proxy_ensure(udid):
-    """Start (or reuse) one ios_webkit_debug_proxy for this simulator. Its page list is on port+1."""
+    """Start (or reuse) one ios_webkit_debug_proxy for this simulator. Its page list is on port+1. A per-simulator
+    lock keeps two iosim commands from starting two proxies."""
+    with FileLock(f"proxy-{udid}.lock"):
+        return _proxy_ensure(udid)
+
+
+def _proxy_ensure(udid):
     sock = web_inspector_socket(udid)
     st = proxy_status(udid)
     if st and st.get("socket") == sock:
@@ -766,20 +1036,92 @@ def list_pages(udid):
 # ---------------------------------------------------------------- page session
 
 
-TAP_RECT_JS = """
-const el = document.querySelector(%s);
-if (!el) throw new Error("no element matches " + %s);
-const r0 = el.getBoundingClientRect();
-if (r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth) {
+# Measures a tap target. Runs as a function body after a prelude that defines __sel and __first.
+TAP_RECT_JS = r"""
+const describe = (n) => {
+  if (!(n instanceof Element)) return String(n);
+  let d = n.tagName.toLowerCase();
+  if (n.id) return d + "#" + n.id;
+  const cls = [...n.classList].slice(0, 2).join(".");
+  if (cls) d += "." + cls;
+  const text = (n.getAttribute("aria-label") || n.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40);
+  return text ? d + ' "' + text + '"' : d;
+};
+const all = document.querySelectorAll(__sel);
+if (!all.length) throw new Error("no element matches " + __sel);
+if (all.length > 1 && !__first) return {ambiguous: all.length, matches: [...all].slice(0, 5).map(describe)};
+const el = all[0];
+const inView = (r) => r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
+let r = el.getBoundingClientRect();
+if (r.width === 0 || r.height === 0) return {invisible: true, target: describe(el)};
+if (!inView(r)) {
   el.scrollIntoView({block: "center", inline: "center"});
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  await new Promise((r) => setTimeout(r, 150));
+  await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+  await new Promise((res) => setTimeout(res, 150));
+  r = el.getBoundingClientRect();
 }
-const r = el.getBoundingClientRect();
+const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
 const vv = window.visualViewport;
-return {rect: {x: r.x, y: r.y, width: r.width, height: r.height}, scale: vv ? vv.scale : 1,
-        offset: vv ? {x: vv.offsetLeft, y: vv.offsetTop} : {x: 0, y: 0}, title: document.title, tag: el.tagName.toLowerCase()};
+const scale = vv ? vv.scale : 1, ox = vv ? vv.offsetLeft : 0, oy = vv ? vv.offsetTop : 0;
+const visW = vv ? vv.width : innerWidth, visH = vv ? vv.height : innerHeight;
+if (cx - ox < 0 || cy - oy < 0 || cx - ox > visW || cy - oy > visH) {
+  return {offscreen: true, target: describe(el), cssPoint: {x: cx, y: cy}, visual: {width: visW, height: visH, offsetLeft: ox, offsetTop: oy}};
+}
+const hit = document.elementFromPoint(cx, cy);
+const toVisual = (b) => ({x: (b.x - ox) * scale, y: (b.y - oy) * scale, width: b.width * scale, height: b.height * scale});
+const nameOf = (n) => {
+  const label = n.getAttribute("aria-label") || (n.labels && n.labels[0] && n.labels[0].innerText) || n.getAttribute("placeholder")
+    || n.getAttribute("alt") || n.getAttribute("title") || n.innerText || "";
+  return label.trim().replace(/\s+/g, " ").slice(0, 160);
+};
+// Anchors: the target and other fully visible elements with a name, so the screen offset can be read from
+// whichever of them the accessibility snapshot shows.
+const anchors = [];
+const seen = new Set();
+const push = (n, target) => {
+  if (seen.has(n)) return;
+  seen.add(n);
+  const b = n.getBoundingClientRect();
+  const name = nameOf(n);
+  if (!name || b.width === 0 || b.height === 0 || !inView(b)) return;
+  anchors.push(Object.assign({id: anchors.length, label: name, target}, toVisual(b)));
+};
+push(el, true);
+for (const n of document.querySelectorAll("button, a[href], input, select, textarea, h1, h2, h3, h4, h5, h6, p, label, li, [role=button], [aria-label]")) {
+  if (anchors.length >= 30) break;
+  push(n, false);
+}
+return {rect: toVisual(r), cssPoint: {x: cx, y: cy}, scale, visual: {width: visW * scale, height: visH * scale},
+        hit: hit && (hit === el || el.contains(hit)) ? null : (hit ? describe(hit) : "nothing (outside the page)"),
+        title: document.title, tag: el.tagName.toLowerCase(), target: describe(el), count: all.length, anchors};
 """
+
+FOCUS_JS = r"""
+const el = document.querySelector(__sel);
+const a = document.activeElement;
+const describe = (n) => !n ? "nothing" : n.tagName.toLowerCase() + (n.id ? "#" + n.id : "") + (n.getAttribute && n.getAttribute("name") ? "[name=" + n.getAttribute("name") + "]" : "");
+return {focused: !!el && !!a && (a === el || el.contains(a)), active: describe(a)};
+"""
+
+
+def tap_point(info, nodes):
+    """Screen point for a measured target (TAP_RECT_JS's answer) and an accessibility snapshot. Raises when the
+    target is covered, off screen, or the page cannot be placed on screen."""
+    found = web_origin_from_anchors(nodes, info.get("anchors") or [])
+    if found:
+        origin, how = found["origin"], {"originVia": "anchors", "anchors": found["anchors"], "targetAnchored": found["target"]}
+    else:
+        origin = web_origin_from_title(nodes, info.get("title"))
+        how = {"originVia": "title node"}
+        if origin is None:
+            raise IosimError("could not place Safari's web area on screen: no page element matched the accessibility snapshot",
+                             "measure the element with eval and tap with --at <x> <y> (screen points), or tap --label <accessible name>")
+    x, y = contents_to_points(info["rect"], origin)
+    visual = info.get("visual") or {}
+    if visual and not (origin[0] <= x <= origin[0] + visual["width"] and origin[1] <= y <= origin[1] + visual["height"]):
+        raise IosimError(f"the target's centre ({x}, {y}) falls outside the page's visible area on screen",
+                         "scroll it into view (scroll --to) and retry, or tap --at")
+    return x, y, list(origin), how
 
 
 class Session:
@@ -799,7 +1141,9 @@ class Session:
             raise IosimError("Safari has no inspectable page", "run `iosim open <url>` first")
         return Inspector(page["webSocketDebuggerUrl"], timeout=timeout)
 
-    def with_page(self, fn, hint=None, retries=3):
+    def with_page(self, fn, hint=None, retries=3, idempotent=False):
+        """Run fn on a fresh page connection. A failed connect is retried. A connection lost after fn sent a command
+        is retried only when fn is idempotent (a read): an eval with side effects must not run twice."""
         last = None
         for attempt in range(retries):
             try:
@@ -812,6 +1156,9 @@ class Session:
                 return fn(insp)
             except (ConnectionError, OSError) as e:
                 last = e
+                if insp.sent and not idempotent:
+                    raise IosimError(f"lost the page connection after sending the command, so it may or may not have run: {e}",
+                                     "check the page's state, then retry; if it repeats run `iosim proxy restart`")
                 time.sleep(0.5)
             finally:
                 insp.close()
@@ -819,15 +1166,43 @@ class Session:
             raise last
         raise IosimError(f"lost the page connection: {last}", "retry; if it repeats run `iosim proxy restart`")
 
-    def evaluate(self, source, is_body=False, timeout=30.0, hint=None):
-        return self.with_page(lambda i: i.evaluate(source, is_body=is_body, timeout=timeout), hint=hint)
+    def evaluate(self, source, is_body=False, timeout=30.0, hint=None, prelude="", idempotent=False):
+        return self.with_page(lambda i: i.evaluate(source, is_body=is_body, timeout=timeout, prelude=prelude), hint=hint, idempotent=idempotent)
+
+    def _probe(self, page, extra=""):
+        insp = Inspector(page["webSocketDebuggerUrl"], timeout=5)
+        try:
+            return insp.evaluate("({href: location.href, readyState: document.readyState, nav: window.__iosimNav || null,"
+                                 " mark: window.__iosimMark || null, title: document.title" + extra + "})", timeout=5)
+        finally:
+            insp.close()
+
+    def _mark_pages(self, pages, token):
+        """Tag every open document, so a page that answers without the tag is one that loaded after this point."""
+        marked = set()
+        for p in pages:
+            try:
+                insp = Inspector(p["webSocketDebuggerUrl"], timeout=5)
+                try:
+                    insp.evaluate(f"(window.__iosimMark = {json.dumps(token)}, true)", timeout=5)
+                    marked.add(p["webSocketDebuggerUrl"])
+                finally:
+                    insp.close()
+            except (IosimError, OSError, ConnectionError, ValueError):
+                pass
+        return marked
 
     def open(self, url, new_tab=False, wait=True, timeout=45.0):
         started = time.time()
         token = f"iosim-{time.time_ns()}"
         pages = list_pages(self.udid)
         before = {p["webSocketDebuggerUrl"] for p in pages}
+        blank = url == "about:blank"
+        if blank and (new_tab or not pages):
+            raise IosimError("about:blank can only replace the page in the current tab, and Safari has no page open (or --new-tab was given)",
+                             "open an http(s) URL first, then `iosim open about:blank` to blank that tab", code=2)
         how = "new-tab"
+        marked = set()
         if pages and not new_tab:
             def navigate(insp):
                 insp.evaluate(f"(window.__iosimNav = {json.dumps(token)}, setTimeout(() => location.assign({json.dumps(url)}), 0), true)")
@@ -835,41 +1210,64 @@ class Session:
                 self.with_page(navigate, retries=1)
                 how = "same-tab"
             except IosimError:
+                if blank:
+                    raise
+                marked = self._mark_pages(pages, token)
                 self.driver.open_url(url)
         else:
+            marked = self._mark_pages(pages, token)
             self.driver.open_url(url)
         write_state(f"page-{self.udid}.json", {"url": url, "at": time.time()})
         result = {"url": url, "how": how, "driver": self.driver.mode}
         if wait:
-            result.update(self.wait_loaded(url, token if how == "same-tab" else None, before, timeout))
+            result.update(self.wait_loaded(url, token, how, before, marked, timeout))
         result["ms"] = int((time.time() - started) * 1000)
         return result
 
-    def wait_loaded(self, url, token, before, timeout):
+    def wait_loaded(self, url, token, how, before, marked, timeout):
+        """Wait for the document the open started: in the same tab, one without our navigation tag; in a new tab,
+        a page that did not exist before, or an old one that has since loaded a new document (no mark). Fails at once
+        when Safari shows its own error page for an http(s) URL."""
         deadline = time.time() + timeout
         last = None
+        fresh_seen = False
         while time.time() < deadline:
             time.sleep(0.3)
             try:
                 pages = list_pages(self.udid)
-                if token is None:
-                    fresh = [p for p in pages if p["webSocketDebuggerUrl"] not in before]
-                    page = pick_page(fresh, url) or pick_page(pages, url)
-                else:
+                if how == "same-tab":
                     page = pick_page(pages, self.last_url())
-                if not page:
-                    continue
-                insp = Inspector(page["webSocketDebuggerUrl"], timeout=5)
-                try:
-                    info = insp.evaluate("({href: location.href, readyState: document.readyState, nav: window.__iosimNav || null, title: document.title})", timeout=5)
-                finally:
-                    insp.close()
-                last = info
-                if info["readyState"] == "complete" and (token is None or info["nav"] != token) and info["href"] != "about:blank":
+                    candidates = [page] if page else []
+                else:
+                    candidates = [p for p in pages if p["webSocketDebuggerUrl"] not in before or p["webSocketDebuggerUrl"] in marked]
+                    candidates.sort(key=lambda p: not url_matches(p.get("url"), url))
+                for page in candidates:
+                    info = self._probe(page)
+                    last = info
+                    if how == "same-tab" and info["nav"] == token:
+                        continue  # still the old document
+                    if how != "same-tab" and info["mark"] == token:
+                        continue  # a document that was already open
+                    fresh_seen = True
+                    if info["readyState"] != "complete":
+                        continue
+                    if info["href"] == "about:blank" and url != "about:blank":
+                        continue
+                    failure = load_failure(url, info["href"])
+                    if failure:
+                        raise IosimError(failure, f"check that the server is up and reachable from this Mac (curl -sI {url}), then open it again")
                     write_state(f"page-{self.udid}.json", {"url": info["href"], "at": time.time()})
                     return {"finalUrl": info["href"], "title": info["title"], "redirected": not url_matches(info["href"], url)}
-            except (IosimError, OSError, ConnectionError, ValueError) as e:
+            except IosimError as e:
+                if str(e).startswith("Safari could not load"):
+                    raise
                 last = str(e)
+            except (OSError, ConnectionError, ValueError) as e:
+                last = str(e)
+        if how != "same-tab" and not fresh_seen:
+            raise IosimError(f"Safari showed no newly loaded page for {url} within {timeout:.0f}s (last seen: {last})",
+                             "Safari may have switched to a tab that already shows this URL instead of opening one: "
+                             "open without --new-tab, or open a different URL")
         raise IosimError(f"page did not finish loading within {timeout:.0f}s (last seen: {last})",
                          "check the URL loads from this Mac (curl it), or raise --timeout")
 
@@ -887,7 +1285,7 @@ class Session:
                 out.append({"level": m.get("level"), "source": m.get("source"), "text": m.get("text"),
                             "url": m.get("url"), "line": m.get("line"), "column": m.get("column")})
             return out
-        return self.with_page(read)
+        return self.with_page(read, idempotent=True)
 
     def wait(self, selector=None, text=None, js=None, ms=None, timeout=15.0):
         if ms is not None:
@@ -904,8 +1302,11 @@ class Session:
         start = time.time()
         while True:
             try:
-                if self.evaluate(expr, timeout=5):
+                if self.evaluate(expr, timeout=5, idempotent=True):
                     return {"waitedMs": int((time.time() - start) * 1000)}
+            except PageError as e:
+                # A page that throws will keep throwing: say so now rather than at the timeout.
+                raise IosimError(f"wait: the condition threw: {e}", "fix the expression (it must be one JavaScript expression)")
             except IosimError:
                 pass
             if time.time() - start > timeout:
@@ -913,35 +1314,46 @@ class Session:
             time.sleep(0.25)
 
     # input -------------------------------------------------------
-    def web_origin(self, title=None):
-        snap = self.driver.snapshot()
-        nodes = snap.get("nodes", []) if isinstance(snap, dict) else []
-        origin = web_origin_from_snapshot(nodes, title) or web_origin_from_snapshot(nodes)
-        if not origin:
-            raise IosimError("could not find Safari's web area on screen", "tap with --label <accessible name> or --at <x> <y> instead")
-        return origin
-
-    def tap(self, selector=None, label=None, at=None):
+    def tap(self, selector=None, label=None, at=None, first=False, contains=False):
         if at is not None:
             x, y = at
             self.driver.tap(x, y)
             return {"x": x, "y": y, "via": "coordinates"}
         if label is not None:
-            self.driver.tap_label(label)
-            return {"label": label, "via": "accessibility label"}
-        info = self.evaluate(TAP_RECT_JS % (json.dumps(selector), json.dumps(selector)), is_body=True)
-        origin = self.web_origin(info.get("title"))
-        scale = info.get("scale") or 1
-        rect = {k: info["rect"][k] * scale for k in ("x", "y", "width", "height")}
-        x, y = contents_to_points(rect, origin)
+            detail = self.driver.tap_label(label, contains=contains)
+            out = {"label": label, "via": "accessibility label" + (" (contains)" if contains else "")}
+            if contains and isinstance(detail, dict):
+                out.update(detail)
+            return out
+        self.driver.require_ad("tap")
+        prelude = f"const __sel = {json.dumps(selector)}, __first = {json.dumps(bool(first))};"
+        info = self.evaluate(TAP_RECT_JS, is_body=True, prelude=prelude, idempotent=True)
+        if info.get("ambiguous"):
+            raise IosimError(f"{info['ambiguous']} elements match {selector!r}: {', '.join(info['matches'])}",
+                             "make the selector match one element, or pass --first (plan: \"first\": true) to tap the first")
+        if info.get("invisible"):
+            raise IosimError(f"{selector!r} matches {info['target']}, which has no size (hidden?)", "wait for it to show, or tap another element")
+        if info.get("offscreen"):
+            raise IosimError(f"{selector!r} ({info['target']}) is still off screen after scrolling it into view",
+                             "scroll the page (or its container) so the element shows, then retry")
+        if info.get("hit"):
+            raise IosimError(f"{selector!r} ({info['target']}) is covered at its centre by {info['hit']}: a real tap would hit that instead",
+                             "close or move what covers it first; if the cover is meant to take the tap, tap that element")
+        snap = self.driver.snapshot()
+        nodes = snap.get("nodes", []) if isinstance(snap, dict) else []
+        x, y, origin, how = tap_point(info, nodes)
         self.driver.tap(x, y)
-        return {"selector": selector, "x": x, "y": y, "rect": info["rect"], "origin": list(origin), "via": "selector"}
+        return {"selector": selector, "target": info["target"], "x": x, "y": y, "rect": info["rect"], "origin": origin, "via": "selector", **how}
 
-    def type_text(self, text, selector=None, enter=False, keep_keyboard=False):
+    def type_text(self, text, selector=None, enter=False, keep_keyboard=False, first=False):
         out = {}
         if selector:
-            out["tap"] = self.tap(selector=selector)
+            out["tap"] = self.tap(selector=selector, first=first)
             time.sleep(0.4)
+            focus = self.evaluate(FOCUS_JS, is_body=True, prelude=f"const __sel = {json.dumps(selector)};", idempotent=True)
+            if not focus.get("focused"):
+                raise IosimError(f"tapping {selector!r} did not focus it (focus is on {focus.get('active')}); nothing was typed",
+                                 "check the selector names the input itself, and that nothing covers it")
         self.driver.type_text(text)
         out["typed"] = len(text)
         if enter:
@@ -953,26 +1365,28 @@ class Session:
                 self.driver.keyboard("dismiss")
                 out["keyboard"] = "dismissed"
             except IosimError:
-                self.evaluate("(document.activeElement && document.activeElement.blur(), true)")
+                self.evaluate("(document.activeElement && document.activeElement.blur(), true)", idempotent=True)
                 out["keyboard"] = "blurred"
             time.sleep(0.4)
         return out
 
     def scroll(self, direction=None, amount=None, to=None):
         if to:
-            self.evaluate(f"(document.querySelector({json.dumps(to)}) || (() => {{ throw new Error('no element matches ' + {json.dumps(to)}) }})()).scrollIntoView({{block: 'center'}})")
+            self.evaluate(f"(document.querySelector({json.dumps(to)}) || (() => {{ throw new Error('no element matches ' + {json.dumps(to)}) }})()).scrollIntoView({{block: 'center'}})", idempotent=True)
             return {"to": to, "via": "scrollIntoView (programmatic, not a gesture)"}
         self.driver.scroll(direction or "down", amount)
         return {"direction": direction or "down", "amount": amount, "via": "agent-device gesture"}
 
     def audit(self, script=None, options=None):
+        """The built-in audit (a function body), or a project's script: an expression (for example an async IIFE, as
+        written for page.evaluate) or a function body that uses `return`, giving {findings: [...]} or an array."""
         options = options or {}
         if script:
             source = Path(script).read_text() if not isinstance(script, dict) else script["source"]
+            mode = "auto"
         else:
-            source = AUDIT_JS.read_text()
-        body = f"const __opts = {json.dumps(options)};\n" + source
-        result = self.evaluate(body, is_body=True, timeout=60)
+            source, mode = AUDIT_JS.read_text(), True
+        result = self.evaluate(source, is_body=mode, timeout=120, prelude=f"const __opts = {json.dumps(options)};")
         return normalize_audit(result)
 
 
@@ -980,14 +1394,20 @@ def normalize_audit(result):
     """Accept {findings: [...]} or a bare list from a project's audit script."""
     if isinstance(result, list):
         result = {"findings": result}
-    if not isinstance(result, dict):
-        raise IosimError("audit script must return {findings: [...]} or an array of findings")
+    if not isinstance(result, dict) or not isinstance(result.get("findings", []), list):
+        raise IosimError(f"an audit script must give {{findings: [...]}} or an array of findings, got {json.dumps(result)[:200]}",
+                         "end the script with an expression (or `return`) that gives an array; [] means the page passed")
     findings = []
     for f in result.get("findings") or []:
         if not isinstance(f, dict):
             f = {"message": str(f)}
         f.setdefault("severity", "fail")
         f.setdefault("rule", "custom")
+        # Scripts written for other runners name things differently: {rule, element, detail} is common.
+        if "message" not in f and "detail" in f:
+            f["message"] = str(f["detail"])
+        if "selector" not in f and "element" in f:
+            f["selector"] = f["element"]
         findings.append(f)
     result["findings"] = findings
     result["counts"] = {"fail": sum(f["severity"] == "fail" for f in findings), "warn": sum(f["severity"] == "warn" for f in findings)}
@@ -1148,14 +1568,15 @@ def parse_step(raw, index, base_dir="."):
     if kind == "open":
         if isinstance(v, str):
             v = {"url": v}
-        need(isinstance(v, dict) and isinstance(v.get("url"), str) and re.match(r"^[a-z]+://", v["url"] or ""), "needs a URL with a scheme, like \"http://host:3000/\"")
+        need(isinstance(v, dict) and isinstance(v.get("url"), str) and (re.match(r"^[a-z]+://", v["url"] or "") or v["url"] == "about:blank"),
+             "needs a URL with a scheme, like \"http://host:3000/\" (or about:blank)")
         step.update(url=v["url"], newTab=bool(v.get("newTab", False)))
     elif kind == "eval":
         if isinstance(v, str):
             v = {"js": v}
         need(isinstance(v, dict) and (isinstance(v.get("js"), str) or isinstance(v.get("file"), str)), "needs an expression string, {\"js\": ...} or {\"file\": ...}")
         if "file" in v:
-            step.update(source=_read_source(v["file"], base_dir, where), body=True, file=v["file"])
+            step.update(source=_read_source(v["file"], base_dir, where), body="auto", file=v["file"])
         else:
             step.update(source=v["js"], body=bool(v.get("body", False)))
     elif kind == "tap":
@@ -1165,11 +1586,19 @@ def parse_step(raw, index, base_dir="."):
         if "at" in v:
             need(isinstance(v["at"], list) and len(v["at"]) == 2 and all(isinstance(n, (int, float)) for n in v["at"]), "at is [x, y] in screen points")
         step.update({k: v[k] for k in ("selector", "label", "at") if k in v})
+        if v.get("first"):
+            need("selector" in v, "first goes with selector")
+            step["first"] = True
+        if v.get("contains"):
+            need("label" in v, "contains goes with label")
+            step["contains"] = True
     elif kind == "type":
         if isinstance(v, str):
             v = {"text": v}
         need(isinstance(v, dict) and isinstance(v.get("text"), str), "needs text")
         step.update(text=v["text"], selector=v.get("selector"), enter=bool(v.get("enter", False)), keepKeyboard=bool(v.get("keepKeyboard", False)))
+        if v.get("first"):
+            step["first"] = True
     elif kind == "wait":
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             v = {"ms": v}
@@ -1256,22 +1685,36 @@ def parse_vars(pairs):
 # ---------------------------------------------------------------- run
 
 
-def run_plan(plan, out_dir, device=None, agent_device=None, log=None):
+def meaningful_console_errors(messages):
+    """Console errors that say something about the page: a missing /favicon.ico is noise."""
+    return [m for m in messages or [] if not re.search(r"favicon\.ico", f"{m.get('url') or ''} {m.get('text') or ''}")]
+
+
+def _raise_terminated(signum, frame):
+    raise Terminated(f"signal {signum}")
+
+
+def run_plan(plan, out_dir, device=None, agent_device=None, log=None, session=None):
+    """Run a parsed plan. `passed` starts false and turns true only when every step ran to the end with no failure.
+    An interruption (Ctrl-C, SIGTERM) or a crash is recorded as a failure; the Text Size and appearance are restored
+    and report.json is written whatever happened, then the interruption propagates."""
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    session = Session(device or plan.get("device"), agent_device)
+    session = session or Session(device or plan.get("device"), agent_device)
     drv = session.driver
     udid = session.udid
     started = time.time()
     report = {
         "plan": plan["name"], "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "out": str(out),
         "device": {k: session.device[k] for k in ("name", "udid", "runtime")}, "driver": drv.describe(),
-        "steps": [], "shots": [], "audits": [], "console": [], "values": {}, "failures": [],
+        "steps": [], "shots": [], "audits": [], "console": [], "values": {}, "failures": [], "passed": False,
     }
     original = {"textSize": text_size_get(udid), "appearance": appearance_get(udid)}
     report["initial"] = dict(original)
     current = {"textSize": original["textSize"]}
     shot_no = [0]
+    completed = False
+    running = {"step": None}
 
     def say(msg):
         if log:
@@ -1285,6 +1728,11 @@ def run_plan(plan, out_dir, device=None, agent_device=None, log=None):
             entry["optional"] = True
         report["failures"].append(entry)
 
+    in_main = True
+    try:
+        old_term = signal.signal(signal.SIGTERM, _raise_terminated)
+    except ValueError:  # not the main thread (tests)
+        in_main, old_term = False, None
     video_path = None
     try:
         if plan.get("textSize"):
@@ -1296,7 +1744,9 @@ def run_plan(plan, out_dir, device=None, agent_device=None, log=None):
         for step in plan["steps"]:
             t0 = time.time()
             entry = {"step": step["index"] + 1, "kind": step["kind"], "name": step.get("name")}
+            running["step"] = entry["step"]
             say(f"step {entry['step']}: {step['kind']}")
+            stop = False
             try:
                 result = run_step(session, step, out, report, current, shot_no, plan, fail)
                 entry["ok"] = True
@@ -1305,46 +1755,70 @@ def run_plan(plan, out_dir, device=None, agent_device=None, log=None):
             except IosimError as e:
                 entry["ok"] = False
                 entry["error"] = str(e)
-                fail(step, str(e))
-                if not step.get("optional"):
-                    entry["ms"] = int((time.time() - t0) * 1000)
-                    report["steps"].append(entry)
-                    report["stoppedAt"] = entry["step"]
-                    break
+                fail(step, str(e), {"fix": e.fix} if e.fix else None)
+                stop = not step.get("optional")
+            except Exception as e:  # a bug or an unexpected file: the step failed, and so does the run
+                entry["ok"] = False
+                entry["error"] = f"{type(e).__name__}: {e}"
+                report["failures"].append({"step": entry["step"], "kind": "crash", "message": entry["error"]})
+                stop = True
             entry["ms"] = int((time.time() - t0) * 1000)
             report["steps"].append(entry)
+            if stop:
+                report["stoppedAt"] = entry["step"]
+                break
+        running["step"] = None
         # Errors since the last load, whatever the steps did.
         try:
             report["console"] = session.console(errors_only=True)
         except IosimError as e:
             report["consoleError"] = str(e)
-        if plan.get("failOnConsoleErrors") and report["console"]:
-            report["failures"].append({"step": None, "kind": "console", "message": f"{len(report['console'])} console error(s)"})
+        if plan.get("failOnConsoleErrors") and meaningful_console_errors(report["console"]):
+            report["failures"].append({"step": None, "kind": "console", "message": f"{len(meaningful_console_errors(report['console']))} console error(s)"})
+        completed = "stoppedAt" not in report
+    except BaseException as e:
+        kind = "interrupted" if isinstance(e, (KeyboardInterrupt, Terminated)) else "crash"
+        why = {KeyboardInterrupt: "interrupted (Ctrl-C)", Terminated: "terminated (SIGTERM)"}.get(type(e), f"{type(e).__name__}: {e}")
+        report["failures"].append({"step": running["step"], "kind": kind, "message": f"the run was {why}" if kind == "interrupted" else why})
+        report["interrupted" if kind == "interrupted" else "crashed"] = why
+        raise
     finally:
-        if video_path:
-            try:
-                report["video"] = drv.record_stop()
+        # Settle the device first (stop the recording, put settings back); a second Ctrl-C or SIGTERM must not cut
+        # that short. The contact sheet and the report come after.
+        if in_main:
+            old_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            if video_path:
                 try:
-                    report["contactSheet"] = contact_sheet(video_path, out / "contact-sheet.png", driver=drv)
-                except IosimError as e:
-                    report["contactSheet"] = {"error": str(e), "fix": e.fix}
-            except IosimError as e:
-                report["video"] = {"error": str(e)}
-        if plan.get("restore", True):
-            restored = {}
+                    report["video"] = drv.record_stop()
+                except Exception as e:
+                    report["video"] = {"error": str(e)}
+            if plan.get("restore", True):
+                restored = {}
+                try:
+                    if text_size_get(udid) != original["textSize"]:
+                        drv.set_text_size(original["textSize"])
+                        restored["textSize"] = original["textSize"]
+                    if original["appearance"] in ("light", "dark") and appearance_get(udid) != original["appearance"]:
+                        drv.set_appearance(original["appearance"])
+                        restored["appearance"] = original["appearance"]
+                except Exception as e:
+                    restored["error"] = str(e)
+                    report["failures"].append({"step": None, "kind": "restore", "message": f"could not restore the device: {e}"})
+                report["restored"] = restored
+        finally:
+            if in_main:
+                signal.signal(signal.SIGINT, old_int)
+                signal.signal(signal.SIGTERM, old_term)
+        if video_path and isinstance(report.get("video"), dict) and report["video"].get("exists") and "interrupted" not in report:
             try:
-                if text_size_get(udid) != original["textSize"]:
-                    drv.set_text_size(original["textSize"])
-                    restored["textSize"] = original["textSize"]
-                if original["appearance"] in ("light", "dark") and appearance_get(udid) != original["appearance"]:
-                    drv.set_appearance(original["appearance"])
-                    restored["appearance"] = original["appearance"]
-            except IosimError as e:
-                restored["error"] = str(e)
-            report["restored"] = restored
+                report["contactSheet"] = contact_sheet(video_path, out / "contact-sheet.png", driver=drv)
+            except Exception as e:
+                report["contactSheet"] = {"error": str(e), "fix": getattr(e, "fix", None)}
         report["seconds"] = round(time.time() - started, 1)
-        report["passed"] = not [f for f in report["failures"] if not f.get("optional")]
-        (out / "report.json").write_text(json.dumps(report, indent=2))
+        report["passed"] = completed and not [f for f in report["failures"] if not f.get("optional")]
+        (out / "report.json").write_text(json.dumps(report, indent=2, default=str))
     return report
 
 
@@ -1360,9 +1834,11 @@ def run_step(session, step, out, report, current, shot_no, plan, fail):
             report["values"][step["as"]] = value
         return {"value": value}
     if kind == "tap":
-        return session.tap(selector=step.get("selector"), label=step.get("label"), at=step.get("at"))
+        return session.tap(selector=step.get("selector"), label=step.get("label"), at=step.get("at"),
+                           first=step.get("first", False), contains=step.get("contains", False))
     if kind == "type":
-        return session.type_text(step["text"], selector=step.get("selector"), enter=step["enter"], keep_keyboard=step["keepKeyboard"])
+        return session.type_text(step["text"], selector=step.get("selector"), enter=step["enter"], keep_keyboard=step["keepKeyboard"],
+                                 first=step.get("first", False))
     if kind == "wait":
         return session.wait(selector=step.get("selector"), text=step.get("text"), js=step.get("js"), ms=step.get("ms"), timeout=timeout or 15)
     if kind == "shot":
@@ -1392,7 +1868,7 @@ def run_step(session, step, out, report, current, shot_no, plan, fail):
     if kind == "assert":
         check, value = step["check"], step["value"]
         if check == "noConsoleErrors":
-            errors = session.console(errors_only=True)
+            errors = meaningful_console_errors(session.console(errors_only=True))
             ok = not errors if value else True
             detail = errors
         elif check == "js":
@@ -1429,7 +1905,30 @@ def run_step(session, step, out, report, current, shot_no, plan, fail):
 # ---------------------------------------------------------------- doctor
 
 
-def doctor(agent_device=None):
+def claims_from_devices(data):
+    """{udid: session} for simulators an agent-device `devices --json` answer says are claimed."""
+    devices = (data or {}).get("devices", []) if isinstance(data, dict) else []
+    return {d.get("id"): (d.get("claimedBy") or {}).get("session") for d in devices if isinstance(d, dict) and d.get("claimedBy")}
+
+
+def session_check(driver, claims):
+    """(ok, detail, fix) for whether `driver` can act on its simulator: who claims it, and, for a given command, which
+    simulator that command drives (checked by opening Safari through it, as every device action does first)."""
+    udid = driver.udid
+    claimed = claims.get(udid)
+    if driver.mode == "agent-device (PATH)":
+        own = f"iosim-{udid}"
+        if claimed and claimed != own:
+            return False, f"claimed by agent-device session {claimed!r}, not iosim's {own!r}", in_use_fix(claimed, driver.command_text())
+        return True, f"free for session {own!r}" if not claimed else f"held by iosim's session {own!r}", None
+    try:
+        driver.ensure_session()
+    except IosimError as e:
+        return False, str(e), e.fix
+    return True, f"the given command drives {udid} as session {driver.session_name!r}", None
+
+
+def doctor(agent_device=None, device=None):
     checks = []
 
     def add(name, ok, detail, fix=None, required=True):
@@ -1471,6 +1970,22 @@ def doctor(agent_device=None):
     ad = given or which("agent-device")
     add("agent-device", bool(ad), (f"given: {given}" if given else ad) if ad else "missing: tap, type and scroll need it; screenshots, video and settings fall back to simctl",
         f"inside T3 pass the command device_open returned (--agent-device or IOSIM_AGENT_DEVICE); elsewhere {AGENT_DEVICE_INSTALL}", required=False)
+    if ad:
+        target = None
+        try:
+            target = booted_device(device)
+        except IosimError:
+            pass
+        if target:
+            drv = Driver(target["udid"], given or "")
+            claims = {}
+            try:
+                claims = claims_from_devices(drv.ad_run("devices", timeout=60, ad=shlex.split(given) if given else [ad]))
+            except IosimError:
+                pass
+            ok, detail, fix = session_check(drv, claims)
+            # Device actions fail while another session holds the simulator: required.
+            add("agent-device session", ok, f"{target['name']}: {detail}", fix)
     node = which("node")
     nv = run_cmd([node, "--version"], check=False).stdout.strip() if node else None
     add("node", bool(node), nv or "missing (a standalone agent-device needs Node)", "install Node 22+", required=False)
@@ -1486,28 +2001,54 @@ def remote_iosim():
     return os.environ.get("IOSIM_REMOTE_IOSIM", "~/.agents/skills/ios-sim/scripts/iosim")
 
 
-def remote_call(args, stdin_text=None):
+def split_global_flags(argv):
+    """Pull iosim's global flags off a command line: (rest, device). --agent-device names a command on this box, so it
+    is dropped when forwarding; --device travels as IOSIM_DEVICE."""
+    rest, device, i = [], None, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--device", "--agent-device") and i + 1 < len(argv) and not rest:
+            if a == "--device":
+                device = argv[i + 1]
+            i += 2
+            continue
+        if (a.startswith("--device=") or a.startswith("--agent-device=")) and not rest:
+            if a.startswith("--device="):
+                device = a.split("=", 1)[1]
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+    return rest, device
+
+
+def remote_call(args, stdin_text=None, device=None):
     host = os.environ.get("IOSIM_REMOTE")
     if not host:
         raise IosimError("IOSIM_REMOTE is not set", "export IOSIM_REMOTE=<ssh destination of the Mac with the Simulator>", code=2)
     ssh = which("ssh") or "ssh"
-    env = " ".join(f"{k}={shlex.quote(v)}" for k, v in os.environ.items() if k in ("IOSIM_DEVICE", "IOSIM_PROXY_PORT"))
+    forwarded = {k: v for k, v in os.environ.items() if k in ("IOSIM_DEVICE", "IOSIM_PROXY_PORT")}
+    if device:
+        forwarded["IOSIM_DEVICE"] = device
+    env = " ".join(f"{k}={shlex.quote(v)}" for k, v in forwarded.items())
     command = f"{env} {remote_iosim()} {' '.join(shlex.quote(a) for a in args)}".strip()
     return subprocess.run([ssh, "-o", "BatchMode=yes", host, command], input=stdin_text, text=True, capture_output=True)
 
 
-def remote_run(plan, out_dir):
+def remote_run(plan, out_dir, device=None):
     """Send a resolved plan over SSH, run it on the Mac, copy the evidence folder back, remove the remote copy."""
     run_id = f"iosim-runs/{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     payload = json.dumps(dict(plan, iosimResolvedPlan=1))
-    proc = remote_call(["run", "-", "--out", run_id], stdin_text=payload)
+    proc = remote_call(["run", "-", "--out", run_id], stdin_text=payload, device=device)
     host = os.environ["IOSIM_REMOTE"]
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     scp = subprocess.run([which("scp") or "scp", "-o", "BatchMode=yes", "-r", f"{host}:{run_id}/.", str(out)], capture_output=True, text=True)
     subprocess.run([which("ssh") or "ssh", "-o", "BatchMode=yes", host, f"rm -rf {shlex.quote(run_id)}"], capture_output=True)
     if scp.returncode != 0:
-        raise IosimError(f"copying evidence back failed: {scp.stderr.strip()[:300]}", "check scp works to the Mac")
+        remote_said = (proc.stdout.strip() or proc.stderr.strip())[-600:]
+        raise IosimError(f"copying evidence back failed: {scp.stderr.strip()[:300]}; the remote run exited {proc.returncode}"
+                         + (f" and said: {remote_said}" if remote_said else ""), "check scp works to the Mac, and read the remote error above")
     return proc
 
 
@@ -1544,7 +2085,7 @@ def build_parser():
     a.add_argument("mode", nargs="?", choices=["light", "dark"])
 
     o = sub.add_parser("open", help="open a URL in Safari and wait for load")
-    o.add_argument("url")
+    o.add_argument("url", help="http(s) URL; about:blank blanks the current tab")
     o.add_argument("--new-tab", action="store_true", help="open through the device instead of navigating the current tab")
     o.add_argument("--no-wait", action="store_true")
     o.add_argument("--timeout", type=float, default=45)
@@ -1553,7 +2094,7 @@ def build_parser():
 
     ev = sub.add_parser("eval", help="evaluate JavaScript in the page; awaits promises; prints the JSON value")
     ev.add_argument("expression", nargs="?")
-    ev.add_argument("--file", help="file holding a function body that uses `return`")
+    ev.add_argument("--file", help="file holding an expression or a function body that uses `return`")
     ev.add_argument("--body", action="store_true", help="treat the expression as a function body (statements and `return`)")
     ev.add_argument("--timeout", type=float, default=30)
 
@@ -1570,13 +2111,16 @@ def build_parser():
 
     tp = sub.add_parser("tap", help="real tap (agent-device) on a CSS selector, an accessibility label, or screen points")
     tg = tp.add_mutually_exclusive_group(required=True)
-    tg.add_argument("--selector")
-    tg.add_argument("--label")
-    tg.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"))
+    tg.add_argument("--selector", help="CSS selector of one element; fails when it matches several (see --first) or something covers it")
+    tg.add_argument("--label", help="the element's exact accessibility label (as agent-device snapshot shows it); see --contains")
+    tg.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="screen points")
+    tp.add_argument("--first", action="store_true", help="with --selector: tap the first match when several match")
+    tp.add_argument("--contains", action="store_true", help="with --label: match a label containing the text (case-insensitive); must be one element")
 
     ty = sub.add_parser("type", help="type text with the keyboard (agent-device); --selector taps the field first")
     ty.add_argument("text")
-    ty.add_argument("--selector")
+    ty.add_argument("--selector", help="tap this field first and check it got focus")
+    ty.add_argument("--first", action="store_true", help="with --selector: use the first match when several match")
     ty.add_argument("--enter", action="store_true", help="press return after typing (submits most forms)")
     ty.add_argument("--keep-keyboard", action="store_true", help="leave the keyboard up (default: dismiss it)")
 
@@ -1602,7 +2146,7 @@ def build_parser():
     sheet.add_argument("--frames", type=int, default=12)
 
     au = sub.add_parser("audit", help="generic mobile page audit (or --script yours); exit 1 on fail findings")
-    au.add_argument("--script", help="JS file: a function body returning {findings: [...]}")
+    au.add_argument("--script", help="JS file: an expression (an async IIFE works) or a function body using return, giving an array of findings or {findings: [...]}")
     au.add_argument("--min-target", type=float, default=44)
     au.add_argument("--min-input-font", type=float, default=16)
     au.add_argument("--warn-only", action="store_true", help="exit 0 even with fail findings")
@@ -1616,7 +2160,8 @@ def build_parser():
     px = sub.add_parser("proxy", help="start | stop | restart | status of this device's ios_webkit_debug_proxy")
     px.add_argument("action", choices=["start", "stop", "restart", "status"])
 
-    sub.add_parser("cleanup", help="stop this device's proxy and any recording iosim started")
+    cl = sub.add_parser("cleanup", help="stop this device's proxy and any recording iosim started, and close iosim's agent-device session")
+    cl.add_argument("--keep-session", action="store_true", help="leave the agent-device session open")
 
     rm = sub.add_parser("remote", help="run an iosim command on the Mac named by IOSIM_REMOTE over SSH")
     rm.add_argument("args", nargs=argparse.REMAINDER)
@@ -1644,15 +2189,19 @@ def load_plan_arg(path, variables):
 def dispatch(args):
     cmd = args.cmd
     if cmd == "doctor":
-        checks = doctor(args.agent_device)
+        checks = doctor(args.agent_device, args.device)
         ok = all(c["ok"] for c in checks if c["required"])
         return {"ok": ok, "checks": checks}, 0 if ok else 1
     if cmd == "remote":
         rest = args.args[1:] if args.args[:1] == ["--"] else args.args
+        rest, device = split_global_flags(rest)
+        device = device or args.device
         if rest[:1] == ["run"] and len(rest) >= 2 and rest[1] != "-":
             rp = build_parser().parse_args(rest)
             plan = load_plan_arg(rp.plan, parse_vars(rp.var))
-            proc = remote_run(plan, rp.out)
+            if rp.check:
+                return {"ok": True, "plan": plan}, 0
+            proc = remote_run(plan, rp.out, device=device)
             sys.stderr.write(proc.stderr)
             try:
                 report = json.loads(proc.stdout)
@@ -1660,14 +2209,14 @@ def dispatch(args):
                 report = {"ok": False, "error": "remote run printed no JSON", "stdout": proc.stdout[-1000:]}
             report["localOut"] = str(Path(rp.out).resolve())
             return report, proc.returncode
-        proc = remote_call(rest)
+        proc = remote_call(rest, device=device)
         sys.stderr.write(proc.stderr)
         sys.stdout.write(proc.stdout)
         return None, proc.returncode
     if not have_simctl():
         if os.environ.get("IOSIM_REMOTE"):
             # Forward to the Mac. Paths in the command are the Mac's.
-            return dispatch(argparse.Namespace(cmd="remote", args=sys.argv[1:], agent_device=None))
+            return dispatch(argparse.Namespace(cmd="remote", args=sys.argv[1:], agent_device=None, device=None))
         raise IosimError("no iOS Simulator on this box", "run `iosim doctor` for the remote options (T3 delegation or IOSIM_REMOTE over SSH)")
 
     if cmd == "device":
@@ -1723,8 +2272,19 @@ def dispatch(args):
         return {"ok": True, "proxy": proxy_ensure(udid)}, 0
     if cmd == "cleanup":
         out = {"ok": True, "proxyStopped": proxy_stop(udid)}
+        drv = Driver(udid, args.agent_device)
         if read_state(f"record-{udid}.json"):
-            out["recording"] = Driver(udid, args.agent_device).record_stop()
+            try:
+                out["recording"] = drv.record_stop()
+            except IosimError as e:
+                out["recording"] = {"error": str(e)}
+        if args.keep_session:
+            out["agentDevice"] = {"closed": False, "why": "--keep-session"}
+        else:
+            # Only the session of the command in use: the given one (its own bound session) or iosim-<udid>.
+            out["agentDevice"] = drv.close()
+        if drv.mode == "agent-device (given)":
+            out["next"] = "inside T3, also call device_close for this device"
         return out, 0
     drv = Driver(udid, args.agent_device)
     if cmd == "text-size":
@@ -1753,7 +2313,7 @@ def dispatch(args):
         return {"ok": True, **session.open(args.url, new_tab=args.new_tab, wait=not args.no_wait, timeout=args.timeout)}, 0
     if cmd == "eval":
         if args.file:
-            source, body = Path(args.file).read_text(), True
+            source, body = Path(args.file).read_text(), "auto"
         elif args.expression is not None:
             source, body = args.expression, args.body
         else:
@@ -1764,9 +2324,11 @@ def dispatch(args):
     if cmd == "wait":
         return {"ok": True, **session.wait(args.selector, args.text, args.js, args.ms, args.timeout)}, 0
     if cmd == "tap":
-        return {"ok": True, **session.tap(selector=args.selector, label=args.label, at=args.at)}, 0
+        if args.first and not args.selector or args.contains and args.label is None:
+            raise IosimError("--first goes with --selector, --contains with --label", code=2)
+        return {"ok": True, **session.tap(selector=args.selector, label=args.label, at=args.at, first=args.first, contains=args.contains)}, 0
     if cmd == "type":
-        return {"ok": True, **session.type_text(args.text, args.selector, args.enter, args.keep_keyboard)}, 0
+        return {"ok": True, **session.type_text(args.text, args.selector, args.enter, args.keep_keyboard, first=args.first)}, 0
     if cmd == "scroll":
         if not args.direction and not args.to:
             raise IosimError("scroll needs a direction or --to", code=2)
@@ -1790,7 +2352,11 @@ def main(argv=None):
         emit({"ok": False, "error": str(e), **({"fix": e.fix} if e.fix else {})})
         return e.code
     except KeyboardInterrupt:
+        emit({"ok": False, "error": "interrupted (Ctrl-C)"})
         return 130
+    except Terminated:
+        emit({"ok": False, "error": "terminated (SIGTERM)"})
+        return 143
     if result is not None:
         emit(result)
     return code

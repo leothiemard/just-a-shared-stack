@@ -4,7 +4,7 @@ The Simulator runs on one Mac. Every other box reaches it in one of two ways, an
 
 | Path | Works when | Evidence comes back as |
 | --- | --- | --- |
-| T3 delegation to the Mac's environment | the caller is a T3 thread whose environment is linked to the Mac (works with no extra setting) | the child's final message: verdict, failures and what each screenshot shows. Files stay on the Mac unless the caller names an `scp` destination. |
+| T3 delegation to the Mac's environment | the caller is a T3 thread whose environment is linked to the Mac (needs no extra setting; designed for, not yet exercised from another box) | the child's final message: verdict, failures and what each screenshot shows. Files stay on the Mac unless the caller names an `scp` destination. |
 | SSH: `iosim remote …` | the Mac has Remote Login or Tailscale SSH on, and the caller's key is authorized (off by default; turning it on is the Mac owner's decision) | the evidence folder copied to the caller's `--out` |
 
 ## Make the dev server reachable from the Simulator
@@ -18,7 +18,7 @@ The Simulator's Safari uses the Mac's network. A URL that works in `curl` on the
 
 Cookies marked `Secure`, service workers and some APIs need HTTPS or `localhost`. A plain-HTTP Tailscale name is not a secure context, so test those through the `localhost` forward or an HTTPS URL (for example `tailscale serve`).
 
-## T3 delegation (works today)
+## T3 delegation (designed for; not yet exercised from another box)
 
 1. Find the Mac with `t3_environment_links` and note its `environmentId`.
 2. Pick a project on the Mac for the child to run in. Any project works, because the child only needs the skill. Call `orchestrator_capabilities` once, then `delegate_task` with `target.environmentId` (and `target.projectId` when T3 asks for one).
@@ -40,7 +40,7 @@ Evidence: keep it in <~/iosim-evidence/<project>/<date-label>> on this Mac<; the
 
 Inside T3, open the device with device_list and device_open, and export IOSIM_AGENT_DEVICE=<the command device_open returned> before running iosim.
 Look at every screenshot and the contact sheet yourself.
-Report back: pass or fail; each failure from report.json; the audit counts per Text Size; one line per screenshot saying what it shows; the console errors; the evidence path (and the scp result). Run `iosim cleanup` before you finish.
+Report back: pass or fail; each failure from report.json; the audit counts per Text Size; one line per screenshot saying what it shows; the console errors; the evidence path (and the scp result). Before you finish, run `iosim cleanup`, then device_close.
 ```
 
 ### Open points
@@ -61,6 +61,6 @@ export IOSIM_REMOTE_IOSIM=<path to iosim on the Mac>     # default ~/.agents/ski
 - `iosim remote run plan.json --out ./evidence --var BASE=http://<dev-box>:3000` resolves the plan locally: it fills in variables and inlines `eval.file` and `audit.script` files. It sends the plan on stdin, runs it in `~/iosim-runs/<id>` on the Mac, copies that folder into `./evidence` with `scp -r`, deletes the remote copy, and exits with the run's exit code.
 - `iosim remote <any command>` runs that command on the Mac and prints its JSON. Paths in those arguments are the Mac's.
 - On a box with no Simulator and `IOSIM_REMOTE` set, any plain `iosim <command>` is forwarded the same way.
-- `IOSIM_DEVICE` and `IOSIM_PROXY_PORT` are forwarded. iosim runs non-interactively: `BatchMode=yes`, JSON on stdout, and no prompts. It finds Homebrew tools even when a non-interactive SSH login leaves `/opt/homebrew/bin` off PATH.
+- `IOSIM_DEVICE` and `IOSIM_PROXY_PORT` are forwarded, and so is `--device` (as `IOSIM_DEVICE`). `--agent-device` names a command on the calling box, so it is not forwarded. A forwarded `run plan.json` is resolved locally first, like `remote run`. When copying the evidence back fails, the error includes what the remote run said. iosim runs non-interactively: `BatchMode=yes`, JSON on stdout, and no prompts. It finds Homebrew tools even when a non-interactive SSH login leaves `/opt/homebrew/bin` off PATH.
 - Over SSH there is no T3 Device panel. iosim uses the Mac's `agent-device` from PATH (taps and typing), else `simctl`.
 - The unit tests exercise this path with stand-in `ssh` and `scp`. It has not been run against a real Mac, because Remote Login is off on the Mac this was built on.

@@ -17,9 +17,10 @@ Every command prints one JSON object with `ok`, and on failure `error` and `fix`
 
 Run `$IOSIM doctor`. The answer decides the path:
 
-- **`simulator` check fails** (Linux, or a Mac without Xcode): this box is not the Mac. Follow [references/remote.md](references/remote.md). It covers delegating to the Mac's T3 environment (works today) and SSH (needs Remote Login), and how the Simulator reaches your dev server.
+- **`simulator` check fails** (Linux, or a Mac without Xcode): this box is not the Mac. Follow [references/remote.md](references/remote.md). It covers delegating to the Mac's T3 environment (designed for this; not yet exercised from another box) and SSH (needs Remote Login), and how the Simulator reaches your dev server.
 - **A required check fails**: apply its `fix`, then rerun `doctor`.
 - **`ok: true`**: you are on the Mac. The optional checks only limit features: without `agent-device` there are no taps, typing or swipes; without `ffmpeg` contact sheets come from agent-device.
+- **`agent-device session` fails**: another agent-device session holds the simulator. The check names the session. Close it only if it is yours (see its `fix`); otherwise wait or ask the user. With a given command, this check opens Safari through it.
 
 ## 2. Bind the device (inside T3 Code)
 
@@ -29,11 +30,11 @@ Inside T3, every app launch, tap, text entry, screenshot, recording and setting 
 export IOSIM_AGENT_DEVICE="<the agent-device path device_open returned>"
 ```
 
-iosim then uses that command for those actions, and uses the Web Inspector (not a device action) for JavaScript. Outside T3, iosim adds `--platform ios --udid <udid>` to an `agent-device` on PATH, or falls back to `simctl` for opening URLs, screenshots, video and settings. Taps and typing need agent-device.
+iosim then uses that command for those actions, and uses the Web Inspector (not a device action) for JavaScript. Before the first device action it checks that the command drives the simulator iosim resolved, and refuses when it drives another one or does not say which. Outside T3, iosim adds `--platform ios --udid <udid> --session iosim-<udid>` to an `agent-device` on PATH, or falls back to `simctl` for opening URLs, screenshots, video and settings. Taps and typing need agent-device.
 
 ## 3. Test the page
 
-1. Pick the device. `$IOSIM device ensure` finds or creates an iPhone 15 and boots it. Pass `--device <udid|name>` (or set `IOSIM_DEVICE`) when several are booted.
+1. Pick the device. `$IOSIM device ensure` finds or creates an iPhone 15 and boots it. Without `--name` it reuses any iPhone 15, booted ones first, which may be a simulator another agent is using: pass `--name "<a name of your own>"` to get one of your own. Pass `--device <udid|name>` (or set `IOSIM_DEVICE`) when several are booted.
 2. Make the URL reachable from the Mac. On the Mac itself, `http://localhost:<port>` works. For a server on another box, see remote.md.
 3. Write a plan and run it. The format is in [references/plan.md](references/plan.md).
 
@@ -41,18 +42,18 @@ iosim then uses that command for those actions, and uses the Web Inspector (not 
    $IOSIM run plan.json --out <evidence-dir> --var BASE=http://localhost:3000
    ```
 
-   The run writes numbered screenshots, `video.mp4`, `contact-sheet.png` and `report.json` to the evidence folder. It exits 1 when an assertion, an audit or a step fails. It restores the Text Size and appearance it changed.
-4. For one-off checks, single commands work on the same page: `open`, `eval`, `console`, `tap`, `type`, `scroll`, `shot`, `audit`.
+   The run writes numbered screenshots, `video.mp4`, `contact-sheet.png` and `report.json` to the evidence folder. It exits 1 when an assertion, an audit or a step fails. `passed` is true only when every step ran and nothing failed: a crash, Ctrl-C or SIGTERM (a harness timeout) leaves `passed: false` with the reason in `failures`. However the run ends, short of SIGKILL, it stops its recording, puts back the Text Size and appearance it changed, and writes `report.json`.
+4. For one-off checks, single commands work on the same page: `open`, `eval`, `console`, `tap`, `type`, `scroll`, `shot`, `audit`. `open` fails when Safari shows its own error page (a server that is down), so a green `open` means the page loaded.
 
 ## 4. Check the evidence
 
 A green report proves only what its assertions and audits test. To judge how the page looks, read the PNGs and the contact sheet with your image viewer. Confirm that each one shows Safari with the expected page, and that text is larger in the accessibility-size shots. `report.json` → `shots[]` already flags a wrong size or a blank frame. `audits[]` lists each finding with a selector and a rect. `console` lists errors and uncaught exceptions since the last page load.
 
-The built-in audit fails on sideways scroll, tap targets under 44 x 44 pt, text inputs under 16 px (iOS zooms the page when one gets focus) and a missing `width=device-width`. It warns about small inline links, tiny text, controls with no accessible name, images without alt, and blocked pinch zoom. A project can pass its own audit script, described in plan.md.
+The built-in audit fails on sideways scroll, tap targets under 44 x 44 CSS px (points at zoom 1), text inputs under 16 px (iOS zooms the page when one gets focus) and a missing `width=device-width`. It warns about small inline links, tiny text, controls with no accessible name, images without alt, and blocked pinch zoom. A project can pass its own audit script, unchanged if it was written for Playwright's `page.evaluate`: plan.md lists the accepted shapes.
 
 ## Real input versus JavaScript
 
-Use `tap` and `type` (real touches and keyboard through agent-device) whenever the behaviour under test depends on the input. A JavaScript `el.click()` or `el.value = ...` is not a substitute when:
+Use `tap` and `type` (real touches and keyboard through agent-device) whenever the behaviour under test depends on the input. `tap --selector` refuses a selector that matches several elements (add `--first` to take the first), and an element whose centre something else covers (it names the cover). `type --selector` checks the field got focus before typing. `tap --label` needs the exact accessibility label; `--contains` matches part of it. A JavaScript `el.click()` or `el.value = ...` is not a substitute when:
 
 - the page listens for touch or pointer events, or for `:active` and hover states;
 - something covers the element: a real tap hits the overlay, `click()` does not;
@@ -74,4 +75,7 @@ Text Size (Dynamic Type) changes text only where the page uses `font: -apple-sys
 
 ## Finish
 
-Run `$IOSIM cleanup`. It stops this device's inspector proxy and any recording iosim started. Leave the simulator booted unless you booted it only for this task (`$IOSIM device shutdown`). Report the evidence folder path, the failures, and what you saw in the screenshots.
+1. Run `$IOSIM cleanup`. It stops this device's inspector proxy and any recording iosim started, and closes the agent-device session iosim used: the given command's own session (`<command> close`), or `iosim-<udid>`. It never closes another session.
+2. Inside T3, then call `device_close` for the device. A session left open locks the simulator for the next agent ("Device is already in use").
+3. Leave the simulator booted unless you booted it only for this task (`$IOSIM device shutdown`).
+4. Report the evidence folder path, the failures, and what you saw in the screenshots.
