@@ -24,6 +24,7 @@ You are the watcher: a thread that keeps other threads working until the deadlin
 | `could not send a message` | The harness is down or the thread is gone. Check that T3 Code is running; this needs the owner if it is not. The watch keeps trying. |
 | `the T3 store cannot be read` | T3 Code is updating, or an update changed its store. If it lasts, `jass` needs an update: tell the owner; until then read threads yourself. |
 | `the watch hit an error` | A bug in the watch; it goes on. Put the line in the report. |
+| `every poll has failed since` | The watch is running but sees nothing. Check the lanes yourself with `jass night status` or by reading the threads until the deadline, and put the error in the report. |
 | `<box> stopped answering` | That box is asleep, off or cut off, and nothing here can wake it. Note the time for the report. |
 
 ## Two rules that cost a night when broken

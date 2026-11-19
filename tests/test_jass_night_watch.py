@@ -400,6 +400,13 @@ class WatchTests(Sandbox):
         self.tick(w, times=3)
         self.assertEqual(w.alerts, 2)
         self.assertIn("waits for the owner: command", self.logged("ALERT")[1])
+        self.store.answer("asks")
+        self.store.request("asks", "command")  # answered and asked again between two polls, or while no watch ran
+        again = self.watch("asks", state=w.state)
+        self.tick(again, times=3)
+        self.assertEqual(again.alerts, 1)  # a new request, so an alert, even in a watch started again
+        self.tick(self.watch("asks", state=w.state), times=3)
+        self.assertEqual(len(self.logged("ALERT")), 3)  # and the same request is not said twice
 
     def test_working_delegated_and_background_threads_are_left_alone(self):
         self.lane("busy", "running")
@@ -611,6 +618,16 @@ class CommandTests(Sandbox):
         self.assertIn("ALERT  this box: the watch hit an error and goes on: RuntimeError('boom')", out)
         self.assertIn("stop   interrupted or told to stop", out)
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    @unittest.skipUnless(os.path.exists("/dev/full"), "needs /dev/full")
+    def test_a_log_on_a_full_disk_keeps_the_exit_code(self):
+        self.store.request("a", "user_input")
+        with mock.patch.object(watch.Box, "online", return_value=True), mock.patch.object(watch.Box, "available_mb", return_value=9000), \
+                mock.patch.object(watch.Box, "sleep", lambda self, seconds: None):
+            code, out, err = self.jass("night", "watch", "--thread", "Lane A", "--wake", "--log", "/dev/full")
+        self.assertEqual(code, 3)
+        self.assertIn("ALERT  Lane A: waits for the owner", out)
+        self.assertEqual(err.count("cannot write its log"), 1)
 
     def test_a_log_or_state_file_that_cannot_be_written_does_not_end_the_watch(self):
         self.store.request("a", "user_input")

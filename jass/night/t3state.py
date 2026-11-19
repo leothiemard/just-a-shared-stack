@@ -22,6 +22,7 @@ as in `jass.sessions.t3`.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import re
 import sqlite3
@@ -34,10 +35,10 @@ T = t3.T
 PINNED = {
     f"{T}threads": ("thread_id", "title", "updated_at", "archived_at", "deleted_at", "payload_json", "provider_instance_id", "active_provider_thread_id"),
     f"{T}runs": ("run_id", "thread_id", "ordinal", "status", "requested_at", "completed_at"),
-    f"{T}turn_items": ("thread_id", "run_id", "type", "status", "updated_at", "payload_json"),
+    f"{T}turn_items": ("turn_item_id", "thread_id", "run_id", "type", "status", "updated_at", "payload_json"),
     f"{T}subagents": ("thread_id", "child_thread_id", "status"),
     f"{T}provider_threads": ("provider_thread_id", "payload_json"),
-    f"{T}runtime_requests": ("thread_id", "kind", "status"),
+    f"{T}runtime_requests": ("runtime_request_id", "thread_id", "kind", "status"),
 }
 GOING = ("running", "starting", "preparing", "waiting")  # T3's own test for an active run
 AUTH_WORDS = ("authenticat", "unauthorized", "not logged in", "log in again", "sign in again")
@@ -124,7 +125,9 @@ def loads(text) -> dict:
 
 
 def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
-    """One dict per top-level thread that is not archived or deleted: id, title, state, detail, failure, reset, since, run, provider."""
+    """One dict per top-level thread that is not archived or deleted: id, title, state, detail, failure, reset, since, run, provider, asks.
+
+    `asks` names the set of requests that wait for the owner, so a new request is told from one already seen."""
     out = []
     with opened(store) as conn:
         rows = conn.execute(
@@ -137,10 +140,12 @@ def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
                 continue
             runs = conn.execute(f"SELECT ordinal, status, requested_at, completed_at, run_id FROM {T}runs WHERE thread_id = ? ORDER BY ordinal", (thread_id,)).fetchall()
             (children,) = conn.execute(f"SELECT count(*) FROM {T}subagents WHERE thread_id = ? AND status IN {GOING}", (thread_id,)).fetchone()
-            requests = [kind for kind, in conn.execute(f"SELECT kind FROM {T}runtime_requests WHERE thread_id = ? AND status = 'pending'", (thread_id,))]
-            requests += ["secret" for _ in conn.execute(
-                f"SELECT 1 FROM {T}turn_items WHERE thread_id = ? AND type = 'secret_request' AND json_extract(payload_json, '$.secretStatus') = 'pending'", (thread_id,))]
-            requests += ["link" for _ in conn.execute(f"SELECT 1 FROM {T}turn_items WHERE thread_id = ? AND type = 'link_request' AND status = 'waiting'", (thread_id,))]
+            asked = conn.execute(f"SELECT kind, runtime_request_id FROM {T}runtime_requests WHERE thread_id = ? AND status = 'pending'", (thread_id,)).fetchall()
+            asked += conn.execute(f"SELECT 'secret', turn_item_id FROM {T}turn_items WHERE thread_id = ? AND type = 'secret_request'"
+                                  f" AND json_extract(payload_json, '$.secretStatus') = 'pending'", (thread_id,)).fetchall()
+            asked += conn.execute(f"SELECT 'link', turn_item_id FROM {T}turn_items WHERE thread_id = ? AND type = 'link_request' AND status = 'waiting'", (thread_id,)).fetchall()
+            requests = [kind for kind, _ in asked]
+            asks = hashlib.sha1("\n".join(sorted(str(request_id) for _, request_id in asked)).encode()).hexdigest()[:12] if asked else ""
             pending = conn.execute(f"SELECT payload_json FROM {T}provider_threads WHERE provider_thread_id = ?", (provider_thread,)).fetchone()
             tasks = loads(pending[0]).get("pendingBackgroundTasks") if pending else None
             background = [str(task.get("kind") or "task").replace("_", " ") for task in tasks or [] if isinstance(task, dict)]
@@ -153,7 +158,7 @@ def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
                 failure = loads(found[0]) if found else {}
             state, detail = classify([(run[0], run[1]) for run in runs], children, background, requests, failure)
             since = (last[-1][3] or last[-1][2]) if last else ""
-            out.append({"id": thread_id, "title": title or "", "state": state, "detail": detail, "since": since or "", "run": runs[-1][0] if runs else 0, "provider": provider or "",
+            out.append({"id": thread_id, "title": title or "", "state": state, "detail": detail, "since": since or "", "run": runs[-1][0] if runs else 0, "provider": provider or "", "asks": asks,
                         "failure": failure_kind(failure) if state == "failed" else "", "reset": str(failure.get("resetAt") or "") if state == "failed" else ""})
     return out
 

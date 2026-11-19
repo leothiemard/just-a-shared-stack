@@ -266,16 +266,16 @@ class Watch:
                 self.clear(thread["id"], "blocked")  # its request was answered: the next one is news again
             if state in FINE:
                 continue
-            if state == "blocked":
-                self.alert(thread["id"], key, f"{thread['detail']}. Nothing here can answer it")
+            if state == "blocked":  # keyed by the requests themselves: a new one is news even in the same run
+                self.alert(thread["id"], f"blocked#{thread.get('asks') or thread['run']}", f"{thread['detail']}. Nothing here can answer it")
             elif state == "stopped":
                 self.alert(thread["id"], key, f"{thread['detail']}; left alone, a person or another agent stopped it")
             elif state in ("failed", "stuck") and held >= self.settle:
-                self.failed(thread, now, held, online, available)
+                self.failed(thread, now, online, available)
             elif state == "ended" and held >= self.idle:
                 self.ended(thread, now)
 
-    def failed(self, thread: dict, now: dt.datetime, held: dt.timedelta, online: bool, available: int | None) -> None:
+    def failed(self, thread: dict, now: dt.datetime, online: bool, available: int | None) -> None:
         kind = "stuck" if thread["state"] == "stuck" else thread["failure"] or "other"
         run = thread["run"]
         if not self.resume:
@@ -286,7 +286,7 @@ class Watch:
             reset = moment(thread["reset"]) if thread["reset"] else None
             grace = self.limit_grace if self.t3_resumes else self.settle
             if reset and now >= reset + grace and not online:
-                self.wait(thread, held, "the network")
+                self.wait(thread, "the network")
             elif reset and now >= reset + grace:
                 self.nudge(thread, "resume", f"{RESUME[kind]} {CONTINUE}", f"continue after the usage limit reset ({thread['detail']})")
             elif reset:
@@ -295,13 +295,13 @@ class Watch:
             else:
                 self.alert(thread["id"], f"limit#{run}", f"{thread['detail']}. A usage limit with no reset time recorded, so it is not resumed")
         elif not online:
-            self.wait(thread, held, "the network")
+            self.wait(thread, "the network")
         elif kind == "memory" and available is not None and available < max(self.need_mb, self.low_mb):
-            self.wait(thread, held, f"memory ({available} MB available, {max(self.need_mb, self.low_mb)} MB wanted before a killed thread starts again)")
+            self.wait(thread, f"memory ({available} MB available, {max(self.need_mb, self.low_mb)} MB wanted before a killed thread starts again)")
         else:
             self.nudge(thread, "resume", f"{RESUME[kind]} {CONTINUE}", f"continue after a {kind} failure ({thread['detail']})")
 
-    def wait(self, thread: dict, held: dt.timedelta, what: str) -> None:
+    def wait(self, thread: dict, what: str) -> None:
         """A failed thread that is not resumed yet: say so once, and raise an alert when the wait gets long."""
         now = self.box.now()
         if (thread["id"], thread["run"]) not in self.noted:
@@ -350,6 +350,12 @@ def log_path(now: dt.datetime) -> Path:
     return paths.private_dir(paths.cache_dir() / "night") / f"watch-{now.strftime('%Y%m%d-%H%M')}.log"
 
 
+def quiet_close(handle) -> None:
+    """Close the log; lines a full disk refused are still in its buffer, and must not turn the exit code into an error."""
+    with contextlib.suppress(OSError, ValueError):
+        handle.close()
+
+
 def stop_on(signals) -> dict:
     """Make these signals end the loop like Ctrl-C, so the watch logs its last line and lets the box sleep again."""
     def stop(_number, _frame):
@@ -383,7 +389,9 @@ def run(cfg: dict, args) -> int:
         state_file = paths.private_dir(folder) / "watch-state.json"
         state = load_state(state_file, start)
         state["until"] = until.isoformat()
-        with open(path, "a") as handle:
+        with contextlib.ExitStack() as stack:
+            handle = open(path, "a")
+            stack.callback(quiet_close, handle)
             said = set()
 
             def careful(what: str, action) -> None:
