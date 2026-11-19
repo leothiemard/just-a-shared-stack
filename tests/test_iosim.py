@@ -169,6 +169,19 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("is gone", str(cm.exception))
         with self.assertRaises(iosim.IosimError):
             iosim.driven_page([dict(pages[0], appId="PID:2")], state)
+        # A restarted proxy numbers the tabs afresh, so a recorded page number means nothing under another proxy.
+        proxy = {"pid": 10, "started": 1.0}
+        bound = dict(state, proxy=proxy)
+        self.assertIs(iosim.driven_page(pages, bound, proxy), pages[0])
+        for other in ({"pid": 11, "started": 2.0}, {"pid": 10, "started": 2.0}, {}):
+            with self.assertRaises(iosim.IosimError) as cm:
+                iosim.driven_page(pages, bound, other)
+            self.assertIn("proxy restarted", str(cm.exception))
+            self.assertIn("iosim open", cm.exception.fix)
+        with self.assertRaises(iosim.IosimError):  # a record from before the proxy was noted cannot be trusted
+            iosim.driven_page(pages, state, proxy)
+        self.assertEqual(iosim.proxy_id({"pid": 10, "started": 1.0, "port": 9320}), proxy)
+        self.assertIsNone(iosim.proxy_id(None))
         # Nothing recorded: one page is unambiguous; several are refused.
         self.assertIs(iosim.driven_page(pages[:1], {}), pages[0])
         with self.assertRaises(iosim.IosimError) as cm:
@@ -700,7 +713,9 @@ class OpenTest(unittest.TestCase):
         driven = {"url": "http://box/a", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/1"}
         last = {"url": "http://box/b", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/2"}
         sess, lp = self.session([driven, last], [])
-        sess.page_state = lambda: {"page": "/devtools/page/1", "appId": "PID:1", "url": "http://box/a"}
+        sess.page_state = lambda: {"page": "/devtools/page/1", "appId": "PID:1", "url": "http://box/a",
+                                   "proxy": {"pid": 7, "started": 1.0}}
+        sess.proxy_id = lambda: {"pid": 7, "started": 1.0}
         navigated = []
         fake = mock.Mock()
         fake.evaluate.side_effect = lambda src, **kw: navigated.append(src)
@@ -1055,3 +1070,11 @@ class PlumbingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TapCheckIgnoresScriptedEvents(unittest.TestCase):
+    def test_the_tap_listener_drops_untrusted_events_first(self):
+        source = (SCRIPTS / "iosim.py").read_text()
+        handler = source[source.index("function handler(ev) {"):]
+        first = handler.split("\n")[1].strip()
+        self.assertTrue(first.startswith("if (!ev.isTrusted) return;"), first)

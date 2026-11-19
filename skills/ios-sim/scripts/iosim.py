@@ -119,7 +119,8 @@ def js_program(source, is_body=False, prelude=""):
 
 def page_key(page):
     """A Safari page's identity: the inspector page path (stable while the tab lives, across navigations, even to
-    another site) and the Safari process. The proxy's host and port are left out, so a proxy restart keeps it."""
+    another site) and the Safari process. The page path is the proxy's own counter, which a restarted proxy hands
+    out afresh, so the identity only holds for one proxy process: see proxy_id and driven_page."""
     ws = (page or {}).get("webSocketDebuggerUrl") or ""
     return {"page": urllib.parse.urlsplit(ws).path, "appId": (page or {}).get("appId")}
 
@@ -134,12 +135,21 @@ def find_page(pages, key):
     return None
 
 
-def driven_page(pages, state):
+def proxy_id(st):
+    """What tells one inspector proxy process from the next: its pid and start time."""
+    return {"pid": st.get("pid"), "started": st.get("started")} if st else None
+
+
+def driven_page(pages, state, proxy=None):
     """The page iosim drives: the one the last `open` recorded, by identity, never by URL. Raises when it is gone,
-    or when nothing was recorded and Safari has several pages to choose from."""
+    when the proxy that numbered it has been replaced (`proxy` is the running proxy's proxy_id), or when nothing
+    was recorded and Safari has several pages to choose from."""
     pages = [p for p in pages if p.get("webSocketDebuggerUrl")]
     state = state or {}
     if state.get("page"):
+        if proxy is not None and state.get("proxy") != proxy:
+            raise IosimError(f"the inspector proxy restarted since `open`, so iosim can no longer tell which tab it was driving ({state.get('url')})",
+                             "run `iosim open <url>` to load the page again")
         page = find_page(pages, state)
         if page:
             return page
@@ -461,7 +471,7 @@ class Inspector:
             self.ws.close()
             raise IosimError(
                 "the page answered but announced no inspector target",
-                "reload the page (iosim open <url>) and retry; if it persists run `iosim proxy restart`",
+                "reload the page (iosim open <url>) and retry; if it persists run `iosim proxy restart` and then `iosim open <url>` again",
             )
 
     def _recv(self, timeout):
@@ -1271,6 +1281,7 @@ const types = ["touchstart", "pointerdown", "mousedown", "click"];
 window.__iosimTap = null;
 const off = () => types.forEach((t) => window.removeEventListener(t, handler, true));
 function handler(ev) {
+  if (!ev.isTrusted) return;  // a click the page's own script made is not the touch
   if (window.__iosimTap && window.__iosimTap.token === __tok) return;
   const path = ev.composedPath ? ev.composedPath() : [];
   const t = ev.target;
@@ -1335,10 +1346,16 @@ class Session:
 
     def remember_page(self, page, url):
         """Record the page iosim drives by identity (see page_key); every later command addresses it, not a URL."""
-        write_state(f"page-{self.udid}.json", dict(page_key(page), url=url, at=time.time()))
+        write_state(f"page-{self.udid}.json",
+                    dict(page_key(page), url=url, at=time.time(), proxy=proxy_id(proxy_status(self.udid))))
+
+    def proxy_id(self):
+        """The running proxy's identity; call after list_pages, which starts the proxy when needed."""
+        return proxy_id(proxy_status(self.udid)) or {}
 
     def page(self):
-        return driven_page(list_pages(self.udid), self.page_state())
+        pages = list_pages(self.udid)
+        return driven_page(pages, self.page_state(), self.proxy_id())
 
     def connect(self, timeout=10.0):
         return Inspector(self.page()["webSocketDebuggerUrl"], timeout=timeout)
@@ -1367,13 +1384,13 @@ class Session:
                 last = e
                 if insp.sent and not idempotent:
                     raise IosimError(f"lost the page connection after sending the command, so it may or may not have run: {e}",
-                                     "check the page's state, then retry; if it repeats run `iosim proxy restart`")
+                                     "check the page's state, then retry; if it repeats run `iosim proxy restart` and then `iosim open <url>` again")
                 time.sleep(0.5)
             finally:
                 insp.close()
         if isinstance(last, IosimError):
             raise last
-        raise IosimError(f"lost the page connection: {last}", "retry; if it repeats run `iosim proxy restart`")
+        raise IosimError(f"lost the page connection: {last}", "retry; if it repeats run `iosim proxy restart` and then `iosim open <url>` again")
 
     def evaluate(self, source, is_body=False, timeout=30.0, prelude="", idempotent=False):
         return self.with_page(lambda i: i.evaluate(source, is_body=is_body, timeout=timeout, prelude=prelude), idempotent=idempotent)
@@ -1413,7 +1430,7 @@ class Session:
         driven = None
         if pages and not new_tab:
             try:
-                driven = driven_page(pages, self.page_state())
+                driven = driven_page(pages, self.page_state(), self.proxy_id())
             except IosimError as e:
                 if blank:
                     raise IosimError(f"about:blank blanks the page iosim drives, and there is none: {e}", e.fix, code=2)
@@ -2721,7 +2738,8 @@ def dispatch(args):
     if cmd == "pages":
         pages, key = list_pages(udid), session.page_state()
         for pg in pages:
-            pg["driven"] = bool(key.get("page")) and page_key(pg) == {"page": key["page"], "appId": key.get("appId")}
+            pg["driven"] = (bool(key.get("page")) and key.get("proxy") == session.proxy_id()
+                            and page_key(pg) == {"page": key["page"], "appId": key.get("appId")})
         return {"ok": True, "pages": pages}, 0
     if cmd == "open":
         return {"ok": True, **session.open(args.url, new_tab=args.new_tab, wait=not args.no_wait, timeout=args.timeout)}, 0
