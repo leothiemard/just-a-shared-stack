@@ -62,12 +62,14 @@ class Store:
 
     def thread(self, thread_id: str, *, project: str = "p-app", title: str = "", parent: str = "", relationship: str = "subagent",
                created_by: str = "user", age: float = 600, updated: float = 120, deleted: bool = False, prs=(), branch: str = "",
-               model: str = "model-a") -> None:
+               model: str = "model-a", delegated_from: str = "") -> None:
         payload = {
             "createdBy": created_by, "branch": branch or None, "worktreePath": None,
             "modelSelection": {"model": model}, "pullRequests": [{"url": u} for u in prs],
             "lineage": {"parentThreadId": parent or None, "relationshipToParent": relationship if parent else None},
         }
+        if delegated_from:
+            payload["delegatedFrom"] = {"environmentId": "env-other", "threadId": delegated_from, "title": "Coordinator"}
         with self.db() as conn:
             conn.execute(
                 f"INSERT INTO {T}threads VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'claudeAgent', NULL)",

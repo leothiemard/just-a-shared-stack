@@ -96,6 +96,97 @@ class SessionsTests(Sandbox):
         listed = self.ok("sessions", "list")
         self.assertIn("mac  example-app  Session top  2 turns  1500 tokens", listed)
 
+    def configure(self, **sessions):
+        cfg_path = self.home / ".config" / "jass" / "box.json"
+        cfg = json.loads(cfg_path.read_text())
+        cfg["sessions"].update(sessions)
+        cfg_path.write_text(json.dumps(cfg))
+
+    def test_delegated_steps_and_configured_patterns_are_left_out(self):
+        self.configure(exclude_title_patterns=["^smoke test"], exclude_prompt_prefixes=["[worker]"])
+        rows = [
+            record("kept"),
+            record("step", delegated_from="kept"),
+            record("probe", title="Smoke Test: approval"),
+            record("worker", first_prompt="[worker] Delegated worker for a coordinator thread"),
+            record("lookalike", first_prompt="Explain the [worker] prefix"),
+        ]
+        result = self.export(rows)
+        self.assertEqual((len(result["written"]), result["skipped"]), (2, 3))
+
+    def test_prune_deletes_only_this_boxs_digests_of_sessions_now_left_out(self):
+        rows = [record("kept"), record("step"), record("private", project="private-thing")]
+        self.assertEqual(len(self.export(rows)["written"]), 3)
+        other = self.lore / "Sessions" / "other-box" / "2026-01" / "step.md"
+        other.parent.mkdir(parents=True)
+        other.write_text('---\nkind: "session"\nid: "step"\n---\n# From another box\n')
+        self.configure(exclude_projects=["private-thing"])
+        rows[1]["delegated_from"] = "kept"
+        self.assertEqual(self.export(rows)["pruned"], [])  # an ordinary run never deletes
+        self.assertEqual(len(list((self.lore / "Sessions" / "mac").rglob("*.md"))), 3)
+        preview = self.export(rows, "--prune", "--dry-run")
+        self.assertEqual(len(preview["pruned"]), 2)
+        self.assertEqual(len(list((self.lore / "Sessions" / "mac").rglob("*.md"))), 3)
+        done = self.export(rows, "--prune")
+        self.assertEqual(sorted(done["pruned"]), sorted(preview["pruned"]))
+        left = list((self.lore / "Sessions" / "mac").rglob("*.md"))
+        self.assertEqual(len(left), 1)
+        self.assertEqual(lore.frontmatter(left[0].read_text())[0]["id"], "kept")
+        self.assertTrue(other.exists())
+
+    def test_an_id_listed_in_the_lore_is_never_exported_and_a_prune_restores_nothing(self):
+        rows = [record("kept"), record("removed"), record("gone")]
+        written = self.export(rows)["written"]
+        self.assertEqual(len(written), 3)
+        (self.lore / "Sessions" / "excluded-ids.txt").write_text("# removed by hand\nremoved  # a personal thread\n")
+        gone = next(self.lore / rel for rel in written if lore.frontmatter((self.lore / rel).read_text())[0]["id"] == "gone")
+        gone.unlink()  # deleted by hand without listing it: only `--all` brings it back
+        done = self.export(rows, "--prune")
+        self.assertEqual((len(done["pruned"]), done["written"]), (1, []))
+        self.assertFalse(gone.exists())
+        again = self.export(rows, "--all")
+        ids = {lore.frontmatter(p.read_text())[0]["id"] for p in (self.lore / "Sessions" / "mac").rglob("*.md")}
+        self.assertEqual((ids, again["skipped"]), ({"kept", "gone"}, 1))
+
+    def test_a_session_is_filed_under_the_project_its_name_is_an_alias_of(self):
+        self.ok("log", "-t", "First", "-p", "example-app")
+        hub = self.lore / "Projects" / "example-app" / "example-app.md"
+        hub.write_text(hub.read_text().replace("---\nproject:", "---\naliases: [renamed-checkout]\nproject:", 1))
+        rel = self.export([record("s1", project="renamed-checkout")])["written"][0]
+        self.assertIn("-example-app-", rel)
+        self.assertEqual(lore.frontmatter((self.lore / rel).read_text())[0]["project"], "example-app")
+
+    def test_the_outcome_is_the_last_reply_of_substance(self):
+        result = "Root cause: the hook read a stale variable. " + "Detail. " * 80
+        rec = SessionRecord(
+            id="x", title="T", project="p", cwd="", started=NOW, updated=NOW,
+            prompts=["Fix it", "/compact", "Continue where you left off.", "Fix it", "Now ship it"],
+            turn_finals=["Looked around.", result, "Waiting on your review."],
+            pr_urls=[f"https://example.invalid/pr/{n}" for n in range(40)],
+        )
+        text = digest.render(rec, "mac", "personal")
+        self.assertIn(f"# T\n\nState as of {NOW.date().isoformat()}. Check before relying on it.\n", text)
+        self.assertIn("## Asked\n\n- Fix it\n- Now ship it\n", text)
+        self.assertIn("## Outcome\n\nRoot cause: the hook read a stale variable.", text)
+        self.assertIn("\n\nLast reply: Waiting on your review.\n", text)
+        self.assertIn("## Turns\n\n1. Looked around.\n", text)
+        self.assertEqual(text.count("example.invalid/pr/"), digest.MAX_PRS)
+        self.assertIn("example.invalid/pr/39", text)
+        short = SessionRecord(id="y", title="T", project="p", cwd="", started=NOW, updated=NOW, turn_finals=["Looked.", "Done."])
+        self.assertIn("## Outcome\n\nDone.\n\n## Turns\n\n1. Looked.\n", digest.render(short, "mac", "personal"))
+
+    def test_delegated_titles_go_before_turns_when_a_digest_is_too_long(self):
+        rec = SessionRecord(
+            id="x", title="T", project="p", cwd="", started=NOW, updated=NOW, prompts=["Do it"],
+            turn_finals=[f"Turn {n} " + "t" * 190 for n in range(12)] + ["Result. " + "r" * 2400],
+            delegated=[{"title": "Child " + "c" * 100, "model": "m", "status": "completed"}] * 12,
+        )
+        text = digest.render(rec, "mac", "personal")
+        self.assertLessEqual(len(text.encode()), digest.MAX_BYTES)
+        self.assertNotIn("## Delegated", text)
+        self.assertIn("12 delegated task(s).", text)
+        self.assertIn("12. Turn 11", text)
+
     def test_unchanged_sessions_are_skipped_and_continuations_overwrite(self):
         first = self.export([record("s1", updated_minutes_ago=200)])
         self.assertEqual(self.export([record("s1", updated_minutes_ago=200)])["written"], [])

@@ -118,14 +118,18 @@ def cmd_sessions(args) -> int:
     root = lore.open_lore(cfg)
     since = index.parse_since(args.since) if args.since else ""
     if args.action == "export":
-        result = export.run(cfg, root, everything=args.all, since=since, dry_run=args.dry_run)
+        result = export.run(cfg, root, everything=args.all, since=since, dry_run=args.dry_run, prune=args.prune)
         if args.json:
             print(json.dumps(result, indent=2))
             return 0
         verb = "Would write" if args.dry_run else "Wrote"
         for rel in result["written"]:
             print(f"{verb} {rel}")
-        print(f"{verb} {len(result['written'])} digest(s); {result['unchanged']} unchanged, {result['skipped']} skipped (active, subagent, excluded or too old).")
+        print(f"{verb} {len(result['written'])} digest(s); {result['unchanged']} unchanged, {result['skipped']} skipped (active, subagent, delegated, excluded or too old).")
+        if args.prune:
+            for rel in result["pruned"]:
+                print(f"{'Would delete' if args.dry_run else 'Deleted'} {rel}")
+            print(f"{'Would delete' if args.dry_run else 'Deleted'} {len(result['pruned'])} digest(s) of sessions that are no longer exported.")
         return 0
     if args.action == "stats":
         groups = export.stats(export.listing(root, since), args.by)
@@ -256,6 +260,7 @@ def parser() -> argparse.ArgumentParser:
     e = actions.add_parser("export", help="write digests for finished sessions on this box")
     e.add_argument("--all", action="store_true", help="rewrite every digest, not only changed sessions")
     e.add_argument("--since")
+    e.add_argument("--prune", action="store_true", help="also delete this box's digests of subagent, delegated and excluded sessions")
     e.add_argument("--dry-run", action="store_true")
     e.add_argument("--json", action="store_true")
     ls = actions.add_parser("list", help="one line per digest")

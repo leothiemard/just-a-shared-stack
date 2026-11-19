@@ -48,6 +48,13 @@ class T3SourceTests(Sandbox):
         self.assertEqual(len(result["written"]), 6)
         self.assertEqual(result["skipped"], 1)  # the active thread; children, deleted and failed-only never leave the source
 
+    def test_a_thread_launched_as_a_step_of_another_is_not_exported(self):
+        self.store.thread("step", created_by="agent", title="Verify PR 36 on the other box", delegated_from="top")
+        self.store.turn("step", "Run the acceptance suite and report.", "All green.", at=200)
+        result = self.export()
+        self.assertNotIn("step", self.digests())
+        self.assertEqual(result["skipped"], 2)
+
     def test_digest_fields_and_folded_children(self):
         self.export()
         text = self.digests()["top"]
