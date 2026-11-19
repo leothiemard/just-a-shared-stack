@@ -38,7 +38,7 @@
  Count each full review pass as one round.
  A fresh review after fixes starts a new round.
  
-@@ -39,18 +46,23 @@
+@@ -39,18 +46,26 @@
  
  | Delegate | Round 1 | Round 2 |
  | --- | --- | --- |
@@ -59,8 +59,11 @@
 -If you agree with their recommendations, make the changes and request a fresh
 -review after. Continue this process until all delegates are satisfied with the
 -outcome.
-+Fix findings you agree with. After round 1, use one Claude Fable reviewer on the
++Fix findings you agree with. After round 1, use one follow-up reviewer on the
 +diff since the last review plus open findings, unless the user asks otherwise.
++Through 2026-12-03 (trial), the follow-up reviewer is Gemini Neon; from
++2026-12-04, it is Claude Fable. If it is unavailable, report it instead of
++substituting.
 +Stop when no blocker/should remains, the requested score is reached, or after
 +3 rounds, whichever comes first. Also stop if there is no new blocker/should
 +and the score rose by less than 1. Scores alone never keep the loop running.

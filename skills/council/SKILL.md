@@ -56,8 +56,11 @@ Do not invent scores.
 If the PR is open, edit the description. Do not post a comment for this.
 If there is no PR, put the same results in the final reply only.
 
-Fix findings you agree with. After round 1, use one Claude Fable reviewer on the
+Fix findings you agree with. After round 1, use one follow-up reviewer on the
 diff since the last review plus open findings, unless the user asks otherwise.
+Through 2026-12-03 (trial), the follow-up reviewer is Gemini Neon; from
+2026-12-04, it is Claude Fable. If it is unavailable, report it instead of
+substituting.
 Stop when no blocker/should remains, the requested score is reached, or after
 3 rounds, whichever comes first. Also stop if there is no new blocker/should
 and the score rose by less than 1. Scores alone never keep the loop running.
