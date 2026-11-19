@@ -152,17 +152,30 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(long[1], 0x80 | 126)
         self.assertEqual(struct.unpack(">H", long[2:4])[0], 300)
 
-    def test_pick_page_prefers_url_then_host_then_last(self):
+    def test_driven_page_is_found_by_identity_not_url(self):
         pages = [
-            {"url": "https://a.test/", "webSocketDebuggerUrl": "ws://1"},
-            {"url": "https://b.test/x", "webSocketDebuggerUrl": "ws://2"},
-            {"url": "https://c.test/", "webSocketDebuggerUrl": "ws://3"},
-            {"url": "https://d.test/", "webSocketDebuggerUrl": ""},
+            {"url": "https://a.test/", "appId": "PID:1", "webSocketDebuggerUrl": "ws://127.0.0.1:9321/devtools/page/1"},
+            {"url": "https://a.test/", "appId": "PID:1", "webSocketDebuggerUrl": "ws://127.0.0.1:9321/devtools/page/2"},
+            {"url": "https://c.test/", "appId": "PID:1", "webSocketDebuggerUrl": "ws://127.0.0.1:9321/devtools/page/3"},
         ]
-        self.assertEqual(iosim.pick_page(pages, "https://a.test")["webSocketDebuggerUrl"], "ws://1")
-        self.assertEqual(iosim.pick_page(pages, "https://b.test/other")["webSocketDebuggerUrl"], "ws://2")
-        self.assertEqual(iosim.pick_page(pages, "https://zzz.test/")["webSocketDebuggerUrl"], "ws://3")
-        self.assertIsNone(iosim.pick_page([]))
+        state = {"page": "/devtools/page/1", "appId": "PID:1", "url": "https://c.test/"}  # its URL says nothing
+        self.assertIs(iosim.driven_page(pages, state), pages[0])
+        # A proxy on another port keeps the identity.
+        moved = [dict(p, webSocketDebuggerUrl=p["webSocketDebuggerUrl"].replace("9321", "9341")) for p in pages]
+        self.assertIs(iosim.driven_page(moved, state), moved[0])
+        # The tab closed, or Safari restarted (another process): gone, never another tab.
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.driven_page(pages[1:], state)
+        self.assertIn("is gone", str(cm.exception))
+        with self.assertRaises(iosim.IosimError):
+            iosim.driven_page([dict(pages[0], appId="PID:2")], state)
+        # Nothing recorded: one page is unambiguous; several are refused.
+        self.assertIs(iosim.driven_page(pages[:1], {}), pages[0])
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.driven_page(pages, {})
+        self.assertIn("iosim open", cm.exception.fix)
+        with self.assertRaises(iosim.IosimError):
+            iosim.driven_page([], {})
 
     def test_url_matches(self):
         self.assertTrue(iosim.url_matches("http://box:3000/recipes/1", "http://box:3000/recipes"))
@@ -178,11 +191,29 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(res["counts"], {"fail": 2, "warn": 1})
         with self.assertRaises(iosim.IosimError):
             iosim.normalize_audit("nope")
+        self.assertEqual(res["findings"][1]["severity"], "fail")
         # {rule, element, detail}, as written for page.evaluate, maps onto message and selector.
         res = iosim.normalize_audit([{"rule": "tap-target", "element": "button#go", "detail": "30 x 30 px"}])
         self.assertEqual(res["findings"][0]["message"], "30 x 30 px")
         self.assertEqual(res["findings"][0]["selector"], "button#go")
         self.assertEqual(iosim.normalize_audit([])["counts"], {"fail": 0, "warn": 0})
+
+    def test_audit_result_shapes(self):
+        # An array is the findings; an object needs a findings array.
+        self.assertEqual(iosim.normalize_audit({"findings": [{"rule": "a"}]})["counts"]["fail"], 1)
+        self.assertEqual(iosim.normalize_audit({"findings": [], "viewport": {}})["counts"], {"fail": 0, "warn": 0})
+        for bad in ({"violations": [{"id": "color-contrast"}]}, {}, {"findings": "none"}, None, 0, True, "ok"):
+            with self.assertRaises(iosim.IosimError) as cm:
+                iosim.normalize_audit(bad)
+            self.assertIn("findings", str(cm.exception))
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.normalize_audit({"violations": []})
+        self.assertIn("violations", str(cm.exception))  # names the keys it got
+        # Severities: aliases map, anything else is refused rather than counted as neither.
+        res = iosim.normalize_audit([{"severity": "error"}, {"severity": "Warning"}])
+        self.assertEqual(res["counts"], {"fail": 1, "warn": 1})
+        with self.assertRaises(iosim.IosimError):
+            iosim.normalize_audit([{"severity": "critical"}])
 
 
 class CaptureTest(unittest.TestCase):
@@ -378,9 +409,9 @@ def measured(target_y=87.53, anchors=None, visual_height=695):
     rect = {"x": 0, "y": target_y, "width": 113.45, "height": 44}
     return {"rect": rect, "title": "iosim test", "visual": {"width": 393, "height": visual_height},
             "anchors": anchors if anchors is not None else [
-                dict(rect, id=0, label="Button one", target=True),
-                {"id": 1, "label": "Test page", "x": 0, "y": 21.44, "width": 393, "height": 42.9, "target": False},
-                {"id": 2, "label": "Name", "x": 0, "y": 148.5, "width": 215.3, "height": 30, "target": False},
+                dict(rect, id=0, label="Button one", target=True, pageCount=1),
+                {"id": 1, "label": "Test page", "x": 0, "y": 21.44, "width": 393, "height": 42.9, "target": False, "pageCount": 1},
+                {"id": 2, "label": "Name", "x": 0, "y": 148.5, "width": 215.3, "height": 30, "target": False, "pageCount": 1},
             ]}
 
 
@@ -389,7 +420,70 @@ class TapOriginTest(unittest.TestCase):
         found = iosim.web_origin_from_anchors(SNAPSHOT, measured()["anchors"])
         self.assertEqual(found["origin"], (0.0, 59.0))
         self.assertEqual(found["anchors"], 3)
+        self.assertEqual(found["unique"], 3)
         self.assertTrue(found["target"])
+
+    def rows(self, scroll=800, row=56, top=59, count=40, above=3, below=3):
+        """A page of identical "Delete" buttons scrolled by `scroll`: the page's anchors (the visible rows) and a
+        snapshot that, like Safari's, also lists rows just above and below the visible area."""
+        visible_h = 695
+        anchors, nodes = [], [dict(n) for n in SNAPSHOT[:3]]
+        for i in range(count):
+            y = 80 + i * row - scroll  # page y in the visual viewport
+            if 0 <= y and y + 44 <= visible_h:
+                anchors.append({"id": i, "label": "Delete", "x": 8, "y": y, "width": 120, "height": 44, "target": i == 20, "pageCount": count})
+            if -above * row <= y and y + 44 <= visible_h + below * row:
+                nodes.append({"depth": 12, "type": "Button", "label": "Delete", "rect": {"x": 8, "y": top + y, "width": 120, "height": 44}})
+        return anchors, nodes
+
+    def test_a_tie_between_offsets_is_refused(self):
+        # The reviewer's page: 40 identical rows, scrolled 800 px. Offsets one row apart fit as many anchors.
+        anchors, nodes = self.rows()
+        found = iosim.web_origin_from_anchors(nodes, anchors)
+        self.assertIn("refused", found)
+        self.assertIn("equally well", found["refused"])
+        info = {"rect": next(a for a in anchors if a["target"]), "title": "rows", "visual": {"width": 393, "height": 695}, "anchors": anchors}
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.tap_point(info, nodes)
+        self.assertIn("could not place", str(cm.exception))
+
+    def test_repeated_names_alone_are_refused_when_another_offset_fits(self):
+        # The snapshot lists only the visible rows: the right offset leads by one, but only repeated names back it.
+        anchors, nodes = self.rows(above=0, below=0)
+        found = iosim.web_origin_from_anchors(nodes, anchors)
+        self.assertIn("repeated names", found["refused"])
+        # A unique heading on the same page settles it.
+        anchors.append({"id": 99, "label": "Rows", "x": 8, "y": 0, "width": 200, "height": 40, "pageCount": 1})
+        nodes.append({"depth": 11, "type": "Other", "label": "Rows", "rect": {"x": 8, "y": 59, "width": 200, "height": 40}})
+        found = iosim.web_origin_from_anchors(nodes, anchors)
+        self.assertEqual(found["origin"], (0.0, 59.0))
+
+    def test_one_anchor_needs_a_unique_name_on_both_sides(self):
+        # The reviewer's iframe page: the main page's "OK" (unique there) and an iframe's "OK" of the same size.
+        anchors = [{"id": 0, "label": "OK", "x": 0, "y": 120, "width": 200, "height": 48, "target": True, "pageCount": 1}]
+        nodes = SNAPSHOT[:3] + [
+            {"depth": 12, "type": "Button", "label": "OK", "rect": {"x": 0, "y": 99, "width": 200, "height": 48}},   # in the iframe
+            {"depth": 12, "type": "Button", "label": "OK", "rect": {"x": 0, "y": 179, "width": 200, "height": 48}},  # the target
+        ]
+        self.assertIn("refused", iosim.web_origin_from_anchors(nodes, anchors))
+        # With only one "OK" on screen the name is unique on both sides, and one anchor is enough.
+        found = iosim.web_origin_from_anchors(SNAPSHOT[:3] + nodes[-1:], anchors)
+        self.assertEqual(found["origin"], (0.0, 59.0))
+        # A name the page repeats is not unique even when the snapshot shows it once.
+        weak = [dict(anchors[0], pageCount=2)]
+        self.assertIn("refused", iosim.web_origin_from_anchors(SNAPSHOT[:3] + nodes[-1:], weak))
+        # A wrapper sharing its label with the button inside it counts once.
+        wrapped = SNAPSHOT[:3] + [{"depth": 11, "type": "Other", "label": "OK", "rect": {"x": 0, "y": 175, "width": 200, "height": 56}}] + nodes[-1:]
+        self.assertEqual(iosim.snapshot_label_counts(wrapped)["OK"], 1)
+
+    def test_anchors_and_the_web_area_node_must_agree(self):
+        info = measured()
+        nodes = [dict(n) for n in SNAPSHOT]
+        nodes[4] = dict(nodes[4], rect={"x": 0, "y": 103, "width": 393, "height": 749})  # web area says y = 103
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.tap_point(info, nodes)
+        self.assertIn("web area node", str(cm.exception))
+        self.assertTrue(iosim.tap_point(measured(), SNAPSHOT)[3]["webAreaAgrees"])
 
     def test_tap_point_lands_on_the_target(self):
         x, y, origin, how = iosim.tap_point(measured(), SNAPSHOT)
@@ -399,7 +493,7 @@ class TapOriginTest(unittest.TestCase):
 
     def test_two_row_toolbar_and_collapsed_toolbar_need_no_special_case(self):
         # Scrolled: the target sits lower and the visible area is taller; the anchor still places it.
-        anchors = [{"id": 0, "label": "Button two", "x": 0, "y": 632.5, "width": 113.4, "height": 44, "target": True}]
+        anchors = [{"id": 0, "label": "Button two", "x": 0, "y": 632.5, "width": 113.4, "height": 44, "target": True, "pageCount": 1}]
         nodes = SNAPSHOT[:3] + [{"depth": 12, "type": "Button", "label": "Button two", "rect": {"x": 0, "y": 691, "width": 114, "height": 45}}]
         info = {"rect": dict(anchors[0]), "title": "iosim test", "visual": {"width": 393, "height": 735}, "anchors": anchors}
         x, y, origin, _ = iosim.tap_point(info, nodes)
@@ -417,10 +511,75 @@ class TapOriginTest(unittest.TestCase):
 
     def test_a_point_outside_the_visible_page_is_refused(self):
         info = measured(target_y=700)  # below the 695 px the toolbar leaves
-        info["anchors"] = [{"id": 0, "label": "Name", "x": 0, "y": 148.5, "width": 215.3, "height": 30}]
+        info["anchors"] = [{"id": 0, "label": "Name", "x": 0, "y": 148.5, "width": 215.3, "height": 30, "pageCount": 1}]
         with self.assertRaises(iosim.IosimError) as cm:
             iosim.tap_point(info, SNAPSHOT)
         self.assertIn("outside the page's visible area", str(cm.exception))
+
+    def test_verify_tap_judges_what_the_page_saw(self):
+        ok = iosim.verify_tap({"type": "touchstart", "target": "button#d20", "inside": True}, "button#d20")
+        self.assertTrue(ok["verified"])
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.verify_tap({"type": "touchstart", "target": "button#d19", "inside": False, "x": 68, "y": 394}, "button#d20")
+        self.assertIn("landed on button#d19", str(cm.exception))
+        with self.assertRaises(iosim.IosimError) as cm:
+            iosim.verify_tap(None, "button#ok")  # an iframe, Safari's toolbar or another tab took it
+        self.assertIn("reached no element", str(cm.exception))
+        # With nothing expected, it only reports.
+        self.assertEqual(iosim.verify_tap(None), {"pageHit": None})
+        self.assertEqual(iosim.verify_tap({"type": "click", "target": "a#x", "inside": None})["pageHit"], "a#x")
+
+    def tap_session(self, record, visible=True, info=None):
+        """A Session whose page answers TAP_RECT_JS with `info` and whose tap check sees `record`."""
+        sess = iosim.Session.__new__(iosim.Session)
+        sess.udid = "U"
+        sess.driver = mock.Mock(mode="fake")
+        sess.driver.snapshot.return_value = {"nodes": SNAPSHOT}
+        sess.evaluate = mock.Mock(return_value=info or dict(measured(), target="button#b1"))
+        insp = mock.Mock(events=[])
+
+        def evaluate(source, is_body=False, timeout=30.0, prelude=""):
+            if "__iosimTap ||" in source:
+                return None
+            token = json.loads(prelude.split("__tok = ", 1)[1].split(",", 1)[0])
+            if record is not None:
+                insp.events.append({"method": "Console.messageAdded", "params": {"message": {
+                    "text": iosim.TAP_MARK + json.dumps(dict(record, token=token))}}})
+            return {"armed": True, "target": "button#b1", "visible": visible}
+        insp.evaluate.side_effect = evaluate
+        sess.connect = mock.Mock(return_value=insp)
+        return sess
+
+    def test_selector_tap_fails_when_another_element_got_it(self):
+        sess = self.tap_session({"type": "touchstart", "target": "button#b2", "inside": False})
+        with self.assertRaises(iosim.IosimError) as cm:
+            sess.tap(selector="#b1")
+        self.assertIn("landed on button#b2", str(cm.exception))
+        sess.driver.tap.assert_called_once()
+        sess = self.tap_session(None)
+        with self.assertRaises(iosim.IosimError):
+            sess.tap(selector="#b1")
+        sess = self.tap_session({"type": "touchstart", "target": "button#b1", "inside": True})
+        self.assertTrue(sess.tap(selector="#b1")["verified"])
+
+    def test_a_tab_not_on_screen_is_never_tapped(self):
+        sess = self.tap_session(None, info={"hidden": True, "target": "button#b1"})
+        with self.assertRaises(iosim.IosimError) as cm:
+            sess.tap(selector="#b1")
+        self.assertIn("not the tab on screen", str(cm.exception))
+        sess.driver.tap.assert_not_called()
+
+    def test_label_and_at_taps_check_an_expectation(self):
+        sess = self.tap_session({"type": "touchstart", "target": "button#b2", "inside": False})
+        with self.assertRaises(iosim.IosimError):
+            sess.tap(at=(10, 10), expect="#b1")
+        with self.assertRaises(iosim.IosimError):
+            sess.tap(label="Save", expect="#b1")
+        # Without one, the tap reports what the page saw and passes.
+        self.assertEqual(sess.tap(at=(10, 10))["pageHit"], "button#b2")
+        self.assertEqual(iosim.parse_plan([{"tap": {"at": [1, 2], "expect": "#b1"}}])["steps"][0]["expect"], "#b1")
+        with self.assertRaises(iosim.PlanError):
+            iosim.parse_plan([{"tap": {"selector": "#a", "expect": "#b1"}}])
 
     def test_label_contains_picks_one_element(self):
         self.assertEqual(iosim.pick_label_node(SNAPSHOT[:9], "button o")["label"], "Button one")
@@ -506,9 +665,51 @@ class OpenTest(unittest.TestCase):
         with lp, mock.patch.object(iosim, "write_state"), mock.patch.object(iosim, "read_state", return_value={"url": "http://localhost:8799/"}):
             started = iosim.time.time()
             with self.assertRaises(iosim.IosimError) as cm:
-                sess.wait_loaded("http://localhost:8799/", "tok", "same-tab", set(), set(), timeout=10)
+                sess.wait_loaded("http://localhost:8799/", "tok", "same-tab", set(), set(), timeout=10, driven=pages[0])
         self.assertIn("could not load", str(cm.exception))
         self.assertLess(iosim.time.time() - started, 5)
+
+    def test_dead_server_fails_when_the_driven_tab_is_not_last(self):
+        # The reviewer's case: the navigated tab shows Safari's error page, and a loaded http tab comes after it.
+        driven = {"url": "data:text/html,", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/1"}
+        other = {"url": "http://127.0.0.1:8731/rows.html", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/2"}
+        probes = {"data:text/html,": {"href": "data:text/html,", "readyState": "complete", "nav": None, "mark": None, "title": "Can't Open Page"},
+                  other["url"]: {"href": other["url"], "readyState": "complete", "nav": None, "mark": None, "title": "rows"}}
+        sess, lp = self.session([driven, other], [])
+        probed = []
+        sess._probe = lambda page, extra="": probed.append(page["url"]) or probes[page["url"]]
+        with lp, mock.patch.object(iosim, "write_state") as ws:
+            with self.assertRaises(iosim.IosimError) as cm:
+                sess.wait_loaded("http://127.0.0.1:8799/dead", "tok", "same-tab", set(), set(), timeout=5, driven=driven)
+        self.assertIn("could not load", str(cm.exception))
+        self.assertEqual(set(probed), {"data:text/html,"})  # the other tab is never asked
+        ws.assert_not_called()  # and never saved as the current page
+
+    def test_the_navigated_tab_going_away_fails(self):
+        driven = {"url": "http://box/", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/1"}
+        other = {"url": "http://box/", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/2"}
+        sess, lp = self.session([other], [])
+        sess._probe = mock.Mock()
+        with lp, mock.patch.object(iosim, "write_state"):
+            with self.assertRaises(iosim.IosimError) as cm:
+                sess.wait_loaded("http://box/", "tok", "same-tab", set(), set(), timeout=10, driven=driven)
+        self.assertIn("went away", str(cm.exception))
+        sess._probe.assert_not_called()
+
+    def test_open_navigates_the_driven_tab_and_records_its_identity(self):
+        driven = {"url": "http://box/a", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/1"}
+        last = {"url": "http://box/b", "appId": "PID:1", "webSocketDebuggerUrl": "ws://p/devtools/page/2"}
+        sess, lp = self.session([driven, last], [])
+        sess.page_state = lambda: {"page": "/devtools/page/1", "appId": "PID:1", "url": "http://box/a"}
+        navigated = []
+        fake = mock.Mock()
+        fake.evaluate.side_effect = lambda src, **kw: navigated.append(src)
+        with lp, mock.patch.object(iosim, "Inspector", return_value=fake) as ctor, mock.patch.object(iosim, "write_state") as ws:
+            res = sess.open("http://box/c", wait=False)
+        self.assertEqual(res["how"], "same-tab")
+        ctor.assert_called_once_with("ws://p/devtools/page/1", timeout=10)
+        self.assertEqual(ws.call_args[0][1]["page"], "/devtools/page/1")
+        sess.driver.open_url.assert_not_called()
 
     def test_new_tab_ignores_a_page_that_was_already_open(self):
         old = {"url": "http://box/", "webSocketDebuggerUrl": "ws://p/1"}
@@ -529,6 +730,7 @@ class OpenTest(unittest.TestCase):
 
     def test_about_blank_needs_a_current_tab(self):
         sess, lp = self.session([], [])
+        sess.page_state = lambda: {}
         with lp, self.assertRaises(iosim.IosimError) as cm:
             sess.open("about:blank")
         self.assertEqual(cm.exception.code, 2)
@@ -577,6 +779,22 @@ class DeviceTest(unittest.TestCase):
             with self.assertRaises(iosim.IosimError):
                 drv.tap(10, 10)
             self.assertNotIn("press", (Path(d) / "calls").read_text())
+
+    def test_a_command_that_names_another_device_is_refused_before_any_action(self):
+        self.assertIsNone(iosim.precheck_bound_device(["/x/agent-device"], "MINE"))  # cannot tell: open answers later
+        self.assertEqual(iosim.precheck_bound_device(["ad", "--udid", "MINE"], "MINE"), "MINE")
+        with self.assertRaises(iosim.IosimError):
+            iosim.precheck_bound_device(["ad", "--udid=OTHER"], "MINE")
+        sessions = {"sessions": [{"name": "s1", "device_udid": "OTHER"}, {"name": "s2", "device_udid": "MINE"}]}
+        with self.assertRaises(iosim.IosimError):
+            iosim.precheck_bound_device(["ad", "--session", "s1"], "MINE", sessions)
+        self.assertEqual(iosim.precheck_bound_device(["ad", "--session", "s2"], "MINE", sessions), "MINE")
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"IOSIM_HOME": d}):
+            ad = self.fake_agent_device(d, {"success": True, "data": {"session": "s", "device_udid": "OTHER"}})
+            drv = iosim.Driver("MINE", f"{ad} --udid OTHER")
+            with self.assertRaises(iosim.IosimError):
+                drv.open_url("http://box/")
+            self.assertFalse((Path(d) / "calls").exists())  # Safari was never opened on the other simulator
 
     def test_device_in_use_names_the_session_and_gives_a_fix(self):
         answer = {"success": False, "error": {"code": "DEVICE_IN_USE", "message": "Device is already in use by session \"t3-old\".",
@@ -677,6 +895,72 @@ class RunPlanTest(unittest.TestCase):
         self.assertEqual(report["failures"][-1]["kind"], "crash")
         self.assertEqual(self.device["appearance"], "light")
 
+    def passing_report(self):
+        (self.dir / "report.json").write_text(json.dumps({"passed": True, "failures": []}))
+
+    def test_a_run_that_cannot_start_never_leaves_an_old_pass(self):
+        self.passing_report()
+        plan = iosim.parse_plan([{"wait": 1}])
+        with mock.patch.object(iosim, "Session", side_effect=iosim.IosimError("no iOS simulator named or with UDID 'nope'")):
+            with self.assertRaises(iosim.IosimError):
+                iosim.run_plan(plan, self.dir)
+        report = self.report()
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["failures"][0]["kind"], "setup")
+        self.assertIn("nope", report["failures"][0]["message"])
+
+    def test_the_placeholder_is_written_before_anything_else(self):
+        self.passing_report()
+        seen = {}
+
+        def session_ctor(*a):
+            seen["report"] = self.report()
+            raise KeyboardInterrupt()
+        with mock.patch.object(iosim, "Session", side_effect=session_ctor), self.assertRaises(KeyboardInterrupt):
+            iosim.run_plan(iosim.parse_plan([{"wait": 1}]), self.dir)
+        self.assertFalse(seen["report"]["passed"])
+        self.assertTrue(seen["report"]["placeholder"])
+        self.assertFalse(self.report()["passed"])  # a death at any point leaves at least the placeholder
+
+    def test_cli_run_with_a_bad_device_replaces_an_old_pass(self):
+        self.passing_report()
+        plan = self.dir / "plan.json"
+        plan.write_text(json.dumps([{"wait": 1}]))
+        with mock.patch.object(iosim, "have_simctl", return_value=True), mock.patch.object(iosim, "list_devices", return_value=[]):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = iosim.main(["--device", "nope", "run", str(plan), "--out", str(self.dir)])
+        self.assertEqual(code, 1)
+        self.assertFalse(self.report()["passed"])
+        # A plan that does not parse also replaces it.
+        self.passing_report()
+        plan.write_text("{not json")
+        with mock.patch.object(iosim, "have_simctl", return_value=True), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(iosim.main(["run", str(plan), "--out", str(self.dir)]), 2)
+        self.assertFalse(self.report()["passed"])
+
+    def test_ctrl_c_during_the_contact_sheet_keeps_a_failing_report(self):
+        drv = self.session.driver
+        drv.record_start.return_value = str(self.dir / "video.mp4")
+        drv.record_stop.return_value = {"path": str(self.dir / "video.mp4"), "exists": True}
+        plan = iosim.parse_plan({"video": True, "steps": [{"wait": 1}]})
+        with mock.patch.object(iosim, "run_step", return_value=None), \
+                mock.patch.object(iosim, "contact_sheet", side_effect=KeyboardInterrupt()), self.assertRaises(KeyboardInterrupt):
+            iosim.run_plan(plan, self.dir, session=self.session)
+        report = self.report()
+        self.assertFalse(report["passed"])
+        self.assertIn("contact sheet", report["contactSheet"]["error"])
+
+    def test_a_shot_of_a_tab_that_is_not_on_screen_fails(self):
+        def screenshot(path):
+            write_png(path, 4, 4)
+        self.session.driver.screenshot.side_effect = screenshot
+        self.session.evaluate.return_value = False  # document.visibilityState is hidden
+        plan = iosim.parse_plan([{"shot": "home"}])
+        with mock.patch.object(iosim, "check_shot", side_effect=lambda path, expect=None: {"path": str(path), "problems": [], "ok": True}):
+            report = iosim.run_plan(plan, self.dir, session=self.session)
+        self.assertFalse(report["passed"])
+        self.assertIn("not the tab on screen", report["failures"][0]["message"])
+
     def test_optional_failure_still_passes_and_favicon_is_noise(self):
         self.session.console.return_value = [{"text": "Failed to load resource: 404", "url": "http://box/favicon.ico"}]
         plan = iosim.parse_plan({"failOnConsoleErrors": True, "steps": [{"wait": 1, "optional": True}, {"wait": 1}]})
@@ -719,14 +1003,26 @@ class PlumbingTest(unittest.TestCase):
             with iosim.FileLock("x.lock", timeout=0.3):
                 pass
 
-    def test_wait_js_fails_at_once_on_a_page_error(self):
+    def test_wait_js_fails_at_once_only_on_a_syntax_error(self):
         sess = iosim.Session.__new__(iosim.Session)
-        sess.evaluate = mock.Mock(side_effect=iosim.PageError("page error: ReferenceError: nope"))
+        sess.evaluate = mock.Mock(side_effect=iosim.PageSyntaxError("page threw: SyntaxError: Unexpected token"))
         started = iosim.time.time()
         with self.assertRaises(iosim.IosimError) as cm:
-            sess.wait(js="nope.x", timeout=10)
-        self.assertIn("threw", str(cm.exception))
+            sess.wait(js="a b", timeout=10)
+        self.assertIn("does not parse", str(cm.exception))
         self.assertLess(iosim.time.time() - started, 2)
+
+    def test_wait_js_keeps_waiting_through_a_runtime_throw(self):
+        sess = iosim.Session.__new__(iosim.Session)
+        # window.app.ready before app exists throws, then the page sets it up.
+        sess.evaluate = mock.Mock(side_effect=[iosim.PageError("page error: TypeError: undefined is not an object"), True])
+        with mock.patch.object(iosim.time, "sleep"):
+            self.assertIn("waitedMs", sess.wait(js="window.app.ready", timeout=10))
+        sess.evaluate = mock.Mock(side_effect=iosim.PageError("page error: TypeError: undefined is not an object"))
+        with self.assertRaises(iosim.IosimError) as cm:
+            sess.wait(js="window.app.ready", timeout=0.3)
+        self.assertIn("kept throwing", str(cm.exception))
+        self.assertIn("?.", cm.exception.fix)
 
     def test_with_page_does_not_rerun_a_sent_command(self):
         sess = iosim.Session.__new__(iosim.Session)

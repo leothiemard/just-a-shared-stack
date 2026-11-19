@@ -117,20 +117,40 @@ def js_program(source, is_body=False, prelude=""):
     )
 
 
-def pick_page(pages, url_hint=None):
-    """Choose the Safari page to drive from the proxy's /json list: the last one whose URL matches the hint, else the last."""
-    candidates = [p for p in pages if p.get("webSocketDebuggerUrl")]
-    if not candidates:
+def page_key(page):
+    """A Safari page's identity: the inspector page path (stable while the tab lives, across navigations, even to
+    another site) and the Safari process. The proxy's host and port are left out, so a proxy restart keeps it."""
+    ws = (page or {}).get("webSocketDebuggerUrl") or ""
+    return {"page": urllib.parse.urlsplit(ws).path, "appId": (page or {}).get("appId")}
+
+
+def find_page(pages, key):
+    """The page with this identity, or None."""
+    if not key or not key.get("page"):
         return None
-    if url_hint:
-        hint = url_hint.rstrip("/")
-        matches = [p for p in candidates if (p.get("url") or "").rstrip("/") == hint]
-        if not matches:
-            host = urllib.parse.urlsplit(url_hint).netloc
-            matches = [p for p in candidates if host and urllib.parse.urlsplit(p.get("url") or "").netloc == host]
-        if matches:
-            return matches[-1]
-    return candidates[-1]
+    for p in pages:
+        if p.get("webSocketDebuggerUrl") and page_key(p) == {"page": key["page"], "appId": key.get("appId")}:
+            return p
+    return None
+
+
+def driven_page(pages, state):
+    """The page iosim drives: the one the last `open` recorded, by identity, never by URL. Raises when it is gone,
+    or when nothing was recorded and Safari has several pages to choose from."""
+    pages = [p for p in pages if p.get("webSocketDebuggerUrl")]
+    state = state or {}
+    if state.get("page"):
+        page = find_page(pages, state)
+        if page:
+            return page
+        raise IosimError(f"the Safari page iosim was driving ({state.get('url')}) is gone: its tab was closed or Safari restarted",
+                         "run `iosim open <url>` to load the page again")
+    if len(pages) == 1:
+        return pages[0]
+    if not pages:
+        raise IosimError("Safari has no inspectable page", "run `iosim open <url>` first")
+    raise IosimError(f"Safari has {len(pages)} pages and iosim has not opened one it can name",
+                     "run `iosim open <url>`: iosim then drives that page, whatever other tabs show")
 
 
 def url_matches(current, wanted):
@@ -172,17 +192,43 @@ def webview_subtree(nodes):
     return []
 
 
+def _inside(ra, rb, slack=0.5):
+    return (ra["x"] >= rb["x"] - slack and ra["y"] >= rb["y"] - slack and ra["x"] + ra["width"] <= rb["x"] + rb["width"] + slack
+            and ra["y"] + ra["height"] <= rb["y"] + rb["height"] + slack)
+
+
+def snapshot_label_counts(nodes):
+    """{label: how many distinct elements inside the WebView carry it}. A wrapper that shares its label with a node
+    inside it (a button and its text) counts once."""
+    content = [n for n in webview_subtree(nodes)[1:] if n.get("rect") and (n.get("label") or "").strip()]
+    counts = {}
+    for n in content:
+        label = n["label"].strip()
+        if any(m is not n and m["label"].strip() == label and _inside(m["rect"], n["rect"]) for m in content):
+            continue  # an outer wrapper of a node with the same label
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
 def web_origin_from_anchors(nodes, anchors, tolerance=2.5):
     """Where the page's (0, 0) sits on screen, from elements seen both ways: each anchor is a page element with its
-    accessible name and its rect in visual-viewport CSS px (points at zoom 1); a node of the accessibility snapshot
-    inside the WebView with the same label and size gives screen - page. The offset most anchors agree on wins.
-    Returns {"origin": (x, y), "anchors": n, "target": bool} or None."""
-    content = [n for n in webview_subtree(nodes) if n.get("rect") and n.get("label")]
+    accessible name, its rect in visual-viewport CSS px (points at zoom 1) and `pageCount`, how many page elements
+    carry that name. A node inside the WebView of the accessibility snapshot with the same label and size gives
+    screen - page. Offsets within a point of each other form one cluster.
+
+    Returns None when no anchor matches; {"refused": reason} when the evidence does not single out one offset;
+    else {"origin": (x, y), "anchors": n, "unique": u, "target": bool}. It refuses when two clusters have as many
+    anchors each, when the best has one anchor whose label is not unique in both the page and the snapshot, and when
+    another cluster exists and the best rests only on repeated labels (rows of identical buttons)."""
+    sub = webview_subtree(nodes)
+    content = [n for n in sub[1:] if n.get("rect") and n.get("label")]
+    snap_counts = snapshot_label_counts(nodes)
     votes = {}
     for a in anchors:
         label = (a.get("label") or "").strip()
         if not label:
             continue
+        unique = a.get("pageCount") == 1 and snap_counts.get(label) == 1
         for n in content:
             r = n["rect"]
             if n["label"].strip() != label:
@@ -192,25 +238,38 @@ def web_origin_from_anchors(nodes, anchors, tolerance=2.5):
             # The AX frame can be the CSS box rounded outward: compare centres, not corners.
             dx = (r["x"] + r["width"] / 2) - (a["x"] + a["width"] / 2)
             dy = (r["y"] + r["height"] / 2) - (a["y"] + a["height"] / 2)
-            key = (round(dx), round(dy))
-            entry = votes.setdefault(key, {"ids": set(), "target": False})
+            entry = votes.setdefault((round(dx), round(dy)), {"ids": set(), "unique": set(), "target": False})
             entry["ids"].add(a.get("id", label))
+            if unique:
+                entry["unique"].add(a.get("id", label))
             entry["target"] = entry["target"] or bool(a.get("target"))
     if not votes:
         return None
-    # Close keys (one point apart from rounding) count together.
-    best = None
-    for key in votes:
-        ids, target = set(), False
-        for other, entry in votes.items():
-            if abs(other[0] - key[0]) <= 1 and abs(other[1] - key[1]) <= 1:
-                ids |= entry["ids"]
-                target = target or entry["target"]
-        score = (len(ids), target, len(votes[key]["ids"]))
-        if best is None or score > best[0]:
-            best = (score, key, len(ids), target)
-    _, key, count, target = best
-    return {"origin": (float(key[0]), float(key[1])), "anchors": count, "target": target}
+    # Cluster keys a point apart (rounding), seeding from the most voted key.
+    clusters = []
+    for key in sorted(votes, key=lambda k: (-len(votes[k]["ids"]), k)):
+        home = next((c for c in clusters if abs(c["key"][0] - key[0]) <= 1 and abs(c["key"][1] - key[1]) <= 1), None)
+        if home is None:
+            home = {"key": key, "ids": set(), "unique": set(), "target": False}
+            clusters.append(home)
+        home["ids"] |= votes[key]["ids"]
+        home["unique"] |= votes[key]["unique"]
+        home["target"] = home["target"] or votes[key]["target"]
+    clusters.sort(key=lambda c: (-len(c["ids"]), -len(c["unique"]), not c["target"]))
+    best = clusters[0]
+    second = clusters[1] if len(clusters) > 1 else None
+    offsets = lambda c: f"[{c['key'][0]}, {c['key'][1]}]"
+    if second and len(second["ids"]) == len(best["ids"]):
+        return {"refused": f"two screen offsets fit equally well ({offsets(best)} and {offsets(second)}, {len(best['ids'])} anchor(s) "
+                           "each): the page repeats elements with the same name and size"}
+    if len(best["ids"]) < 2 and not best["unique"]:
+        return {"refused": "only one page element matched the accessibility snapshot, and its name is not unique on the page and on "
+                           "screen (an iframe or another element may carry it)"}
+    if second and not best["unique"]:
+        return {"refused": f"the best screen offset {offsets(best)} ({len(best['ids'])} anchors) rests only on repeated names, and "
+                           f"{offsets(second)} also fits {len(second['ids'])}"}
+    return {"origin": (float(best["key"][0]), float(best["key"][1])), "anchors": len(best["ids"]),
+            "unique": len(best["unique"]), "target": best["target"]}
 
 
 def web_origin_from_title(nodes, title):
@@ -227,6 +286,26 @@ def web_origin_from_title(nodes, title):
         if r["y"] > full.get("y", 0) and r["x"] == full.get("x", 0) and r["width"] >= full.get("width", 0) - 1:
             return (r["x"], r["y"])
     return None
+
+
+def verify_tap(record, target=None):
+    """Judge what a real tap reached, from the event TAP_ARM_JS recorded in the page (None when no pointer or touch
+    event reached the page's document). With a target (a description of the element that had to get the tap), raise
+    unless the tap landed on it or inside it. Returns what was hit."""
+    if record is None:
+        if target is None:
+            return {"pageHit": None}
+        raise IosimError(f"the tap reached no element of the page (no touch, pointer, mouse or click event in its document), so {target} did not get it",
+                         "it may have hit Safari's own toolbar, an iframe, or a tab other than the page iosim drives; "
+                         "take a screenshot to see the screen, then tap --at <x> <y> or tap --label")
+    hit = record.get("target")
+    if target is None:
+        return {"pageHit": hit, "event": record.get("type")}
+    if not record.get("inside"):
+        where = f" at ({record.get('x')}, {record.get('y')}) CSS px" if record.get("x") is not None else ""
+        raise IosimError(f"the tap landed on {hit}{where}, not on {target}",
+                         "iosim placed the page on screen wrongly; tap --at <x> <y> (screen points) or tap --label <accessible name>")
+    return {"pageHit": hit, "event": record.get("type"), "verified": True}
 
 
 def dict_get_path(obj, path):
@@ -727,6 +806,32 @@ def pick_label_node(nodes, text):
     return inner[0]
 
 
+def flag_value(args, flag):
+    """The value of `--flag v` or `--flag=v` in an argument list, else None."""
+    for i, a in enumerate(args):
+        if a == flag and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def precheck_bound_device(args, udid, sessions=None):
+    """Before any device action: the simulator a given agent-device command names, from its own --udid, or from the
+    live session its --session names (`sessions`: an agent-device `session list` answer). Raises on a mismatch;
+    returns the udid when it could tell, else None (then the first `open` answers it)."""
+    named = flag_value(args, "--udid")
+    if not named and sessions:
+        session = flag_value(args, "--session")
+        for item in (sessions.get("sessions") or []) if isinstance(sessions, dict) else []:
+            if session and isinstance(item, dict) and item.get("name") == session:
+                named = item.get("device_udid") or item.get("id")
+    if named and named != udid:
+        raise IosimError(f"the agent-device command drives simulator {named}, but iosim resolved {udid}",
+                         f"pass --device {named} (or set IOSIM_DEVICE) to match the command, or call device_open for {udid} and export that command")
+    return named
+
+
 def check_bound_device(data, udid):
     """agent-device's `open` answers with the device it acted on. A command bound to another simulator (T3's
     device_open binds one) would send taps there while JavaScript goes to `udid`: refuse."""
@@ -758,6 +863,7 @@ class Driver:
             self.mode = "agent-device (PATH)" if found else "simctl"
         self.session_opened = False
         self.session_name = None
+        self.prechecked = False
 
     def describe(self):
         return {"mode": self.mode, "agentDevice": self.command_text(), "session": self.session_name}
@@ -799,14 +905,30 @@ class Driver:
         self.session_name = data.get("session") if isinstance(data, dict) else None
         write_state(f"agent-device-{self.udid}.json", {"command": self.ad, "session": self.session_name, "at": time.time()})
 
+    def precheck(self):
+        """For a given command, learn its simulator without a device action when it says (its --udid, or its --session
+        in `session list`), so a mismatch is refused before Safari opens on the other simulator."""
+        if self.mode != "agent-device (given)" or self.prechecked:
+            return
+        sessions = None
+        if not flag_value(self.ad, "--udid") and flag_value(self.ad, "--session"):
+            try:
+                sessions = self.ad_run("session", "list", timeout=60)
+            except IosimError:
+                sessions = None
+        precheck_bound_device(self.ad, self.udid, sessions)
+        self.prechecked = True
+
     def ensure_session(self):
         """agent-device input, snapshots and recordings need an app session: open Safari once per process. Its answer
         names the simulator, which must be the one iosim resolved."""
         if self.ad and not self.session_opened:
+            self.precheck()
             self._opened(self.ad_run("open", SAFARI))
 
     def open_url(self, url):
         if self.ad:
+            self.precheck()
             self._opened(self.ad_run("open", SAFARI, url))
         else:
             simctl("openurl", self.udid, url)
@@ -1049,6 +1171,7 @@ const describe = (n) => {
 };
 const all = document.querySelectorAll(__sel);
 if (!all.length) throw new Error("no element matches " + __sel);
+if (document.visibilityState !== "visible") return {hidden: true, target: describe(all[0])};
 if (all.length > 1 && !__first) return {ambiguous: all.length, matches: [...all].slice(0, 5).map(describe)};
 const el = all[0];
 const inView = (r) => r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
@@ -1086,10 +1209,30 @@ const push = (n, target) => {
   if (!name || b.width === 0 || b.height === 0 || !inView(b)) return;
   anchors.push(Object.assign({id: anchors.length, label: name, target}, toVisual(b)));
 };
+const CANDIDATES = "button, a[href], input, select, textarea, h1, h2, h3, h4, h5, h6, p, label, li, [role=button], [aria-label]";
 push(el, true);
-for (const n of document.querySelectorAll("button, a[href], input, select, textarea, h1, h2, h3, h4, h5, h6, p, label, li, [role=button], [aria-label]")) {
+const candidates = [...document.querySelectorAll(CANDIDATES)];
+for (const n of candidates) {
   if (anchors.length >= 30) break;
   push(n, false);
+}
+// How many page elements carry each anchor's name (a wrapper of an element with the same name counts once).
+// Unknown (null) on a very large page.
+if (candidates.length <= 3000) {
+  const wanted = new Set(anchors.map((a) => a.label));
+  const byName = new Map();
+  for (const n of candidates) {
+    const name = nameOf(n);
+    if (!wanted.has(name)) continue;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(n);
+  }
+  for (const a of anchors) {
+    const list = byName.get(a.label) || [];
+    a.pageCount = list.filter((n) => !list.some((m) => m !== n && n.contains(m))).length;
+  }
+} else {
+  for (const a of anchors) a.pageCount = null;
 }
 return {rect: toVisual(r), cssPoint: {x: cx, y: cy}, scale, visual: {width: visW * scale, height: visH * scale},
         hit: hit && (hit === el || el.contains(hit)) ? null : (hit ? describe(hit) : "nothing (outside the page)"),
@@ -1104,14 +1247,70 @@ return {focused: !!el && !!a && (a === el || el.contains(a)), active: describe(a
 """
 
 
+# Arms a one-shot listener for the next touch, pointer, mouse or click event anywhere in the document, before a real
+# tap. It records the event's target and whether it is (inside) the expected element, keeps the record in
+# window.__iosimTap and logs it, so it reaches iosim even when the tap navigates away. Runs as a function body after
+# a prelude that defines __tok and __sel (a selector or null).
+TAP_ARM_JS = r"""
+const describe = (n) => {
+  if (!(n instanceof Element)) return n && n.nodeName ? n.nodeName.toLowerCase() : String(n);
+  let d = n.tagName.toLowerCase();
+  if (n.id) return d + "#" + n.id;
+  const cls = [...n.classList].slice(0, 2).join(".");
+  if (cls) d += "." + cls;
+  const text = (n.getAttribute("aria-label") || n.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40);
+  return text ? d + ' "' + text + '"' : d;
+};
+let el = null;
+if (__sel !== null) {
+  el = document.querySelector(__sel);
+  if (!el) throw new Error("no element matches " + __sel);
+}
+const log = console.debug.bind(console);
+const types = ["touchstart", "pointerdown", "mousedown", "click"];
+window.__iosimTap = null;
+const off = () => types.forEach((t) => window.removeEventListener(t, handler, true));
+function handler(ev) {
+  if (window.__iosimTap && window.__iosimTap.token === __tok) return;
+  const path = ev.composedPath ? ev.composedPath() : [];
+  const t = ev.target;
+  const touch = ev.touches && ev.touches[0];
+  const rec = {token: __tok, type: ev.type, target: describe(t),
+               inside: el ? (path.includes(el) || (t instanceof Node && el.contains(t))) : null,
+               x: touch ? touch.clientX : (typeof ev.clientX === "number" ? ev.clientX : null),
+               y: touch ? touch.clientY : (typeof ev.clientY === "number" ? ev.clientY : null)};
+  window.__iosimTap = rec;
+  off();
+  try { log("__iosimTap " + JSON.stringify(rec)); } catch (e) {}
+}
+types.forEach((t) => window.addEventListener(t, handler, {capture: true, passive: true}));
+setTimeout(off, 20000);
+return {armed: true, target: el ? describe(el) : null, visible: document.visibilityState === "visible"};
+"""
+
+TAP_MARK = "__iosimTap "
+
+
 def tap_point(info, nodes):
     """Screen point for a measured target (TAP_RECT_JS's answer) and an accessibility snapshot. Raises when the
-    target is covered, off screen, or the page cannot be placed on screen."""
+    target is covered or off screen, or when the page cannot be placed on screen without guessing."""
     found = web_origin_from_anchors(nodes, info.get("anchors") or [])
+    title_origin = web_origin_from_title(nodes, info.get("title"))
+    if found and found.get("refused"):
+        raise IosimError("could not place Safari's web area on screen: " + found["refused"],
+                         "tap --label <the element's exact accessible name>, give the element a unique accessible name, "
+                         "or measure it with eval and tap --at <x> <y> (screen points)")
     if found:
-        origin, how = found["origin"], {"originVia": "anchors", "anchors": found["anchors"], "targetAnchored": found["target"]}
+        origin, how = found["origin"], {"originVia": "anchors", "anchors": found["anchors"], "uniqueAnchors": found["unique"],
+                                        "targetAnchored": found["target"]}
+        if title_origin is not None:
+            if abs(title_origin[0] - origin[0]) > 2 or abs(title_origin[1] - origin[1]) > 2:
+                raise IosimError(f"could not place Safari's web area on screen: the anchors put it at {list(origin)} but the web area "
+                                 f"node says {list(title_origin)}",
+                                 "tap --label <accessible name>, or measure the element with eval and tap --at <x> <y>")
+            how["webAreaAgrees"] = True
     else:
-        origin = web_origin_from_title(nodes, info.get("title"))
+        origin = title_origin
         how = {"originVia": "title node"}
         if origin is None:
             raise IosimError("could not place Safari's web area on screen: no page element matched the accessibility snapshot",
@@ -1131,24 +1330,34 @@ class Session:
         self.driver = Driver(self.udid, agent_device)
 
     # pages -------------------------------------------------------
-    def last_url(self):
-        return (read_state(f"page-{self.udid}.json") or {}).get("url")
+    def page_state(self):
+        return read_state(f"page-{self.udid}.json") or {}
 
-    def connect(self, hint=None, timeout=10.0):
-        pages = list_pages(self.udid)
-        page = pick_page(pages, hint or self.last_url())
-        if not page:
-            raise IosimError("Safari has no inspectable page", "run `iosim open <url>` first")
-        return Inspector(page["webSocketDebuggerUrl"], timeout=timeout)
+    def remember_page(self, page, url):
+        """Record the page iosim drives by identity (see page_key); every later command addresses it, not a URL."""
+        write_state(f"page-{self.udid}.json", dict(page_key(page), url=url, at=time.time()))
 
-    def with_page(self, fn, hint=None, retries=3, idempotent=False):
-        """Run fn on a fresh page connection. A failed connect is retried. A connection lost after fn sent a command
-        is retried only when fn is idempotent (a read): an eval with side effects must not run twice."""
+    def page(self):
+        return driven_page(list_pages(self.udid), self.page_state())
+
+    def connect(self, timeout=10.0):
+        return Inspector(self.page()["webSocketDebuggerUrl"], timeout=timeout)
+
+    def with_page(self, fn, retries=3, idempotent=False):
+        """Run fn on a fresh connection to the driven page. A failed connect is retried, except when the page is gone.
+        A connection lost after fn sent a command is retried only when fn is idempotent (a read): an eval with side
+        effects must not run twice."""
         last = None
         for attempt in range(retries):
             try:
-                insp = self.connect(hint)
-            except (IosimError, OSError) as e:
+                insp = self.connect()
+            except IosimError as e:
+                if "is gone" in str(e) or "has not opened one" in str(e) or "no inspectable page" in str(e):
+                    raise
+                last = e
+                time.sleep(0.5)
+                continue
+            except OSError as e:
                 last = e
                 time.sleep(0.5)
                 continue
@@ -1166,14 +1375,15 @@ class Session:
             raise last
         raise IosimError(f"lost the page connection: {last}", "retry; if it repeats run `iosim proxy restart`")
 
-    def evaluate(self, source, is_body=False, timeout=30.0, hint=None, prelude="", idempotent=False):
-        return self.with_page(lambda i: i.evaluate(source, is_body=is_body, timeout=timeout, prelude=prelude), hint=hint, idempotent=idempotent)
+    def evaluate(self, source, is_body=False, timeout=30.0, prelude="", idempotent=False):
+        return self.with_page(lambda i: i.evaluate(source, is_body=is_body, timeout=timeout, prelude=prelude), idempotent=idempotent)
 
     def _probe(self, page, extra=""):
         insp = Inspector(page["webSocketDebuggerUrl"], timeout=5)
         try:
             return insp.evaluate("({href: location.href, readyState: document.readyState, nav: window.__iosimNav || null,"
-                                 " mark: window.__iosimMark || null, title: document.title" + extra + "})", timeout=5)
+                                 " mark: window.__iosimMark || null, title: document.title,"
+                                 " visible: document.visibilityState === 'visible'" + extra + "})", timeout=5)
         finally:
             insp.close()
 
@@ -1193,51 +1403,81 @@ class Session:
         return marked
 
     def open(self, url, new_tab=False, wait=True, timeout=45.0):
+        """Navigate the driven page (same tab), or open the URL through the device in a new tab when asked, when Safari
+        has no page, or when iosim cannot name the page it drives. Only the navigated page is watched for the load."""
         started = time.time()
         token = f"iosim-{time.time_ns()}"
         pages = list_pages(self.udid)
         before = {p["webSocketDebuggerUrl"] for p in pages}
         blank = url == "about:blank"
-        if blank and (new_tab or not pages):
+        driven = None
+        if pages and not new_tab:
+            try:
+                driven = driven_page(pages, self.page_state())
+            except IosimError as e:
+                if blank:
+                    raise IosimError(f"about:blank blanks the page iosim drives, and there is none: {e}", e.fix, code=2)
+        if blank and (new_tab or not driven):
             raise IosimError("about:blank can only replace the page in the current tab, and Safari has no page open (or --new-tab was given)",
                              "open an http(s) URL first, then `iosim open about:blank` to blank that tab", code=2)
         how = "new-tab"
         marked = set()
-        if pages and not new_tab:
-            def navigate(insp):
-                insp.evaluate(f"(window.__iosimNav = {json.dumps(token)}, setTimeout(() => location.assign({json.dumps(url)}), 0), true)")
+        if driven:
+            insp = Inspector(driven["webSocketDebuggerUrl"], timeout=10)
             try:
-                self.with_page(navigate, retries=1)
-                how = "same-tab"
-            except IosimError:
-                if blank:
-                    raise
-                marked = self._mark_pages(pages, token)
-                self.driver.open_url(url)
+                insp.evaluate(f"(window.__iosimNav = {json.dumps(token)}, setTimeout(() => location.assign({json.dumps(url)}), 0), true)")
+            finally:
+                insp.close()
+            how = "same-tab"
+            self.remember_page(driven, url)
         else:
+            write_state(f"page-{self.udid}.json", None)
             marked = self._mark_pages(pages, token)
             self.driver.open_url(url)
-        write_state(f"page-{self.udid}.json", {"url": url, "at": time.time()})
         result = {"url": url, "how": how, "driver": self.driver.mode}
         if wait:
-            result.update(self.wait_loaded(url, token, how, before, marked, timeout))
+            result.update(self.wait_loaded(url, token, how, before, marked, timeout, driven=driven))
+        elif how == "new-tab":
+            result.update(self._identify_new_tab(before))
         result["ms"] = int((time.time() - started) * 1000)
         return result
 
-    def wait_loaded(self, url, token, how, before, marked, timeout):
-        """Wait for the document the open started: in the same tab, one without our navigation tag; in a new tab,
-        a page that did not exist before, or an old one that has since loaded a new document (no mark). Fails at once
-        when Safari shows its own error page for an http(s) URL."""
+    def _identify_new_tab(self, before, seconds=5.0):
+        """For open --new-tab --no-wait: record the one page that appeared, if exactly one did."""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            fresh = [p for p in list_pages(self.udid) if p["webSocketDebuggerUrl"] not in before]
+            if len(fresh) == 1:
+                self.remember_page(fresh[0], fresh[0].get("url"))
+                return {"page": page_key(fresh[0])["page"]}
+            time.sleep(0.3)
+        return {"page": None, "warning": "could not tell which tab opened; later commands refuse until `iosim open` names one"}
+
+    def wait_loaded(self, url, token, how, before, marked, timeout, driven=None):
+        """Wait for the document the open started: in the same tab, the navigated page (by identity) once it holds a
+        document without our navigation tag; in a new tab, a page that did not exist before, or an old one that has
+        since loaded a new document (no mark). Fails at once when Safari shows its own error page for an http(s) URL,
+        and when the navigated page goes away."""
         deadline = time.time() + timeout
         last = None
         fresh_seen = False
+        gone_since = None
         while time.time() < deadline:
             time.sleep(0.3)
             try:
                 pages = list_pages(self.udid)
                 if how == "same-tab":
-                    page = pick_page(pages, self.last_url())
-                    candidates = [page] if page else []
+                    page = find_page(pages, page_key(driven))
+                    if page is None:
+                        # A proxy blip can drop the list for a moment; a page missing for 3 s is gone.
+                        gone_since = gone_since or time.time()
+                        if time.time() - gone_since > 3:
+                            raise IosimError(f"the tab iosim navigated to {url} went away (closed, or Safari restarted)",
+                                             "run `iosim open <url>` again")
+                        last = "the navigated page is not listed"
+                        continue
+                    gone_since = None
+                    candidates = [page]
                 else:
                     candidates = [p for p in pages if p["webSocketDebuggerUrl"] not in before or p["webSocketDebuggerUrl"] in marked]
                     candidates.sort(key=lambda p: not url_matches(p.get("url"), url))
@@ -1256,10 +1496,14 @@ class Session:
                     failure = load_failure(url, info["href"])
                     if failure:
                         raise IosimError(failure, f"check that the server is up and reachable from this Mac (curl -sI {url}), then open it again")
-                    write_state(f"page-{self.udid}.json", {"url": info["href"], "at": time.time()})
-                    return {"finalUrl": info["href"], "title": info["title"], "redirected": not url_matches(info["href"], url)}
+                    self.remember_page(page, info["href"])
+                    out = {"finalUrl": info["href"], "title": info["title"], "redirected": not url_matches(info["href"], url),
+                           "page": page_key(page)["page"], "visible": info.get("visible")}
+                    if info.get("visible") is False:
+                        out["warning"] = "the page loaded in a tab that is not on screen: screenshots show another tab and taps refuse"
+                    return out
             except IosimError as e:
-                if str(e).startswith("Safari could not load"):
+                if str(e).startswith(("Safari could not load", "the tab iosim navigated")):
                     raise
                 last = str(e)
             except (OSError, ConnectionError, ValueError) as e:
@@ -1282,6 +1526,8 @@ class Session:
                 m = ev["params"]["message"]
                 if errors_only and m.get("level") != "error":
                     continue
+                if str(m.get("text") or "").startswith(TAP_MARK):
+                    continue  # iosim's own tap record
                 out.append({"level": m.get("level"), "source": m.get("source"), "text": m.get("text"),
                             "url": m.get("url"), "line": m.get("line"), "column": m.get("column")})
             return out
@@ -1300,30 +1546,46 @@ class Session:
         else:
             raise IosimError("wait needs selector, text, js or ms", code=2)
         start = time.time()
+        last_error = None
         while True:
             try:
                 if self.evaluate(expr, timeout=5, idempotent=True):
                     return {"waitedMs": int((time.time() - start) * 1000)}
+                last_error = None
+            except PageSyntaxError as e:
+                # It will never parse: say so now rather than at the timeout.
+                raise IosimError(f"wait: the condition does not parse: {e}", "it must be one JavaScript expression")
             except PageError as e:
-                # A page that throws will keep throwing: say so now rather than at the timeout.
-                raise IosimError(f"wait: the condition threw: {e}", "fix the expression (it must be one JavaScript expression)")
-            except IosimError:
-                pass
+                last_error = e  # it may stop throwing once the page has set up (window.app before app exists)
+            except IosimError as e:
+                if "is gone" in str(e) or "has not opened one" in str(e):
+                    raise
             if time.time() - start > timeout:
+                if last_error is not None:
+                    raise IosimError(f"wait timed out after {timeout:.0f}s for {selector or text or js}; the condition kept throwing: {last_error}",
+                                     "guard what may not exist yet with ?. (window.app?.ready), or fix the expression")
                 raise IosimError(f"wait timed out after {timeout:.0f}s for {selector or text or js}")
             time.sleep(0.25)
 
     # input -------------------------------------------------------
-    def tap(self, selector=None, label=None, at=None, first=False, contains=False):
+    def tap(self, selector=None, label=None, at=None, first=False, contains=False, expect=None):
+        """A real tap. With a selector (or `expect`, a selector for --label and --at), a one-shot listener in the page
+        records what the touch reached, and the tap fails unless that element (or one inside it) got it."""
         if at is not None:
             x, y = at
-            self.driver.tap(x, y)
-            return {"x": x, "y": y, "via": "coordinates"}
+            out = {"x": x, "y": y, "via": "coordinates"}
+            out.update(self._verified(lambda: self.driver.tap(x, y), expect, required=expect is not None))
+            return out
         if label is not None:
-            detail = self.driver.tap_label(label, contains=contains)
+            detail = {}
+
+            def do():
+                detail["d"] = self.driver.tap_label(label, contains=contains)
+            check = self._verified(do, expect, required=expect is not None)
             out = {"label": label, "via": "accessibility label" + (" (contains)" if contains else "")}
-            if contains and isinstance(detail, dict):
-                out.update(detail)
+            if contains and isinstance(detail.get("d"), dict):
+                out.update(detail["d"])
+            out.update(check)
             return out
         self.driver.require_ad("tap")
         prelude = f"const __sel = {json.dumps(selector)}, __first = {json.dumps(bool(first))};"
@@ -1331,6 +1593,9 @@ class Session:
         if info.get("ambiguous"):
             raise IosimError(f"{info['ambiguous']} elements match {selector!r}: {', '.join(info['matches'])}",
                              "make the selector match one element, or pass --first (plan: \"first\": true) to tap the first")
+        if info.get("hidden"):
+            raise IosimError(f"the page iosim drives is not the tab on screen, so a tap cannot reach {info['target']}",
+                             "open the page in the visible tab (iosim open <url> --new-tab), or close Safari's other tabs")
         if info.get("invisible"):
             raise IosimError(f"{selector!r} matches {info['target']}, which has no size (hidden?)", "wait for it to show, or tap another element")
         if info.get("offscreen"):
@@ -1342,8 +1607,68 @@ class Session:
         snap = self.driver.snapshot()
         nodes = snap.get("nodes", []) if isinstance(snap, dict) else []
         x, y, origin, how = tap_point(info, nodes)
-        self.driver.tap(x, y)
-        return {"selector": selector, "target": info["target"], "x": x, "y": y, "rect": info["rect"], "origin": origin, "via": "selector", **how}
+        check = self._verified(lambda: self.driver.tap(x, y), selector, required=True)
+        return {"selector": selector, "target": info["target"], "x": x, "y": y, "rect": info["rect"], "origin": origin, "via": "selector",
+                **how, **check}
+
+    def _verified(self, do_tap, selector, required, wait=2.0):
+        """Arm TAP_ARM_JS in the driven page, run do_tap, and judge what the touch reached (verify_tap). Without a
+        selector the result only reports what the page saw. When `required` is false and the page cannot be armed
+        (no page, say), the tap still happens and the result says it was not checked."""
+        token = f"tap-{time.time_ns()}"
+        try:
+            insp = self.connect()
+        except (IosimError, OSError) as e:
+            if required:
+                raise
+            do_tap()
+            return {"pageHit": None, "checked": False, "why": str(e)}
+        try:
+            try:
+                insp.call("Console.enable")
+                armed = insp.evaluate(TAP_ARM_JS, is_body=True, prelude=f"const __tok = {json.dumps(token)}, __sel = {json.dumps(selector)};")
+            except (IosimError, OSError, ConnectionError) as e:
+                if required:
+                    raise IosimError(f"could not prepare the tap check in the page: {e}", getattr(e, "fix", None))
+                do_tap()
+                return {"pageHit": None, "checked": False, "why": str(e)}
+            if required and not armed.get("visible"):
+                raise IosimError(f"the page iosim drives is not the tab on screen, so a tap cannot reach {armed.get('target') or selector}",
+                                 "open the page in the visible tab (iosim open <url> --new-tab), or close Safari's other tabs")
+            do_tap()
+            record = self._tap_record(insp, token, wait)
+        finally:
+            insp.close()
+        return verify_tap(record, armed.get("target") if selector else None)
+
+    @staticmethod
+    def _tap_record(insp, token, wait):
+        """The tap record: from the console message (survives a navigation the tap starts), else window.__iosimTap."""
+        deadline = time.time() + wait
+        while True:
+            for ev in insp.events:
+                if ev.get("method") != "Console.messageAdded":
+                    continue
+                text = str(ev["params"]["message"].get("text") or "")
+                if text.startswith(TAP_MARK):
+                    try:
+                        rec = json.loads(text[len(TAP_MARK):])
+                    except ValueError:
+                        continue
+                    if rec.get("token") == token:
+                        return rec
+            left = deadline - time.time()
+            if left <= 0:
+                break
+            try:
+                insp.drain(min(left, 0.25))
+            except (ConnectionError, OSError, ValueError):
+                break
+        try:
+            rec = insp.evaluate("window.__iosimTap || null", timeout=5)
+        except (IosimError, ConnectionError, OSError, ValueError):
+            return None
+        return rec if isinstance(rec, dict) and rec.get("token") == token else None
 
     def type_text(self, text, selector=None, enter=False, keep_keyboard=False, first=False):
         out = {}
@@ -1390,18 +1715,31 @@ class Session:
         return normalize_audit(result)
 
 
+AUDIT_SHAPES = "an array of findings, or an object with a `findings` array ({findings: [...]}); [] means the page passed"
+SEVERITIES = {"fail": "fail", "error": "fail", "warn": "warn", "warning": "warn"}
+
+
 def normalize_audit(result):
-    """Accept {findings: [...]} or a bare list from a project's audit script."""
+    """Accept a bare list of findings or an object with a `findings` list. Anything else (axe's {violations}, a
+    count, nothing) is an error: a shape iosim does not read must not pass as an empty audit."""
     if isinstance(result, list):
         result = {"findings": result}
-    if not isinstance(result, dict) or not isinstance(result.get("findings", []), list):
-        raise IosimError(f"an audit script must give {{findings: [...]}} or an array of findings, got {json.dumps(result)[:200]}",
-                         "end the script with an expression (or `return`) that gives an array; [] means the page passed")
+    if not isinstance(result, dict) or not isinstance(result.get("findings"), list):
+        got = json.dumps(result)[:200]
+        keys = f" (keys: {', '.join(sorted(result)[:8])})" if isinstance(result, dict) else ""
+        raise IosimError(f"an audit script must give {AUDIT_SHAPES}; got {got}{keys}",
+                         "end the script with an expression (or `return`) that gives the findings array, or wrap it: {findings: [...]}")
     findings = []
-    for f in result.get("findings") or []:
+    for f in result["findings"]:
         if not isinstance(f, dict):
             f = {"message": str(f)}
-        f.setdefault("severity", "fail")
+        f = dict(f)
+        raw = f.get("severity", "fail")
+        severity = SEVERITIES.get(str(raw).lower()) if raw is not None else "fail"
+        if severity is None:
+            raise IosimError(f"an audit finding has severity {raw!r}; iosim reads fail (or error) and warn (or warning)",
+                             "give each finding severity \"fail\" or \"warn\" (no severity counts as fail)")
+        f["severity"] = severity
         f.setdefault("rule", "custom")
         # Scripts written for other runners name things differently: {rule, element, detail} is common.
         if "message" not in f and "detail" in f:
@@ -1409,7 +1747,7 @@ def normalize_audit(result):
         if "selector" not in f and "element" in f:
             f["selector"] = f["element"]
         findings.append(f)
-    result["findings"] = findings
+    result = dict(result, findings=findings)
     result["counts"] = {"fail": sum(f["severity"] == "fail" for f in findings), "warn": sum(f["severity"] == "warn" for f in findings)}
     return result
 
@@ -1592,6 +1930,9 @@ def parse_step(raw, index, base_dir="."):
         if v.get("contains"):
             need("label" in v, "contains goes with label")
             step["contains"] = True
+        if "expect" in v:
+            need("selector" not in v and isinstance(v["expect"], str), "expect is a selector, and goes with label or at")
+            step["expect"] = v["expect"]
     elif kind == "type":
         if isinstance(v, str):
             v = {"text": v}
@@ -1694,22 +2035,62 @@ def _raise_terminated(signum, frame):
     raise Terminated(f"signal {signum}")
 
 
+def write_placeholder_report(out_dir, why="the run started but has not finished"):
+    """Replace report.json with one that says the run did not pass, before anything that can fail: a run that dies
+    early must never leave an earlier passing report in its folder."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    report = {"passed": False, "placeholder": True, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+              "failures": [{"step": None, "kind": "incomplete", "message": why}]}
+    (out / "report.json").write_text(json.dumps(report, indent=2))
+    return out / "report.json"
+
+
+def write_setup_failure(out_dir, error):
+    """A run that failed before its first step (bad plan, no device): say why in report.json."""
+    try:
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        report = {"passed": False, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                  "failures": [{"step": None, "kind": "setup", "message": str(error), **({"detail": {"fix": error.fix}} if getattr(error, "fix", None) else {})}]}
+        (out / "report.json").write_text(json.dumps(report, indent=2, default=str))
+    except OSError:
+        pass
+
+
 def run_plan(plan, out_dir, device=None, agent_device=None, log=None, session=None):
     """Run a parsed plan. `passed` starts false and turns true only when every step ran to the end with no failure.
     An interruption (Ctrl-C, SIGTERM) or a crash is recorded as a failure; the Text Size and appearance are restored
     and report.json is written whatever happened, then the interruption propagates."""
     out = Path(out_dir).resolve()
-    out.mkdir(parents=True, exist_ok=True)
-    session = session or Session(device or plan.get("device"), agent_device)
+    write_placeholder_report(out)
+    in_main = True
+    try:
+        old_term = signal.signal(signal.SIGTERM, _raise_terminated)
+    except ValueError:  # not the main thread (tests)
+        in_main, old_term = False, None
+    try:
+        return _run_plan(plan, out, device, agent_device, log, session, in_main)
+    finally:
+        if in_main:
+            signal.signal(signal.SIGTERM, old_term)
+
+
+def _run_plan(plan, out, device, agent_device, log, session, in_main):
+    try:
+        session = session or Session(device or plan.get("device"), agent_device)
+        udid = session.udid
+        original = {"textSize": text_size_get(udid), "appearance": appearance_get(udid)}
+    except IosimError as e:
+        write_setup_failure(out, e)
+        raise
     drv = session.driver
-    udid = session.udid
     started = time.time()
     report = {
         "plan": plan["name"], "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "out": str(out),
         "device": {k: session.device[k] for k in ("name", "udid", "runtime")}, "driver": drv.describe(),
         "steps": [], "shots": [], "audits": [], "console": [], "values": {}, "failures": [], "passed": False,
     }
-    original = {"textSize": text_size_get(udid), "appearance": appearance_get(udid)}
     report["initial"] = dict(original)
     current = {"textSize": original["textSize"]}
     shot_no = [0]
@@ -1728,11 +2109,6 @@ def run_plan(plan, out_dir, device=None, agent_device=None, log=None, session=No
             entry["optional"] = True
         report["failures"].append(entry)
 
-    in_main = True
-    try:
-        old_term = signal.signal(signal.SIGTERM, _raise_terminated)
-    except ValueError:  # not the main thread (tests)
-        in_main, old_term = False, None
     video_path = None
     try:
         if plan.get("textSize"):
@@ -1810,16 +2186,37 @@ def run_plan(plan, out_dir, device=None, agent_device=None, log=None, session=No
         finally:
             if in_main:
                 signal.signal(signal.SIGINT, old_int)
-                signal.signal(signal.SIGTERM, old_term)
+                signal.signal(signal.SIGTERM, _raise_terminated)
+        report["seconds"] = round(time.time() - started, 1)
+        report["passed"] = completed and not [f for f in report["failures"] if not f.get("optional")]
+        report_path = out / "report.json"
+        report_path.write_text(json.dumps(report, indent=2, default=str))
+        # The verdict is on disk before the contact sheet, which can take a while; an interruption while it is built
+        # still fails the run.
         if video_path and isinstance(report.get("video"), dict) and report["video"].get("exists") and "interrupted" not in report:
             try:
                 report["contactSheet"] = contact_sheet(video_path, out / "contact-sheet.png", driver=drv)
+            except (KeyboardInterrupt, Terminated) as e:
+                why = "interrupted (Ctrl-C)" if isinstance(e, KeyboardInterrupt) else "terminated (SIGTERM)"
+                report["contactSheet"] = {"error": f"the run was {why} while building the contact sheet"}
+                report["failures"].append({"step": None, "kind": "interrupted", "message": f"the run was {why}"})
+                report["interrupted"] = why
+                report["passed"] = False
+                report_path.write_text(json.dumps(report, indent=2, default=str))
+                raise
             except Exception as e:
                 report["contactSheet"] = {"error": str(e), "fix": getattr(e, "fix", None)}
-        report["seconds"] = round(time.time() - started, 1)
-        report["passed"] = completed and not [f for f in report["failures"] if not f.get("optional")]
-        (out / "report.json").write_text(json.dumps(report, indent=2, default=str))
+            report["seconds"] = round(time.time() - started, 1)
+            report_path.write_text(json.dumps(report, indent=2, default=str))
     return report
+
+
+def driven_page_visible(session):
+    """Whether the page iosim drives is the tab on screen; None when there is no page to ask."""
+    try:
+        return bool(session.evaluate("document.visibilityState === 'visible'", timeout=5, idempotent=True))
+    except (IosimError, OSError, ConnectionError, ValueError):
+        return None
 
 
 def run_step(session, step, out, report, current, shot_no, plan, fail):
@@ -1835,7 +2232,7 @@ def run_step(session, step, out, report, current, shot_no, plan, fail):
         return {"value": value}
     if kind == "tap":
         return session.tap(selector=step.get("selector"), label=step.get("label"), at=step.get("at"),
-                           first=step.get("first", False), contains=step.get("contains", False))
+                           first=step.get("first", False), contains=step.get("contains", False), expect=step.get("expect"))
     if kind == "type":
         return session.type_text(step["text"], selector=step.get("selector"), enter=step["enter"], keep_keyboard=step["keepKeyboard"],
                                  first=step.get("first", False))
@@ -1846,6 +2243,10 @@ def run_step(session, step, out, report, current, shot_no, plan, fail):
         path = out / f"{shot_no[0]:02d}-{step['shotName']}.png"
         drv.screenshot(path)
         check = check_shot(path, plan.get("expectShot"))
+        check["pageVisible"] = driven_page_visible(session)
+        if check["pageVisible"] is False:
+            check["problems"].append("the page iosim drives is not the tab on screen: this screenshot shows another tab")
+            check["ok"] = False
         check.update(name=step["shotName"], textSize=current["textSize"], step=step["index"] + 1)
         report["shots"].append(check)
         if not check["ok"]:
@@ -2116,6 +2517,7 @@ def build_parser():
     tg.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"), help="screen points")
     tp.add_argument("--first", action="store_true", help="with --selector: tap the first match when several match")
     tp.add_argument("--contains", action="store_true", help="with --label: match a label containing the text (case-insensitive); must be one element")
+    tp.add_argument("--expect", metavar="SELECTOR", help="with --label or --at: fail unless this page element (or one inside it) got the tap")
 
     ty = sub.add_parser("type", help="type text with the keyboard (agent-device); --selector taps the field first")
     ty.add_argument("text")
@@ -2198,6 +2600,8 @@ def dispatch(args):
         device = device or args.device
         if rest[:1] == ["run"] and len(rest) >= 2 and rest[1] != "-":
             rp = build_parser().parse_args(rest)
+            if not rp.check:
+                write_placeholder_report(rp.out, "the remote run started but its evidence has not been copied back")
             plan = load_plan_arg(rp.plan, parse_vars(rp.var))
             if rp.check:
                 return {"ok": True, "plan": plan}, 0
@@ -2250,7 +2654,14 @@ def dispatch(args):
             pass
         return {"ok": True, **contact_sheet(args.video, args.out, args.frames, drv)}, 0
     if cmd == "run":
-        plan = load_plan_arg(args.plan, parse_vars(args.var))
+        if not args.check:
+            write_placeholder_report(args.out)  # first: a run that fails from here on never leaves an old pass behind
+        try:
+            plan = load_plan_arg(args.plan, parse_vars(args.var))
+        except IosimError as e:
+            if not args.check:
+                write_setup_failure(args.out, e)
+            raise
         if args.check:
             return {"ok": True, "plan": plan}, 0
         report = run_plan(plan, args.out, args.device, args.agent_device, log=lambda m: print(m, file=sys.stderr))
@@ -2308,7 +2719,10 @@ def dispatch(args):
 
     session = Session(udid, args.agent_device)
     if cmd == "pages":
-        return {"ok": True, "pages": list_pages(udid)}, 0
+        pages, key = list_pages(udid), session.page_state()
+        for pg in pages:
+            pg["driven"] = bool(key.get("page")) and page_key(pg) == {"page": key["page"], "appId": key.get("appId")}
+        return {"ok": True, "pages": pages}, 0
     if cmd == "open":
         return {"ok": True, **session.open(args.url, new_tab=args.new_tab, wait=not args.no_wait, timeout=args.timeout)}, 0
     if cmd == "eval":
@@ -2324,9 +2738,10 @@ def dispatch(args):
     if cmd == "wait":
         return {"ok": True, **session.wait(args.selector, args.text, args.js, args.ms, args.timeout)}, 0
     if cmd == "tap":
-        if args.first and not args.selector or args.contains and args.label is None:
-            raise IosimError("--first goes with --selector, --contains with --label", code=2)
-        return {"ok": True, **session.tap(selector=args.selector, label=args.label, at=args.at, first=args.first, contains=args.contains)}, 0
+        if args.first and not args.selector or args.contains and args.label is None or args.expect and args.selector:
+            raise IosimError("--first goes with --selector, --contains with --label, --expect with --label or --at", code=2)
+        return {"ok": True, **session.tap(selector=args.selector, label=args.label, at=args.at, first=args.first, contains=args.contains,
+                                          expect=args.expect)}, 0
     if cmd == "type":
         return {"ok": True, **session.type_text(args.text, args.selector, args.enter, args.keep_keyboard, first=args.first)}, 0
     if cmd == "scroll":
