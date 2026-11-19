@@ -118,9 +118,14 @@ class Store:
                          (provider_thread, thread_id, json.dumps({"pendingBackgroundTasks": [{"taskId": f"t{n}", "kind": kind} for n, kind in enumerate(kinds)]})))
             conn.execute(f"UPDATE {T}threads SET active_provider_thread_id = ? WHERE thread_id = ?", (provider_thread, thread_id))
 
-    def set_run(self, run_id: str, status: str) -> None:
+    def set_run(self, run_id: str, status: str, completed_at: str = "") -> None:
         with self.db() as conn:
-            conn.execute(f"UPDATE {T}runs SET status = ?, completed_at = ? WHERE run_id = ?", (status, None if status in ("running", "queued") else stamp(0), run_id))
+            conn.execute(f"UPDATE {T}runs SET status = ?, completed_at = ? WHERE run_id = ?",
+                         (status, None if status in ("running", "queued") else completed_at or stamp(0), run_id))
+
+    def archive(self, thread_id: str) -> None:
+        with self.db() as conn:
+            conn.execute(f"UPDATE {T}threads SET archived_at = ? WHERE thread_id = ?", (stamp(0), thread_id))
 
     def native(self, thread_id: str, driver: str, native_id: str) -> None:
         with self.db() as conn:

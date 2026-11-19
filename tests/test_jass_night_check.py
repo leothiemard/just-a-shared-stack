@@ -127,7 +127,9 @@ class SessionTests(unittest.TestCase):
                 self.assertEqual(probe.session(7, "/nonexistent/folder"), {"crashes": [], "hours": None})
         self.assertEqual([crash["buffers"] for crash in found["crashes"]], [False, True])
         rows = check.session_rows(dict(found, hours=26.5))
-        self.assertEqual(statuses(rows, "session"), ["warn"])
+        self.assertEqual(statuses(rows, "session"), ["fail"])  # crashed twice, and this session is a day old
+        self.assertEqual(statuses(check.session_rows(dict(found, hours=2)), "session"), ["warn"])  # logged in again since
+        self.assertEqual(statuses(check.session_rows(dict(found, crashes=found["crashes"][:1], hours=26.5)), "session"), ["warn"])
         self.assertIn("crashed 2 times in the last 7 days", detail(rows, "session"))
         self.assertIn("This session is 26.5 hours old. Log out and back in", detail(rows, "session"))
         self.assertIn("Read the report", detail(check.session_rows({"crashes": [{"when": "2026-01-01 01:01", "buffers": False}]}), "session"))

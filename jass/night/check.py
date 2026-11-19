@@ -17,6 +17,9 @@ AGENT_MB = 1500
 RESERVE_MB = 2000
 HEAVY_MB = 3000
 WEAK_SIGNAL_DBM = -75
+# A login session that crashed on graphics buffers twice in a week and has not been started again since
+# about a day is a `fail`. An estimate: the two crashes this was written after came 25 and 27 hours in.
+FRESH_SESSION_HOURS = 12
 LOW_DISK_MB = 5000
 
 
@@ -71,9 +74,9 @@ def session_rows(session: dict) -> list[tuple]:
         age = f" This session is {session['hours']:g} hours old." if session.get("hours") is not None else ""
         text += (". The reports name IOSurface: the system ran out of graphics buffers, which long browser test runs can leak." + age
                  + " Log out and back in before the night to start the count again, and keep browser test runs short or on another box")
-    else:
-        text += ". Read the report for the cause, or keep tonight's important work on another box"
-    return [("warn", "session", text)]
+        old = session.get("hours") is None or session["hours"] >= FRESH_SESSION_HOURS
+        return [("fail" if len(crashes) > 1 and old else "warn", "session", text)]
+    return [("warn", "session", text + ". Read the report for the cause, or keep tonight's important work on another box")]
 
 
 def network_rows(net: dict) -> list[tuple]:

@@ -7,10 +7,12 @@ delegate or a background command still works for it, so a watcher needs more tha
 - `blocked`   a request waits for the owner (an approval, a question, a secret, a sign-in link).
 - `delegated`  no run is going, but a child agent of this thread still is.
 - `background` no run is going, but T3 lists a background command or task the thread still waits on.
-- `failed`     the last run failed; `failure` is `memory`, `network`, `limit` or `other`.
-- `stuck`      a queued run with nothing running ahead of it. T3 holds a thread's queue after a failed
-               run until a person writes in the app; a message from the CLI starts a new run instead.
+- `failed`     the last run failed; `failure` is `memory`, `network`, `limit`, `auth` or `other`. It wins over
+               `delegated` and `background`: what a killed run had started is usually dead with it.
 - `stopped`    the last run was interrupted or cancelled, by a person or another agent.
+- `stuck`      a run queued after the last one that ran, with nothing going. T3 holds a thread's queue
+               after a failed run until a person writes in the app; a message from the CLI starts a new
+               run instead, and a queued run older than the last one that ran is passed over.
 - `ended`      the last run completed and nothing is pending.
 
 The tables are internal to T3 Code. Every table and column read here is pinned and checked first,
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -36,7 +39,8 @@ PINNED = {
     f"{T}provider_threads": ("provider_thread_id", "payload_json"),
     f"{T}runtime_requests": ("thread_id", "kind", "status"),
 }
-GOING = ("running", "starting", "preparing")
+GOING = ("running", "starting", "preparing", "waiting")  # T3's own test for an active run
+AUTH_WORDS = ("authenticat", "unauthorized", "not logged in", "log in again", "sign in again")
 NETWORK_WORDS = ("reach the api", "eai_again", "enotfound", "econnreset", "econnrefused", "etimedout", "network", "dns", "socket", "fetch failed")
 
 
@@ -74,12 +78,14 @@ def opened(store: Path):
 
 
 def failure_kind(failure: dict) -> str:
-    """`memory`, `network`, `limit` or `other`, from the `failure` T3 records on a failed run's error item."""
-    kind, code, text = str(failure.get("class", "")), str(failure.get("code", "")), str(failure.get("message", "")).lower()
+    """`memory`, `network`, `limit`, `auth` or `other`, from the `failure` T3 records on a failed run's error item."""
+    kind, code, text = str(failure.get("class", "")), str(failure.get("code", "")).lower(), str(failure.get("message", "")).lower()
     if code == "oom_kill" or "out of memory" in text:
         return "memory"
     if kind == "usage_limit" or any(word in text for word in ("usage limit", "session limit", "rate limit")):
         return "limit"
+    if re.search(r"(^|\D)40[13](\D|$)", f"{code} {text}") or any(word in text for word in AUTH_WORDS):
+        return "auth"
     if kind == "transport_error" or any(word in text for word in NETWORK_WORDS):
         return "network"
     return "other"
@@ -92,20 +98,20 @@ def classify(runs: list[tuple], children: int, background: list[str], requests: 
     if any(status in GOING for _, status in runs):
         return "working", ""
     settled = [(ordinal, status) for ordinal, status in runs if status != "queued"]
-    if len(settled) < len(runs):
-        return "stuck", f"run {runs[-1][0]} is queued with nothing running ahead of it"
-    if not settled:
-        return "ended", "no runs yet"
-    ordinal, status = settled[-1]
+    ordinal, status = settled[-1] if settled else (0, "")
+    if status == "failed":
+        message = " ".join(str(failure.get("message", "")).split())[:120]
+        return "failed", f"run {ordinal} failed" + (f": {message}" if message else "")
     if children:
         return "delegated", f"{children} child agent{'s' if children > 1 else ''} still working"
     if background:
         return "background", "waits on " + ", ".join(sorted(set(background)))
-    if status == "failed":
-        message = " ".join(str(failure.get("message", "")).split())[:120]
-        return "failed", f"run {ordinal} failed" + (f": {message}" if message else "")
     if status in ("interrupted", "cancelled"):
         return "stopped", f"run {ordinal} was {status}"
+    if runs and runs[-1][1] == "queued" and runs[-1][0] > ordinal:
+        return "stuck", f"run {runs[-1][0]} is queued with nothing running ahead of it"
+    if not settled:
+        return "ended", "no runs yet"
     return "ended", f"run {ordinal} {status}"
 
 

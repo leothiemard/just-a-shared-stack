@@ -3,6 +3,8 @@ import datetime as dt
 import io
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -19,6 +21,13 @@ START = dt.datetime(2026, 1, 10, 23, 0, tzinfo=dt.timezone.utc)
 OOM = {"class": "transport_error", "code": "oom_kill", "message": "Killed: out of memory."}
 DNS = {"class": "provider_error", "code": "api_error", "message": "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)"}
 LIMIT = {"class": "usage_limit", "code": "usage_limit", "message": "You've hit your session limit", "resetAt": "2026-01-11T01:00:00.000Z"}
+AUTH = {"class": "provider_error", "code": "api_error_403", "message": "Failed to authenticate. API Error: 403"}
+REAL_WHICH = shutil.which
+
+
+def with_t3(name, *args, **kwargs):
+    """`shutil.which` on a box where `t3` is installed, whatever this box has."""
+    return "/opt/t3/bin/t3" if name == "t3" else REAL_WHICH(name, *args, **kwargs)
 
 
 class FakeBox(watch.Box):
@@ -66,8 +75,8 @@ class StateTests(Sandbox):
         self.lane("stopped", "interrupted")
         self.lane("failed", "failed")
         self.store.item("failed", "error", "failed", failure=OOM)
-        self.lane("stuck", "failed")
-        self.store.turn("stuck", "Queued behind the failure", "", status="queued")
+        self.lane("stuck")
+        self.store.turn("stuck", "Queued and never started", "", status="queued")
         self.lane("blocked", "running")
         self.store.request("blocked", "user_input")
         self.lane("answered")
@@ -90,7 +99,26 @@ class StateTests(Sandbox):
     def test_a_queued_run_behind_a_running_one_is_work(self):
         self.lane("busy", "running")
         self.store.turn("busy", "Next", "", status="queued")
-        self.assertEqual(self.states(), {"busy": "working"})
+        self.lane("paused", "waiting")  # T3 counts a waiting run as active
+        self.assertEqual(self.states(), {"busy": "working", "paused": "working"})
+
+    def test_the_last_run_that_ran_decides_not_an_older_queued_one(self):
+        self.lane("held", "failed")                      # T3 holds the queue after a failure:
+        self.store.turn("held", "Queued", "", status="queued")
+        self.assertEqual(self.states()["held"], "failed")  # the failure is what to act on, and it says why
+        self.store.turn("held", "Continue", "Done.")     # a message from the CLI ran as a new run
+        self.assertEqual(self.states()["held"], "ended")   # the held run is passed over, not stuck for ever
+        self.lane("halted", "interrupted")
+        self.store.turn("halted", "Queued", "", status="queued")
+        self.assertEqual(self.states()["halted"], "stopped")  # a person stopped it: never nudged as stuck
+        self.lane("parent")
+        self.store.turn("parent", "Queued", "", status="queued")
+        self.store.thread("child", parent="parent")
+        self.store.subagent("parent", "child", "app_owned", status="running")
+        self.assertEqual(self.states()["parent"], "delegated")
+        self.lane("killed", "failed")
+        self.store.background("killed", "command")       # listed still, but it died with the run
+        self.assertEqual(self.states()["killed"], "failed")
 
     def test_children_archived_and_deleted_threads_are_left_out(self):
         self.lane("top")
@@ -100,8 +128,9 @@ class StateTests(Sandbox):
         self.assertEqual([t["id"] for t in t3state.snapshot(self.path, ["nothing"])], [])
 
     def test_failure_kinds(self):
-        self.assertEqual([t3state.failure_kind(f) for f in (OOM, DNS, LIMIT, {"class": "transport_error", "code": "unknown"}, {"class": "provider_error", "message": "403"}, {})],
-                         ["memory", "network", "limit", "network", "other", "other"])
+        self.assertEqual([t3state.failure_kind(f) for f in (OOM, DNS, LIMIT, {"class": "transport_error", "code": "unknown"}, {"class": "provider_error", "message": "403"}, AUTH,
+                                                            {"class": "provider_error", "message": "exit 1 at line 4031"}, {})],
+                         ["memory", "network", "limit", "network", "auth", "auth", "other", "other"])
 
     def test_pick_by_id_prefix_or_title(self):
         self.lane("lane-alpha-1", title="Fuzz the wire")
@@ -192,6 +221,11 @@ class WatchTests(Sandbox):
         self.box.mem = 2500
         self.tick(w, times=3)
         self.assertEqual(self.box.sent, [])  # no longer low, but less than a heavy command needs
+        self.assertEqual(len(self.logged("wait")), 1)  # said once, not at every poll
+        self.assertIn("waiting for memory (1500 MB available, 3000 MB wanted", self.logged("wait")[0])
+        self.tick(w, times=25)
+        self.assertEqual((self.box.sent, w.alerts), ([], 1))  # a long wait is not silent
+        self.assertIn("failed and not resumed for 30 minutes", self.logged("ALERT")[0])
         self.box.mem = 6000
         self.tick(w)
         self.assertIn("jass heavy", self.box.sent[0][1])
@@ -201,7 +235,7 @@ class WatchTests(Sandbox):
         w = self.watch("a", max_nudges=2)
         self.tick(w, minutes=11, times=4)
         self.assertEqual((len(self.box.sent), w.alerts), (2, 1))
-        self.assertIn("after 2 automatic messages", self.logged("ALERT")[0])
+        self.assertIn("after being resumed 2 times", self.logged("ALERT")[0])
         self.tick(w, minutes=11, times=3)
         self.assertEqual(w.alerts, 1)
         self.store.set_run(run, "completed")  # it recovered and now ends before the deadline
@@ -218,8 +252,91 @@ class WatchTests(Sandbox):
         w.step()
         self.assertIn("limit has reset", self.box.sent[0][1])
 
+    def test_t3_gets_time_to_resume_after_a_limit_itself(self):
+        self.lane("a", "failed", LIMIT)
+        w = self.watch("a", t3_resumes=True)
+        self.tick(w, times=5)
+        self.assertIn("T3 Code resumes it then", self.logged("ALERT")[0])
+        self.box.clock = dt.datetime(2026, 1, 11, 1, 5, tzinfo=dt.timezone.utc)
+        w.step()
+        self.assertEqual(self.box.sent, [])  # T3's own resume comes first
+        self.box.clock = dt.datetime(2026, 1, 11, 1, 16, tzinfo=dt.timezone.utc)
+        w.step()
+        self.assertEqual(len(self.box.sent), 1)
+
+    def test_reminders_and_resumes_are_counted_apart(self):
+        run = self.lane("a")
+        w = self.watch("a", keep_going=True, max_nudges=2)
+        self.tick(w, minutes=11, times=4)
+        self.assertEqual((len(self.box.sent), w.alerts), (2, 1))  # reminded twice, then an alert
+        self.assertIn("after being reminded 2 times", self.logged("ALERT")[0])
+        self.store.set_run(run, "failed")
+        self.store.item("a", "error", "failed", failure=DNS)
+        self.tick(w, minutes=11, times=2)
+        self.assertEqual(len(self.box.sent), 3)  # the failure is still resumed
+        self.assertIn("could not be reached", self.box.sent[2][1])
+
+    def test_a_restarted_watch_keeps_its_count_and_repeats_no_alert(self):
+        self.lane("fails", "failed", OOM)
+        self.lane("halted", "interrupted")
+        state = {"sent": {}, "reminded": {}, "alerts": {}}
+        saves = []
+        for _ in range(3):  # a watcher thread starts the watch again after every alert
+            w = self.watch("fails", "halted", max_nudges=2, state=state, keep=lambda: saves.append(1))
+            self.tick(w, minutes=11, times=4)
+        self.assertEqual(len(self.box.sent), 2)
+        self.assertEqual([line.split(": ", 1)[0].split()[-2:] for line in self.logged("ALERT")], [["Lane", "halted"], ["Lane", "fails"]])
+        self.assertEqual(w.alerts, 0)  # the third watch had nothing new to say, so --wake does not fire again
+        self.assertTrue(saves)
+        path = self.base / "state.json"
+        watch.save_state(path, state)
+        self.assertEqual(watch.load_state(path, self.box.clock), state)
+        self.assertEqual(watch.load_state(path, self.box.clock + dt.timedelta(hours=20)), {"sent": {}, "reminded": {}, "alerts": {}})  # another night
+        path.write_text("not json")
+        self.assertEqual(watch.load_state(path, self.box.clock), {"sent": {}, "reminded": {}, "alerts": {}})
+
+    def test_a_thread_that_answers_the_reminder_at_once_is_not_reminded_again(self):
+        self.lane("a")
+        w = self.watch("a", keep_going=True)
+        self.tick(w, times=11)
+        self.assertEqual(len(self.box.sent), 1)
+        done = (self.box.clock + dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        self.store.set_run(self.store.turn("a", None, "Everything left needs the owner."), "completed", completed_at=done)
+        self.tick(w, minutes=11, times=4)
+        self.assertEqual((len(self.box.sent), w.alerts), (1, 1))
+        self.assertIn("answered the reminder within 5 minutes", self.logged("ALERT")[0])
+
+    def test_a_refused_sign_in_is_an_alert_not_a_message(self):
+        self.lane("a", "failed", AUTH)
+        w = self.watch("a")
+        self.tick(w, times=20)
+        self.assertEqual((self.box.sent, w.alerts), ([], 1))
+        self.assertIn("refused the sign-in", self.logged("ALERT")[0])
+
+    def test_an_unreadable_store_is_logged_then_an_alert_and_the_watch_goes_on(self):
+        self.lane("a", "failed", DNS)
+        w = self.watch("a")
+        with mock.patch.object(self.box, "threads", side_effect=JassError("T3 Code's store changed shape")):
+            self.tick(w, times=2)
+            self.assertEqual((len(self.logged("box")), w.alerts), (1, 0))
+            self.tick(w, times=3)
+            self.assertEqual(w.alerts, 1)
+            self.assertIn("this box: the T3 store cannot be read since", self.logged("ALERT")[0])
+        self.tick(w, times=4)
+        self.assertIn("the T3 store reads again", self.logged("box")[1])
+        self.assertEqual(len(self.box.sent), 1)
+
+    def test_a_watched_thread_that_leaves_the_store_is_logged(self):
+        self.lane("a", "running")
+        w = self.watch("a")
+        self.tick(w)
+        self.store.archive("a")
+        self.tick(w, times=3)
+        self.assertEqual(len(self.logged("box")), 1)
+        self.assertIn("Lane a is no longer in the store", self.logged("box")[0])
+
     def test_a_stuck_queue_gets_a_message(self):
-        self.lane("a", "failed", OOM)
+        self.lane("a")
         self.store.turn("a", "Queued", "", status="queued")
         w = self.watch("a")
         self.tick(w, times=4)
@@ -276,9 +393,12 @@ class WatchTests(Sandbox):
 
         self.box.refuse = "t3: server not running"
         w = self.watch("a")
-        self.tick(w, times=4)
-        self.assertEqual((self.box.sent, w.alerts), ([], 1))
+        self.tick(w, minutes=11, times=6)
+        self.assertEqual((self.box.sent, w.alerts), ([], 1))  # one alert, and no message used up
         self.assertIn("server not running", self.logged("ALERT")[0])
+        self.box.refuse = ""
+        self.tick(w, minutes=11)
+        self.assertEqual(len(self.box.sent), 1)
 
     def test_no_resume_reports_instead(self):
         self.lane("a", "failed", OOM)
@@ -296,6 +416,11 @@ class WatchTests(Sandbox):
         self.tick(w)
         self.assertEqual([line.split("    ")[-1] for line in self.logged("box")],
                          ["laptop stopped answering: asleep, off or off the network; its threads are frozen", "laptop answers again"])
+        self.assertEqual(w.alerts, 0)  # a blip of two minutes
+        self.box.up["laptop"] = False
+        self.tick(w, times=6)
+        self.assertEqual(w.alerts, 1)  # a box that stays quiet wakes the watcher, once
+        self.assertIn("laptop: stopped answering at 23:07 UTC", self.logged("ALERT")[0])
 
     def test_the_real_send_goes_through_t3_thread_send(self):
         calls = []
@@ -310,6 +435,9 @@ class WatchTests(Sandbox):
         self.assertEqual(calls, [(["t3", "thread", "send", "--base-dir", str(self.base / "t3"), "mcp:launch:abc", "-"], "hello")])
         with mock.patch.object(watch.shutil, "which", return_value=None):
             self.assertIn("not on PATH", box.send("x", "hello"))
+        with mock.patch.object(watch.shutil, "which", return_value="/opt/t3/bin/t3"), mock.patch.object(watch.subprocess, "run", fake_run):
+            watch.Box(self.path, "/opt/t3/bin/t3").send("x", "hello")  # the path found at the start is the one used
+        self.assertEqual(calls[-1][0][0], "/opt/t3/bin/t3")
 
 
 class CommandTests(Sandbox):
@@ -328,6 +456,9 @@ class CommandTests(Sandbox):
         self.store.turn("a", "Go", "", status="running")
         self.store.thread("b", title="Lane B")
         self.store.turn("b", "Go", "Done.", status="failed")
+        patcher = mock.patch.object(watch.shutil, "which", with_t3)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_status_lists_recent_threads(self):
         with mock.patch.object(watch.probe, "online", return_value=True), mock.patch.object(watch.probe, "memory", return_value={"available_mb": 5000}):
@@ -382,15 +513,73 @@ class CommandTests(Sandbox):
             code, out, _ = self.jass("night", "watch", "--thread", "Lane A", "--wake", "--log", str(self.base / "w.log"))
         self.assertEqual(code, 3)
         self.assertIn("ALERT  Lane A: waits for the owner: user input", out)
+        with mock.patch.object(watch.Box, "online", return_value=True), mock.patch.object(watch.Box, "available_mb", return_value=9000), \
+                mock.patch.object(watch.Box, "sleep", lambda self, seconds: None), \
+                mock.patch.object(watch.Box, "now", side_effect=[dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=n) for n in range(40)]):
+            code, out, _ = self.jass("night", "watch", "--thread", "Lane A", "--wake", "--hours", "0.1", "--log", str(self.base / "w.log"))
+        self.assertEqual(code, 0)  # started again: the same alert does not wake the caller a second time
+        self.assertIn("Earlier this night: 0 messages sent, 1 alert raised; they are not repeated", out)
+        self.assertNotIn("ALERT", out)
+
+    def test_watch_refuses_to_start_where_it_could_not_send(self):
+        with mock.patch.object(watch.shutil, "which", return_value=None):
+            code, _, err = self.jass("night", "watch", "--thread", "Lane A")
+            self.assertEqual(code, 1)
+            self.assertIn("`t3` is not on PATH", err)
+            with mock.patch.object(watch.Box, "sleep", lambda self, seconds: None), mock.patch.object(watch.probe, "online", return_value=True):
+                code, _, _ = self.jass("night", "watch", "--thread", "Lane A", "--dry-run", "--hours", "0.001", "--log", str(self.base / "w.log"))
+            self.assertEqual(code, 0)
+
+    def test_a_signal_or_an_error_in_a_poll_does_not_end_the_watch_silently(self):
+        polls = []
+
+        def step(self_):
+            polls.append(1)
+            if len(polls) == 1:
+                raise RuntimeError("boom")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        with mock.patch.object(watch.Watch, "step", step), mock.patch.object(watch.Box, "sleep", lambda self, seconds: None):
+            code, out, _ = self.jass("night", "watch", "--thread", "Lane A", "--log", str(self.base / "w.log"))
+        self.assertEqual(code, 130)
+        self.assertIn("ALERT  this box: the watch hit an error and goes on: RuntimeError('boom')", out)
+        self.assertIn("stop   interrupted or told to stop", out)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
 
 class HeavyTests(Sandbox):
     def test_wrap_adds_a_capped_scope_only_when_it_can(self):
         command = ["npm", "run", "check"]
-        self.assertEqual(heavy.wrap(command, 3000, True),
-                         ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "MemoryMax=3000M", "-p", "MemorySwapMax=0", "--", *command])
-        self.assertIs(heavy.wrap(command, 3000, False), command)
-        self.assertIs(heavy.wrap(command, 0, True), command)
+        self.assertEqual(heavy.wrap(command, 3000, "jass-heavy-1"),
+                         ["systemd-run", "--user", "--scope", "--quiet", "--unit=jass-heavy-1", "-p", "MemoryMax=3000M", "-p", "MemorySwapMax=0", "--", *command])
+        self.assertIs(heavy.wrap(command, 3000, ""), command)
+        self.assertIs(heavy.wrap(command, 0, "jass-heavy-1"), command)
+
+    def test_the_scope_says_whether_a_process_was_killed_at_the_cap(self):
+        calls = []
+
+        def shown(*argv, **_):
+            calls.append(argv[2])
+            return "Result=oom-kill\nActiveState=failed\n"
+
+        with mock.patch.object(heavy.probe, "run", shown):
+            self.assertTrue(heavy.hit_cap("jass-heavy-1"))
+        self.assertEqual(calls, ["show", "reset-failed"])  # the failed scope is cleared away
+        with mock.patch.object(heavy.probe, "run", return_value="Result=success\nActiveState=inactive\n"):
+            self.assertFalse(heavy.hit_cap("jass-heavy-1"))
+        with mock.patch.object(heavy.probe, "run", return_value=""):
+            self.assertFalse(heavy.hit_cap("jass-heavy-1"))
+
+    @unittest.skipUnless(heavy.can_scope(), "needs a systemd user manager")
+    def test_a_worker_killed_at_the_cap_is_named_even_when_the_runner_reports_its_own_failure(self):
+        hog = f"{sys.executable} -c 'x = bytearray(300 * 1024 * 1024)'"
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            code = heavy.run({}, ["sh", "-c", f"{hog}; exit 1"], 100)
+        self.assertNotEqual(code, 0)
+        self.assertIn("killed at the 100 MB memory cap", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(heavy.run({}, ["sh", "-c", "exit 5"], 100), 5)
+        self.assertEqual(err.getvalue(), "")
 
     def test_cap_comes_from_the_flag_then_the_config_then_a_quarter_of_memory(self):
         with mock.patch.object(heavy.probe, "memory", return_value={"total_mb": 14436}):

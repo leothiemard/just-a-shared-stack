@@ -23,7 +23,7 @@ jass night check --hours <hours> --agents <agents on this box, delegates include
 
 Give one `--need` per sign-in, tool or device a lane depends on (`--need 'gh auth status'`); it must exit 0. No box can see inside another, so on a linked machine run the check there through a delegate.
 
-A `fail` row names something that has stopped a night before, and its fix. Apply a fix that lasts only for the night yourself. A fix that changes a system setting (power, swap, services, the network) is the owner's: show them the command and wait. When the agents do not fit in memory, move a lane to another box or night; adding swap or hoping does not make them fit.
+A `fail` row names something that has stopped a night before, and its fix. Apply a fix that lasts only for the night yourself; a `sleep` fail is closed by `--awake` in step 4. A fix that changes a system setting (power, swap, services, the network) is the owner's: show them the command and wait. When the agents do not fit in memory, move a lane to another box or night; adding swap or hoping does not make them fit.
 
 Done when no box reports a `fail` and the owner has seen every `warn`.
 
@@ -41,12 +41,14 @@ Start the watchdog on each box, naming every lane on it:
 jass night watch --hours <hours> --thread '<title or id>' --thread '<title or id>' --keep-going --awake --peer <other box>
 ```
 
-It needs no model: it sends a failed thread a message to continue once the network or memory is back, reminds a thread that ended early of its standing mandate (`--keep-going`), holds the box awake (`--awake`) and logs everything. It leaves alone what it cannot fix and raises an alert: a thread that waits for the owner, a usage limit, a thread stopped by a person, a thread that fails four times.
+It needs no model: it sends a failed thread a message to continue once the network or memory is back, reminds a thread that ended early of its standing mandate (`--keep-going`), holds the box awake (`--awake`) and logs everything. It leaves alone what it cannot fix and raises an alert: a thread that waits for the owner, a usage limit, a refused sign-in, a thread stopped by a person, a thread that fails again after four messages to continue, a peer box that stops answering.
 
-- The owner starts it in a terminal that outlives the session (`tmux`, or `systemd-run --user --collect --unit=jass-night jass night watch ...` on Linux). This is the default: nothing more is needed.
+The watch is a process on its box. On a Mac, T3 Code and the watch both live in the login session and stop with it, so for a Mac lane also pass the Mac as `--peer` to the watch on another box: nothing can restart it from outside, but the alert gives the time. `--peer` takes `host` (port 22) or `host:port`; a Mac at its login window may still answer on port 22, so give the port T3 Code is reached on when you know it.
+
+- The owner starts it in a terminal that outlives the session (`tmux`, or `systemd-run --user --collect --unit=jass-night --setenv=PATH="$PATH" jass night watch ...` on Linux; without the `PATH` the unit cannot find `t3` and the watch refuses to start). This is the default: nothing more is needed.
 - A watcher thread is worth its tokens only when lanes will need new work or judgement during the night. It runs the same command with `--wake` as a background command, handles each alert by [references/watching.md](references/watching.md), and starts the watch again.
 
-Done when the watch's first line names every lane and the owner knows where its log is.
+Done when the watch's first line names every lane, the owner knows where its log is, and a box whose check had a `sleep` fail shows `Holding this box awake` in that line. If it shows `COULD NOT hold this box awake` there, run the command from the check's `sleep` row instead.
 
 ## 5. Report
 

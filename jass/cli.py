@@ -281,7 +281,7 @@ def parser() -> argparse.ArgumentParser:
     w.add_argument("--interval", type=int, default=60, help="seconds between polls (default 60)")
     w.add_argument("--no-resume", action="store_true", help="report failed runs instead of sending them a message to continue")
     w.add_argument("--keep-going", action="store_true", help="remind a thread that ended before the end of its standing mandate")
-    w.add_argument("--max-messages", type=int, default=4, help="automatic messages per thread before it becomes an alert (default 4)")
+    w.add_argument("--max-messages", type=int, default=4, help="messages of each kind (to continue, reminders) a thread gets in one night before it becomes an alert (default 4)")
     w.add_argument("--peer", action="append", default=[], metavar="HOST[:PORT]", help="log when another machine stops answering; repeatable")
     w.add_argument("--awake", action="store_true", help="hold this box awake while the watch runs (caffeinate on macOS, systemd-inhibit on Linux)")
     w.add_argument("--wake", action="store_true", help="exit 3 at the first alert, so a thread running this in the background wakes")

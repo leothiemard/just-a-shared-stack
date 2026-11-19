@@ -20,7 +20,9 @@ Rules:
 2. Something only the owner can do or decide (a sign-in, a password, an approval, a product choice):
    write it under "For the owner" in your report and take the next item. Never ask and wait.
 3. Heavy commands (builds, full test suites, installs, browser tests, sweeps) run through
-   `jass heavy -- <command>`, with worker counts at <2>. One at a time; it queues for you.
+   `jass heavy -- <command>`, with worker counts at <2>. One at a time; it queues for you. When it says a
+   process was killed at the memory cap, lower the worker count or split the command; never run it again
+   unchanged.
 4. Save as you go. Commit and push after each unit of work, and keep `<report file>` current, so a
    run that dies loses minutes. When you are told to continue after a failure, read that file and
    `git status` first and carry on from there; redo nothing that is saved.
