@@ -264,7 +264,11 @@ class WatchTests(Sandbox):
         self.assertEqual((self.box.sent, w.alerts), ([], 1))
         self.assertIn("resets at 01:00 UTC", self.logged("ALERT")[0])
         self.box.clock = dt.datetime(2026, 1, 11, 1, 5, tzinfo=dt.timezone.utc)
+        self.box.net = False
         w.step()
+        self.assertEqual((self.box.sent, w.alerts), ([], 1))  # one poll without network after hours of waiting for the reset is no alert
+        self.box.net = True
+        self.tick(w)
         self.assertIn("limit has reset", self.box.sent[0][1])
 
     def test_t3_gets_time_to_resume_after_a_limit_itself(self):
@@ -307,6 +311,10 @@ class WatchTests(Sandbox):
         watch.save_state(path, state)
         self.assertEqual(watch.load_state(path, self.box.clock), state)
         self.assertEqual(watch.load_state(path, self.box.clock + dt.timedelta(hours=20)), {"sent": {}, "reminded": {}, "alerts": {}})  # another night
+        state["until"] = (self.box.clock + dt.timedelta(hours=1)).isoformat()
+        watch.save_state(path, state)
+        self.assertTrue(watch.load_state(path, self.box.clock)["alerts"])  # started again before the deadline: the same night
+        self.assertEqual(watch.load_state(path, self.box.clock + dt.timedelta(hours=2)), {"sent": {}, "reminded": {}, "alerts": {}})  # after it: a new night
         path.write_text("not json")
         self.assertEqual(watch.load_state(path, self.box.clock), {"sent": {}, "reminded": {}, "alerts": {}})
 
@@ -341,6 +349,21 @@ class WatchTests(Sandbox):
         self.assertIn("the T3 store reads again", self.logged("box")[1])
         self.assertEqual(len(self.box.sent), 1)
 
+    def test_a_poll_that_fails_is_an_alert_and_one_that_keeps_failing_a_second(self):
+        self.lane("a", "running")
+        w = self.watch("a")
+        with mock.patch.object(w, "step", side_effect=RuntimeError("boom")):
+            self.box.clock += dt.timedelta(minutes=1)
+            w.poll()
+            self.assertEqual(w.alerts, 1)
+            for _ in range(4):
+                self.box.clock += dt.timedelta(minutes=1)
+                w.poll()
+        self.assertEqual(w.alerts, 2)
+        self.assertIn("every poll has failed since 23:01 UTC", self.logged("ALERT")[1])
+        w.poll()
+        self.assertNotIn("this box|blind", w.state["alerts"])
+
     def test_a_watched_thread_that_leaves_the_store_is_logged(self):
         self.lane("a", "running")
         w = self.watch("a")
@@ -365,6 +388,18 @@ class WatchTests(Sandbox):
         self.tick(w, times=20)
         self.assertEqual((self.box.sent, w.alerts), ([], 2))
         self.assertIn("Lane asks: waits for the owner: user input", self.logged("ALERT")[0])
+
+    def test_a_second_request_in_the_same_run_is_an_alert_again(self):
+        self.lane("asks", "running")
+        self.store.request("asks", "user_input")
+        w = self.watch("asks")
+        self.tick(w, times=3)
+        self.store.answer("asks")
+        self.tick(w, times=3)
+        self.store.request("asks", "command")
+        self.tick(w, times=3)
+        self.assertEqual(w.alerts, 2)
+        self.assertIn("waits for the owner: command", self.logged("ALERT")[1])
 
     def test_working_delegated_and_background_threads_are_left_alone(self):
         self.lane("busy", "running")
@@ -436,6 +471,14 @@ class WatchTests(Sandbox):
         self.tick(w, times=6)
         self.assertEqual(w.alerts, 1)  # a box that stays quiet wakes the watcher, once
         self.assertIn("laptop: stopped answering at 23:07 UTC", self.logged("ALERT")[0])
+        again = watch.Watch(self.box, [], START + dt.timedelta(hours=8), peers=["laptop"], state=w.state, emit=self.lines.append)
+        self.tick(again, times=8)
+        self.assertEqual(again.alerts, 0)  # still quiet after a restart: not said again
+        self.box.up["laptop"] = True
+        self.tick(again)
+        self.box.up["laptop"] = False
+        self.tick(again, times=5)
+        self.assertEqual(again.alerts, 1)  # it came back and went quiet again: that is news
 
     def test_the_real_send_goes_through_t3_thread_send(self):
         calls = []
@@ -569,6 +612,17 @@ class CommandTests(Sandbox):
         self.assertIn("stop   interrupted or told to stop", out)
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
+    def test_a_log_or_state_file_that_cannot_be_written_does_not_end_the_watch(self):
+        self.store.request("a", "user_input")
+        with mock.patch.object(watch.Box, "online", return_value=True), mock.patch.object(watch.Box, "available_mb", return_value=9000), \
+                mock.patch.object(watch.Box, "sleep", lambda self, seconds: None), mock.patch.object(watch, "save_state", side_effect=OSError(28, "No space left on device")), \
+                mock.patch.object(watch.Box, "now", side_effect=[START + dt.timedelta(minutes=n) for n in range(40)]):
+            code, out, err = self.jass("night", "watch", "--thread", "Lane A", "--hours", "0.1", "--log", str(self.base / "w.log"))
+        self.assertEqual(code, 0)
+        self.assertIn("ALERT  Lane A: waits for the owner", out)
+        self.assertEqual(err.count("cannot write its state file"), 1)
+        self.assertIn("the night is over", out)
+
 
 class HeavyTests(Sandbox):
     def test_wrap_adds_a_capped_scope_only_when_it_can(self):
@@ -592,6 +646,9 @@ class HeavyTests(Sandbox):
             self.assertFalse(heavy.hit_cap("jass-heavy-1"))
         with mock.patch.object(heavy.probe, "run", return_value=""):
             self.assertFalse(heavy.hit_cap("jass-heavy-1"))
+        with mock.patch.object(heavy.probe, "run", return_value="Result=success\nActiveState=active\n") as shown, mock.patch.object(heavy.time, "sleep") as slept:
+            self.assertFalse(heavy.hit_cap("jass-heavy-1", 1))  # after a success: one look, no waiting
+        self.assertEqual((shown.call_count, slept.call_count), (1, 0))
 
     @unittest.skipUnless(heavy.can_scope(), "needs a systemd user manager")
     def test_a_worker_killed_at_the_cap_is_named_even_when_the_runner_reports_its_own_failure(self):

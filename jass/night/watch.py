@@ -17,6 +17,7 @@ with a fake box and clock.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import os
@@ -62,12 +63,18 @@ def moment(text: str) -> dt.datetime | None:
 
 
 def load_state(path: Path, now: dt.datetime) -> dict:
-    """What earlier runs of the watch sent and alerted on this night; older entries are dropped."""
+    """What earlier runs of the watch sent and alerted on this night.
+
+    A night ends at the deadline of the watch that wrote the state: a watch started again before it carries
+    on, one started after it begins a new night with nothing. Entries older than `STATE_HOURS` go in any case."""
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError):
         raw = {}
     raw = raw if isinstance(raw, dict) else {}
+    deadline = moment(raw.get("until", ""))
+    if deadline and deadline <= now:
+        raw = {}
     cutoff = now - dt.timedelta(hours=STATE_HOURS)
 
     def fresh(text) -> bool:
@@ -140,7 +147,8 @@ class Watch:
         self.keep = keep or (lambda: None)                     # called when the state changed, to save it
         self.seen: dict[str, tuple[str, dt.datetime]] = {}   # thread -> (state and run, first seen)
         self.tried: dict[str, dt.datetime] = {}                # thread -> last attempt to send, delivered or not
-        self.noted: set[tuple] = set()                         # waits already logged
+        self.noted: dict[tuple, dt.datetime] = {}              # (thread, run) -> when it began to wait for the box
+        self.broken: dt.datetime | None = None                 # since when every poll has failed
         self.flags: dict[str, bool] = {}                       # last value of net, memory, the store, each peer and thread
         self.since: dict[str, dt.datetime] = {}                # when a flag last turned bad
         self.alerts = self.messages = 0                        # raised and sent by this process
@@ -162,6 +170,14 @@ class Watch:
             self.state["alerts"][key] = self.box.now().isoformat()
             self.alerts += 1
             self.log("ALERT", f"{self.names.get(subject, subject)}: {text}")
+            self.keep()
+
+    def clear(self, subject: str, reason: str) -> None:
+        """Forget an alert whose cause is over, so the next time it happens it is raised again."""
+        gone = [key for key in self.state["alerts"] if key == f"{subject}|{reason}" or key.startswith(f"{subject}|{reason}#")]
+        for key in gone:
+            del self.state["alerts"][key]
+        if gone:
             self.keep()
 
     def flag(self, name: str, good: bool, bad_text: str, good_text: str) -> bool:
@@ -203,6 +219,20 @@ class Watch:
         self.log("sent", f"{name}: {why}")
         self.keep()
 
+    def poll(self) -> None:
+        """One `step` that cannot end the watch: a watchdog that dies at 3 a.m. watches nothing."""
+        try:
+            self.step()
+        except Exception as error:
+            now = self.box.now()
+            self.broken = self.broken or now
+            self.alert("this box", f"error#{type(error).__name__}", f"the watch hit an error and goes on: {error!r}")
+            if now - self.broken >= self.settle:
+                self.alert("this box", "blind", f"every poll has failed since {utc(self.broken)} ({error!r}); no thread is watched")
+        else:
+            self.broken = None
+            self.clear("this box", "blind")
+
     def step(self) -> None:
         now = self.box.now()
         online = self.flag("net", self.box.online(), "network DOWN: the provider cannot be reached", "network back")
@@ -210,17 +240,19 @@ class Watch:
         self.flag("memory", available is None or available >= self.low_mb,
                           f"memory low: {available} MB available; agents may be killed", f"memory recovered: {available} MB available")
         for peer in self.peers:
-            self.flag(f"peer {peer}", self.box.reach(peer), f"{peer} stopped answering: asleep, off or off the network; its threads are frozen", f"{peer} answers again")
-            if self.bad_for(f"peer {peer}") >= self.settle:
-                self.alert(peer, f"quiet#{self.since[f'peer {peer}'].strftime('%H:%M')}", f"stopped answering at {utc(self.since[f'peer {peer}'])}; its threads are frozen and nothing here can wake it")
+            if self.flag(f"peer {peer}", self.box.reach(peer), f"{peer} stopped answering: asleep, off or off the network; its threads are frozen", f"{peer} answers again"):
+                self.clear(peer, "quiet")
+            elif self.bad_for(f"peer {peer}") >= self.settle:
+                self.alert(peer, "quiet", f"stopped answering at {utc(self.since[f'peer {peer}'])}; its threads are frozen and nothing here can wake it")
         try:
             threads = self.box.threads(list(self.names))
         except (sqlite3.Error, JassError) as error:  # busy, mid-write, moved or changed by a T3 Code update: keep trying
             self.flag("store", False, f"could not read the T3 store ({error}); trying again at each poll", "")
             if self.bad_for("store") >= self.settle:
-                self.alert("this box", f"store#{self.since['store'].strftime('%H:%M')}", f"the T3 store cannot be read since {utc(self.since['store'])} ({error}); no thread is watched until it can")
+                self.alert("this box", "store", f"the T3 store cannot be read since {utc(self.since['store'])} ({error}); no thread is watched until it can")
             return
         self.flag("store", True, "", "the T3 store reads again")
+        self.clear("this box", "store")
         present = {thread["id"] for thread in threads}
         for thread_id, name in self.names.items():
             self.flag(f"thread {thread_id}", thread_id in present, f"{name} is no longer in the store (archived or deleted); it is not watched", f"{name} is back in the store")
@@ -230,6 +262,8 @@ class Watch:
                 self.seen[thread["id"]] = (key, now)
             held = now - self.seen[thread["id"]][1]
             state = thread["state"]
+            if state != "blocked":
+                self.clear(thread["id"], "blocked")  # its request was answered: the next one is news again
             if state in FINE:
                 continue
             if state == "blocked":
@@ -269,11 +303,13 @@ class Watch:
 
     def wait(self, thread: dict, held: dt.timedelta, what: str) -> None:
         """A failed thread that is not resumed yet: say so once, and raise an alert when the wait gets long."""
+        now = self.box.now()
         if (thread["id"], thread["run"]) not in self.noted:
-            self.noted.add((thread["id"], thread["run"]))
+            self.noted[(thread["id"], thread["run"])] = now
             self.log("wait", f"{self.names[thread['id']]}: {thread['detail']}; not resumed yet, waiting for {what}")
-        if held >= self.patience:
-            self.alert(thread["id"], f"waiting#{thread['run']}", f"failed and not resumed for {int(held.total_seconds() // 60)} minutes: still waiting for {what}")
+        waited = now - self.noted[(thread["id"], thread["run"])]
+        if waited >= self.patience:
+            self.alert(thread["id"], f"waiting#{thread['run']}", f"failed and not resumed for {int(waited.total_seconds() // 60)} minutes: still waiting for {what}")
 
     def ended(self, thread: dict, now: dt.datetime) -> None:
         if now >= self.until - self.wind_down:
@@ -346,17 +382,33 @@ def run(cfg: dict, args) -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         state_file = paths.private_dir(folder) / "watch-state.json"
         state = load_state(state_file, start)
+        state["until"] = until.isoformat()
         with open(path, "a") as handle:
+            said = set()
+
+            def careful(what: str, action) -> None:
+                """A full disk or a closed terminal must not end the watch: say it once where it can still be said, and go on."""
+                try:
+                    action()
+                except (OSError, ValueError) as error:
+                    if what not in said:
+                        said.add(what)
+                        with contextlib.suppress(OSError, ValueError):
+                            print(f"jass night watch: cannot write {what} ({error}); the watch goes on", file=sys.stderr, flush=True)
+
             def emit(line: str) -> None:
-                print(line, flush=True)
-                handle.write(line + "\n")
-                handle.flush()
+                careful("to the terminal", lambda: print(line, flush=True))
+                careful("its log", lambda: (handle.write(line + "\n"), handle.flush()))
+
+            def keep() -> None:
+                if not args.dry_run:
+                    careful("its state file", lambda: save_state(state_file, state))
 
             night = cfg.get("night", {})
             cap = int(night.get("heavy_mb") or 3000)  # room one heavy command may take, also where the box sets no cap
             watch = Watch(box, threads, until, resume=not args.no_resume, keep_going=args.keep_going, max_nudges=args.max_messages,
                           peers=args.peer, low_mb=int(night.get("reserve_mb") or 2000), need_mb=cap, dry_run=args.dry_run, t3_resumes=bool(probe.t3(box.base).get("resume_after_limit")),
-                          state=state, keep=(lambda: None) if args.dry_run else (lambda: save_state(state_file, state)), emit=emit)
+                          state=state, keep=keep, emit=emit)
             helper = keep_awake(int(args.hours * 3600) + 60) if args.awake else None
             earlier = sum(len(times) for kinds in state["sent"].values() for times in kinds.values())
             watch.log("start", f"watching {len(threads)} thread{'s' if len(threads) != 1 else ''} until {utc(until)}: "
@@ -367,10 +419,7 @@ def run(cfg: dict, args) -> int:
             try:
                 while box.now() < until:
                     before = watch.alerts
-                    try:
-                        watch.step()
-                    except Exception as error:  # a watchdog that dies at 3 a.m. watches nothing: say it and go on
-                        watch.alert("this box", f"error#{type(error).__name__}", f"the watch hit an error and goes on: {error!r}")
+                    watch.poll()
                     if args.wake and watch.alerts > before:
                         watch.log("stop", f"woke the caller. {watch.summary()}")
                         return 3

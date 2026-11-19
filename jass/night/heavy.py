@@ -52,16 +52,17 @@ def wrap(command: list[str], mb: int, unit: str) -> list[str]:
     return ["systemd-run", "--user", "--scope", "--quiet", f"--unit={unit}", "-p", f"MemoryMax={mb}M", "-p", "MemorySwapMax=0", "--", *command]
 
 
-def hit_cap(unit: str) -> bool:
+def hit_cap(unit: str, tries: int = 5) -> bool:
     """Whether the kernel killed a process of the scope at its cap. systemd keeps such a scope, as failed, until it is reset."""
-    for _ in range(5):
+    for attempt in range(tries):
         shown = probe.run("systemctl", "--user", "show", f"{unit}.scope", "-p", "Result", "-p", "ActiveState")
         if "Result=oom-kill" in shown:
             probe.run("systemctl", "--user", "reset-failed", f"{unit}.scope")
             return True
         if not shown or "ActiveState=inactive" in shown:
             return False
-        time.sleep(0.2)  # the scope is still closing; its result may not be recorded yet
+        if attempt + 1 < tries:
+            time.sleep(0.2)  # the scope is still closing; its result may not be recorded yet
     return False
 
 
@@ -94,7 +95,8 @@ def run(cfg: dict, command: list[str], asked_mb: int | None = None) -> int:
     finally:
         lock.__exit__(None, None, None)
     code = code if code >= 0 else 128 - code
-    if argv is not command and code != 0 and hit_cap(unit):
-        print(f"jass heavy: a process of this command was killed at the {mb} MB memory cap (exit {code}), so a failure reported above may be only that. "
-              f"Lower the worker count or split the command; raise the cap with --mem only if the box has room.", file=sys.stderr)
+    if argv is not command and hit_cap(unit, 5 if code else 1):  # also after a success, so no failed scope is left behind
+        print(f"jass heavy: a process of this command was killed at the {mb} MB memory cap (exit {code}), so "
+              + ("a failure reported above may be only that. " if code else "its result may be incomplete. ")
+              + "Lower the worker count or split the command; raise the cap with --mem only if the box has room.", file=sys.stderr)
     return code

@@ -108,6 +108,10 @@ class Store:
             conn.execute(f"INSERT INTO {T}turn_items VALUES (?, ?, ?, ?, ?, ?, ?)",
                          (self.next_id("ti"), thread_id, run[0] if run else None, kind, status, stamp(at), json.dumps(payload)))
 
+    def answer(self, thread_id: str) -> None:
+        with self.db() as conn:
+            conn.execute(f"UPDATE {T}runtime_requests SET status = 'resolved' WHERE thread_id = ?", (thread_id,))
+
     def request(self, thread_id: str, kind: str, status: str = "pending") -> None:
         with self.db() as conn:
             conn.execute(f"INSERT INTO {T}runtime_requests VALUES (?, ?, ?, ?)", (self.next_id("rq"), thread_id, kind, status))
