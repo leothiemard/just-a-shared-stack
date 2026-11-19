@@ -123,6 +123,15 @@ Each finished top-level agent session becomes a small Markdown file under `Sessi
 
 Concurrent work on two boxes usually merges cleanly: `Log.md` and lesson files use git's `union` merge driver (lesson files carry no `updated:` field for that reason), and session digests and box cards are per-box files. A hub edited on two boxes at once is the remaining conflict case, and it fails safe as in step 7.
 
+## Unattended work
+
+`jass night` and `jass heavy` exist because a night of agent work is lost to the box far more often than to the agents: the machine goes away, runs out of memory or loses the network, a run fails and stays failed, a thread ends early or waits for its owner.
+
+- `jass night check` only reads. Its rows come from the operating system (`pmset`, `/proc`, logind, the route table), from T3 Code's data folder (provider sign-in and quota in `caches/`, two settings in `userdata/settings.json`) and from T3 Code's store. It never changes a setting; a `fail` row prints the command for a person to run.
+- Thread states come from the same store the session export reads, strictly read-only, with every table and column pinned and checked first. T3 Code calls a thread `completed` when its turn ended while a delegate or a background command still works for it, so `jass night` derives its own states (`working`, `delegated`, `background`, `blocked`, `failed`, `stuck`, `stopped`, `ended`) and reads why a run failed from the `failure` T3 records on it.
+- `jass night watch` is a loop in the foreground with one lock per box. Its only write outside its log is `t3 thread send <thread> -`: a message to continue for a thread whose run failed, once the network answers and memory has room, and with `--keep-going` a reminder for a thread that ended before the deadline. It sends at most four messages to a thread, ten minutes apart; past that, and for anything a message cannot fix, it logs an alert. `--awake` holds the box awake with `caffeinate` or `systemd-inhibit` for as long as the watch runs.
+- `jass heavy` takes a box-wide lock in `~/.cache/jass`, then runs the command in its own `systemd-run --user --scope` with `MemoryMax` and no swap where systemd is available. The scope sits outside the agent's process group, so the kernel ends the command at its cap and the agent reads an exit code.
+
 ## Context budget
 
 `jass doctor` measures what every session loads before the task starts: each global instruction file (symlinks counted once), the `name` and `description` bytes of every skill per skill root, enabled Claude plugins' skills, and configured MCP servers. It warns when a global file passes 2,000 bytes, a skill description passes 500 bytes, or the total passes 20,000 bytes. `jass sync` writes the total into the box card so drift shows over time.
