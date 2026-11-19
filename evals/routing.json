@@ -90,6 +90,24 @@
       "prompt": "From this Linux box, take iOS Safari screenshots of my dev server.",
       "expected_output": "ios-sim remote path: bind the dev server to 0.0.0.0, use the box's Tailscale name, and delegate to the Mac's T3 environment with the brief template (or iosim remote run when SSH to the Mac is on).",
       "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "I'm going to bed. Keep these four threads working on their lanes until 08:00 and make sure nothing stalls.",
+      "expected_output": "Personal overnight skill, in order: plan with the owner and collect what only they can give, run `jass night check` on every box that hosts a lane, send each thread the unattended brief, start `jass night watch`. No system setting is changed without the owner; a watcher thread only if lanes need judgement at night.",
+      "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "Before I leave for the weekend: is this machine fine to run five agents unattended?",
+      "expected_output": "Personal overnight skill, pre-flight step: run `jass night check --agents 5` with the hours and a `--need` per dependency, report every fail and warn row with its fix. Do not start work or change settings.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "Run the full test suite and tell me what fails.",
+      "expected_output": "Ordinary task; not the overnight skill.",
+      "files": []
     }
   ]
 }

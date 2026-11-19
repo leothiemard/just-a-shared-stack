@@ -146,6 +146,47 @@ def cmd_sync(args) -> int:
     return sync.run(config.load(), quick=args.quick, first_push=args.first_push)
 
 
+def cmd_night(args) -> int:
+    import sqlite3
+
+    from jass.night import check, probe, t3state, watch
+
+    cfg = config.load()
+    if args.action == "watch":
+        return watch.run(cfg, args)
+    if args.action == "status":
+        print(watch.status(cfg, args.thread), end="")
+        return 0
+    threads, problem, store = None, "", t3state.store_path(cfg)
+    agents = args.agents
+    try:
+        threads = t3state.snapshot(store)
+        agents = t3state.going(store) if agents is None else agents
+    except (JassError, sqlite3.Error) as error:
+        threads, problem = None, str(error)
+    facts = probe.collect()
+    facts["t3"] = probe.t3(store.parent.parent)
+    rows = check.report(cfg, facts, threads, problem, hours=args.hours, agents=agents or 1, needs=args.need, peers=args.peer)
+    if args.json:
+        print(json.dumps([{"status": s, "check": n, "detail": d} for s, n, d in rows], indent=2))
+    else:
+        width = max(len(name) for _, name, _ in rows)
+        for status, name, detail in rows:
+            print(f"{status:4}  {name:{width}}  {detail}")
+        fails, warns = (sum(1 for row in rows if row[0] == level) for level in ("fail", "warn"))
+        print(f"\n{fails} to fix before you leave, {warns} to know about. Checked this box only; run it on every box that hosts work tonight.")
+    return 1 if any(status == "fail" for status, _, _ in rows) else 0
+
+
+def cmd_heavy(args) -> int:
+    from jass.night import heavy
+
+    command = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    if not command:
+        raise JassError("Give the command to run: jass heavy -- npm run check")
+    return heavy.run(config.load(), command, args.mem)
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="jass", description="Just a Shared Stack: box setup, the shared lore, recall and sync.")
     sub = top.add_subparsers(dest="command", metavar="<command>")
@@ -226,6 +267,34 @@ def parser() -> argparse.ArgumentParser:
     st.add_argument("--since")
     st.add_argument("--by", choices=["week", "box", "project"], default="week")
     st.add_argument("--json", action="store_true")
+
+    p = command("night", cmd_night, "Unattended agent work: pre-flight check, watchdog and thread states. Reads only; changes no system setting.")
+    actions = p.add_subparsers(dest="action", metavar="<action>")
+    actions.required = True
+    c = actions.add_parser("check", help="pre-flight for this box: sleep, power, memory for the planned agents, network, disk, threads that wait for you. Exit 1 on a fail")
+    c.add_argument("--hours", type=float, default=8, help="how long the work runs unattended (default 8)")
+    c.add_argument("--agents", type=int, help="agents that will run on this box at once, delegates included (default: those with a run going now)")
+    c.add_argument("--need", action="append", default=[], metavar="CMD", help="a command that must exit 0, proving something the night needs (a sign-in, a tool); repeatable")
+    c.add_argument("--peer", action="append", default=[], metavar="HOST[:PORT]", help="another machine that must answer; repeatable")
+    c.add_argument("--json", action="store_true")
+    w = actions.add_parser("watch", help="watchdog: resume threads whose run failed, report what needs a person. Runs in the foreground until --hours pass")
+    w.add_argument("--thread", action="append", required=True, metavar="NAME", help="a thread to watch: its id, the start of its id, or a piece of its title; repeatable")
+    w.add_argument("--hours", type=float, default=8, help="how long to watch (default 8)")
+    w.add_argument("--interval", type=int, default=60, help="seconds between polls (default 60)")
+    w.add_argument("--no-resume", action="store_true", help="report failed runs instead of sending them a message to continue")
+    w.add_argument("--keep-going", action="store_true", help="remind a thread that ended before the end of its standing mandate")
+    w.add_argument("--max-messages", type=int, default=4, help="messages of each kind (to continue, reminders) a thread gets in one night before it becomes an alert (default 4)")
+    w.add_argument("--peer", action="append", default=[], metavar="HOST[:PORT]", help="another machine to watch: an alert when it stops answering for three minutes; repeatable")
+    w.add_argument("--awake", action="store_true", help="hold this box awake while the watch runs (caffeinate on macOS, systemd-inhibit on Linux)")
+    w.add_argument("--wake", action="store_true", help="exit 3 at the first alert, so a thread running this in the background wakes")
+    w.add_argument("--dry-run", action="store_true", help="log what would be sent; send nothing")
+    w.add_argument("--log", help="log file (default: a new file under ~/.cache/jass/night)")
+    s = actions.add_parser("status", help="one line per thread: working, delegated, background, blocked, failed, stuck, stopped or ended")
+    s.add_argument("--thread", action="append", default=[], metavar="NAME", help="default: threads active in the last 24 hours")
+
+    p = command("heavy", cmd_heavy, "Run one heavy command at a time on this box, under a memory cap, so an overrun kills the command and not the agent.")
+    p.add_argument("--mem", type=int, metavar="MB", help="memory cap (default: night.heavy_mb of the box config, else a quarter of memory; 0 for none)")
+    p.add_argument("cmd", nargs=argparse.REMAINDER, metavar="-- command", help="the command and its arguments")
 
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the lore.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")

@@ -35,6 +35,9 @@ jass show 1                             # print a recall hit in full
 jass sync                               # share the lore with the other boxes
 jass update --apply                     # pull the stack, relink skills, refresh the rules block
 jass doctor                             # health check and always-loaded context size
+jass night check --agents 4             # before leaving agents unattended: will this box last the night?
+jass night watch --thread "Lane A"      # watchdog: resume failed runs, report what needs you
+jass heavy -- npm run check             # one heavy command at a time, under a memory cap
 ```
 
 **Add a skill.** Create `skills/<name>/SKILL.md` with `name` and `description` frontmatter, add `<name>` to `skills.json`, commit and push, then run `jass update --apply` on each box.
@@ -60,6 +63,7 @@ It clones the stack to `~/Development/just-a-shared-stack` and runs `jass init` 
 | full-stop | "full stop": finish, prove, review and prepare a PR for the user to merge. |
 | full-send | "full send": the same workflow, with authority to merge after checks and review. |
 | grilling | Explore the complete decision tree with the user before acting. |
+| overnight | Plan, pre-flight, brief and watch agent work that runs unattended, with `jass night` and `jass heavy`. |
 | handoff | Save a concise conversation handoff in the OS temporary directory. |
 | retro | Recommend improvements to the coding environment from a session retrospective. |
 | file-pr | Open a concise PR describing the problem, solution and proof. |

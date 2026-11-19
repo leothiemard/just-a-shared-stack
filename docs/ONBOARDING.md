@@ -8,7 +8,7 @@ The **stack** (this public repository) holds how your agents work: skills, a sho
 
 ## Requirements
 
-Git, Python 3.9 or newer with SQLite FTS5 (macOS system Python, python.org and Homebrew builds have it), macOS or Linux. Nothing runs in the background.
+Git, Python 3.9 or newer with SQLite FTS5 (macOS system Python, python.org and Homebrew builds have it), macOS or Linux. Nothing runs in the background; `jass night watch` runs only while you keep it running.
 
 ## Set up the first box
 
@@ -69,6 +69,22 @@ Things you can ask for:
 Run `jass sync` whenever you want the other boxes to see new knowledge; agents also run it after recording. `jass recall` syncs on its own when the lore is stale.
 
 Commands you may use yourself: `jass doctor` (health and context budget), `jass sessions list --since 2w`, `jass sessions stats --by project` (where the tokens went), `jass path project`, `jass show <n>` after a recall.
+
+
+## Leave agents working unattended
+
+Before you leave agents working overnight or while you are away, on every box that hosts work:
+
+```sh
+jass night check --hours 8 --agents 4 --need 'gh auth status'    # exit 1 when something will stop the night
+jass night watch --hours 8 --thread "Lane A" --thread "Lane B" --keep-going --awake
+```
+
+`check` reads this box and changes nothing: whether it will sleep, power, a login session that has been crashing (macOS), memory for that many agents, the network link, disk, provider sign-in and quota, and threads that wait for you. Each `fail` row names its fix. `watch` runs in the foreground until the hours pass, so start it in `tmux` or a similar terminal that outlives your session; it resumes T3 Code threads whose run failed and logs what needs you to `~/.cache/jass/night/`. Started again the same night, it repeats no alert and keeps its message counts. It reads T3 Code's store and sends through `t3 thread send`; without T3 Code, `check` and `heavy` still work.
+
+`jass heavy -- <command>` runs one heavy command at a time on the box under a memory cap (Linux with systemd; elsewhere only the queue), so a build that outgrows memory is killed alone instead of taking its agent and that agent's background jobs with it, and `jass heavy` says when a failure was a kill at the cap. The cap is a quarter of memory unless `night.heavy_mb` in `box.json` sets it (`0` for none); `night.agent_mb` and `night.reserve_mb` tune the sums `check` does.
+
+The `overnight` skill walks an agent through the whole routine: plan, pre-flight, brief, watch, report.
 
 ## Add a skill
 

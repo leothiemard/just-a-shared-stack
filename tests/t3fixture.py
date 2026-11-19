@@ -11,8 +11,11 @@ from pathlib import Path
 T = "orchestration_v2_projection_"
 SCHEMA = f"""
 CREATE TABLE {T}threads (thread_id TEXT PRIMARY KEY, project_id TEXT, title TEXT, created_at TEXT, updated_at TEXT,
-  archived_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT);
-CREATE TABLE {T}runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, status TEXT, payload_json TEXT);
+  archived_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT, active_provider_thread_id TEXT);
+CREATE TABLE {T}runtime_requests (runtime_request_id TEXT PRIMARY KEY, thread_id TEXT, kind TEXT, status TEXT);
+CREATE TABLE {T}runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, status TEXT, payload_json TEXT,
+  requested_at TEXT, completed_at TEXT);
+CREATE TABLE {T}turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, type TEXT, status TEXT, updated_at TEXT, payload_json TEXT);
 CREATE INDEX {T}runs_thread_ordinal_idx ON {T}runs (thread_id, ordinal);
 CREATE TABLE {T}messages (message_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, role TEXT, created_at TEXT, payload_json TEXT);
 CREATE INDEX {T}messages_thread_created_idx ON {T}messages (thread_id, created_at, message_id);
@@ -67,7 +70,7 @@ class Store:
         }
         with self.db() as conn:
             conn.execute(
-                f"INSERT INTO {T}threads VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'claudeAgent')",
+                f"INSERT INTO {T}threads VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'claudeAgent', NULL)",
                 (thread_id, project, title or f"Thread {thread_id}", stamp(age), stamp(updated), stamp(updated) if deleted else None, json.dumps(payload)),
             )
 
@@ -86,7 +89,8 @@ class Store:
         with self.db() as conn:
             (ordinal,) = conn.execute(f"SELECT count(*) FROM {T}runs WHERE thread_id = ?", (thread_id,)).fetchone()
             run_id = self.next_id("run")
-            conn.execute(f"INSERT INTO {T}runs VALUES (?, ?, ?, ?, '{{}}')", (run_id, thread_id, ordinal + 1, status))
+            done = None if status in ("running", "queued") else stamp(at)
+            conn.execute(f"INSERT INTO {T}runs VALUES (?, ?, ?, ?, '{{}}', ?, ?)", (run_id, thread_id, ordinal + 1, status, stamp(at + 1), done))
             usage = {"turnTokenUsage": dict(zip(("inputTokens", "cachedInputTokens", "outputTokens"), tokens))}
             if used:
                 usage["tokenUsage"] = {"usedTokens": used}
@@ -96,6 +100,38 @@ class Store:
         self.message(thread_id, "assistant", "Working on it.", run_id, at + 0.02)
         self.message(thread_id, "assistant", answer, run_id, at + 0.01)
         return run_id
+
+    def item(self, thread_id: str, kind: str, status: str, at: float = 100, **payload) -> None:
+        """A turn item of the thread's latest run: an `error` with its `failure`, or a request that waits for the owner."""
+        with self.db() as conn:
+            run = conn.execute(f"SELECT run_id FROM {T}runs WHERE thread_id = ? ORDER BY ordinal DESC LIMIT 1", (thread_id,)).fetchone()
+            conn.execute(f"INSERT INTO {T}turn_items VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (self.next_id("ti"), thread_id, run[0] if run else None, kind, status, stamp(at), json.dumps(payload)))
+
+    def answer(self, thread_id: str) -> None:
+        with self.db() as conn:
+            conn.execute(f"UPDATE {T}runtime_requests SET status = 'resolved' WHERE thread_id = ?", (thread_id,))
+
+    def request(self, thread_id: str, kind: str, status: str = "pending") -> None:
+        with self.db() as conn:
+            conn.execute(f"INSERT INTO {T}runtime_requests VALUES (?, ?, ?, ?)", (self.next_id("rq"), thread_id, kind, status))
+
+    def background(self, thread_id: str, *kinds: str) -> None:
+        """The background tasks T3 lists as pending on the thread's active provider thread."""
+        with self.db() as conn:
+            provider_thread = f"pth-active-{thread_id}"
+            conn.execute(f"INSERT OR REPLACE INTO {T}provider_threads VALUES (?, ?, 1, ?)",
+                         (provider_thread, thread_id, json.dumps({"pendingBackgroundTasks": [{"taskId": f"t{n}", "kind": kind} for n, kind in enumerate(kinds)]})))
+            conn.execute(f"UPDATE {T}threads SET active_provider_thread_id = ? WHERE thread_id = ?", (provider_thread, thread_id))
+
+    def set_run(self, run_id: str, status: str, completed_at: str = "") -> None:
+        with self.db() as conn:
+            conn.execute(f"UPDATE {T}runs SET status = ?, completed_at = ? WHERE run_id = ?",
+                         (status, None if status in ("running", "queued") else completed_at or stamp(0), run_id))
+
+    def archive(self, thread_id: str) -> None:
+        with self.db() as conn:
+            conn.execute(f"UPDATE {T}threads SET archived_at = ? WHERE thread_id = ?", (stamp(0), thread_id))
 
     def native(self, thread_id: str, driver: str, native_id: str) -> None:
         with self.db() as conn:

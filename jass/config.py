@@ -21,6 +21,9 @@ DEFAULTS = {
     "lore": {"path": "~/lore", "remote": ""},
     "sessions": {"export": True, "sources": ["t3"], "t3_store": "", "idle_minutes": 30, "exclude_projects": []},
     "sync": {"max_age_minutes": 30},
+    # `jass night` and `jass heavy`: memory per agent and held back for the system, and the cap of one heavy command
+    # (null: a quarter of this box's memory; 0: no cap).
+    "night": {"agent_mb": 1500, "reserve_mb": 2000, "heavy_mb": None},
 }
 
 
