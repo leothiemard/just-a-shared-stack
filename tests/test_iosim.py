@@ -753,6 +753,11 @@ class OpenTest(unittest.TestCase):
         with lp, mock.patch.object(iosim, "write_state"):
             with self.assertRaises(iosim.IosimError):
                 sess.wait_loaded("http://box/", "tok", "new-tab", {"ws://p/1"}, {"ws://p/1"}, timeout=1)
+        # A background tab the proxy had not listed before the open is passed over too.
+        sess, lp = self.session([stale], [stale_probe] * 100)
+        with lp, mock.patch.object(iosim, "write_state"):
+            with self.assertRaises(iosim.IosimError):
+                sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=1)
         # Both answer: the new tab wins whatever the order.
         sess, lp = self.session([stale, new], [new_probe])
         with lp, mock.patch.object(iosim, "write_state"):
@@ -764,6 +769,31 @@ class OpenTest(unittest.TestCase):
         with lp, mock.patch.object(iosim, "write_state"):
             res = sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=5)
         self.assertEqual(res["title"], "sign in")
+
+    def test_new_tab_passes_over_the_front_tab_as_it_was_before_the_open(self):
+        front = {"url": "http://box/recipes/1", "webSocketDebuggerUrl": "ws://p/1"}
+        started = 1_000_000.0
+        old = {"href": "http://box/recipes/1", "readyState": "complete", "nav": None, "mark": None, "title": "old",
+               "visible": True, "t0": (started - 600) * 1000}
+        sess, lp = self.session([front], [old] * 100)
+        with lp, mock.patch.object(iosim, "write_state"):
+            with self.assertRaises(iosim.IosimError) as cm:
+                sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=1, started=started)
+        self.assertIn("no newly loaded page", str(cm.exception))
+        new = dict(old, href="http://box/", title="new", t0=(started + 1) * 1000)
+        sess, lp = self.session([front], [new])
+        with lp, mock.patch.object(iosim, "write_state"):
+            res = sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=5, started=started)
+        self.assertEqual(res["title"], "new")
+        self.assertFalse(iosim.stale_document(None, started))
+        self.assertFalse(iosim.stale_document((started - 1) * 1000, started))  # inside the slack
+
+    def test_ssh_failing_to_connect_is_told_from_a_remote_command_that_died(self):
+        proc = lambda code, out, err: mock.Mock(returncode=code, stdout=out, stderr=err)
+        self.assertTrue(iosim.ssh_could_not_connect(proc(255, "", "ssh: connect to host mac port 22: Connection refused")))
+        self.assertFalse(iosim.ssh_could_not_connect(proc(255, "", "")))  # the remote command was killed
+        self.assertFalse(iosim.ssh_could_not_connect(proc(255, '{"ok": false}', "ssh: x")))
+        self.assertFalse(iosim.ssh_could_not_connect(proc(1, "", "ssh: x")))
 
     def test_about_blank_needs_a_current_tab(self):
         sess, lp = self.session([], [])

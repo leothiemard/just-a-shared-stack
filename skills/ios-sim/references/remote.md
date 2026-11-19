@@ -18,10 +18,10 @@ The Simulator's Safari uses the Mac's network. A URL that works in `curl` on the
 
 Cookies marked `Secure`, service workers and some APIs need HTTPS or `localhost`. A plain-HTTP Tailscale name is not a secure context, so test those through the `localhost` forward or an HTTPS URL (for example `tailscale serve`).
 
-## T3 delegation (designed for; not yet exercised from another box)
+## T3 delegation (works; exercised from a Linux box)
 
 1. Find the Mac with `t3_environment_links` and note its `environmentId`.
-2. Pick a project on the Mac for the child to run in. Any project works, because the child only needs the skill. Call `orchestrator_capabilities` once, then `delegate_task` with `target.environmentId` (and `target.projectId` when T3 asks for one).
+2. Call `orchestrator_capabilities` once with that `environmentId`, then `delegate_task` with `target.environmentId` (no `target.projectId` was needed). A run takes a few minutes: `mode: "wait"` with a `timeoutMs` of several minutes returns the child's report in the same call.
 3. Send a brief built from the template below. Put the plan inline, because the child cannot read your files.
 4. The child reports back in its final message. Read its verdict and its description of each screenshot. When you need the files, give a destination in the brief.
 
@@ -31,7 +31,7 @@ Cookies marked `Secure`, service workers and some APIs need HTTPS or `localhost`
 Use the ios-sim skill on this Mac to test a web page in Mobile Safari on the iOS Simulator. Do not change the page's code.
 
 URL (reachable from this Mac; check with curl first): <http://dev-box:3000/path>
-Device: <iPhone 15 | a simulator name or UDID>. Leave it booted.
+Device: <iPhone 15 | a simulator name or UDID>. Leave it booted. Safari may already hold tabs from earlier runs: run `iosim pages` first, and open the URL with `iosim open` before anything else.
 Text Sizes: <large and accessibility-large>
 Plan (save as plan.json and run `iosim run plan.json --out <dir>`; add steps if a check needs them):
 <the plan JSON, with ${BASE} and the --var to pass>
@@ -45,8 +45,8 @@ Report back: pass or fail; each failure from report.json; the audit counts per T
 
 ### Open points
 
-- Files reach the caller only through `scp`, which needs SSH into the caller's box. T3 attachments might carry images back across environments, but that is unverified.
-- The child needs the skill installed on the Mac (`jass update --apply` there).
+- Files reach the caller only through `scp` from the Mac, which needs SSH into the caller's box (the Mac's own Remote Login can stay off). T3 attachments might carry images back across environments, but that is unverified.
+- Both boxes need the skill installed (`jass update --apply`; pull the stack first, because `jass update` without `--apply` does not fetch).
 
 ## SSH (needs Remote Login or Tailscale SSH on the Mac)
 
