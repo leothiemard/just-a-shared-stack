@@ -10,15 +10,18 @@ relevant checks. Give council the updated implementation; do not defer known
 fixes until reviews return. If the user wants to discard the implementation
 and explore new ideas, skip fixes to code being replaced.
 
-For round 1, bring in three delegates to help with the user's request, usually for review
+For round 1, bring in four delegates to help with the user's request, usually for review
 or feedback. Use this default panel at high reasoning effort:
 
 - Claude Opus
 - GPT Sol (`gpt-6.1-sol`)
 - GPT Astra (`gpt-6-astra`)
+- Gemini Neon (`gemini-4-neon`, Antigravity provider)
 
 If the user's instructions name council members, use those instead. Sol and
-Astra are separate OpenAI seats; three different providers are not required.
+Astra are separate OpenAI seats. Gemini Neon is the only Gemini model allowed:
+never use another Gemini model, through Antigravity or another provider such
+as `fx`, even to replace an unavailable member.
 
 In T3 Code, use `orchestrator_capabilities` to resolve the models, then
 `delegate_task` to start one delegate per model in parallel. Elsewhere, use
@@ -47,6 +50,7 @@ Rounds: 2
 | Claude Opus | 7/10 | — |
 | GPT Sol | 8/10 | 9/10 |
 | GPT Astra | 7/10 | — |
+| Gemini Neon | 8/10 | — |
 ```
 
 If a delegate gives no score, write `no score`; if they skipped a round, `—`.
