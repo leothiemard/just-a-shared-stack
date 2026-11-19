@@ -10,16 +10,15 @@ relevant checks. Give council the updated implementation; do not defer known
 fixes until reviews return. If the user wants to discard the implementation
 and explore new ideas, skip fixes to code being replaced.
 
-For round 1, bring in four delegates to help with the user's request, usually for review
+For round 1, bring in three delegates to help with the user's request, usually for review
 or feedback. Use this default panel at high reasoning effort:
 
-- Claude Opus
-- GPT Sol (`gpt-6.1-sol`)
-- GPT Astra (`gpt-6-astra`)
 - Gemini Neon (`gemini-4-neon`, Antigravity provider)
+- Claude Opus
+- Claude Fable (`claude-fable-5-2`)
 
-If the user's instructions name council members, use those instead. Sol and
-Astra are separate OpenAI seats. Gemini Neon is the only Gemini model allowed:
+If the user's instructions name council members, use those instead. Opus and
+Fable are separate Claude seats. Gemini Neon is the only Gemini model allowed:
 never use another Gemini model, through Antigravity or another provider such
 as `fx`, even to replace an unavailable member.
 
@@ -47,10 +46,9 @@ Rounds: 2
 
 | Delegate | Round 1 | Round 2 |
 | --- | --- | --- |
-| Claude Opus | 7/10 | — |
-| GPT Sol | 8/10 | 9/10 |
-| GPT Astra | 7/10 | — |
 | Gemini Neon | 8/10 | — |
+| Claude Opus | 7/10 | — |
+| Claude Fable | 8/10 | 9/10 |
 ```
 
 If a delegate gives no score, write `no score`; if they skipped a round, `—`.
@@ -58,7 +56,7 @@ Do not invent scores.
 If the PR is open, edit the description. Do not post a comment for this.
 If there is no PR, put the same results in the final reply only.
 
-Fix findings you agree with. After round 1, use one GPT Sol reviewer on the
+Fix findings you agree with. After round 1, use one Claude Fable reviewer on the
 diff since the last review plus open findings, unless the user asks otherwise.
 Stop when no blocker/should remains, the requested score is reached, or after
 3 rounds, whichever comes first. Also stop if there is no new blocker/should
