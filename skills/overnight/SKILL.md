@@ -23,7 +23,7 @@ jass night check --hours <hours> --agents <agents on this box, delegates include
 
 Give one `--need` per sign-in, tool or device a lane depends on (`--need 'gh auth status'`); it must exit 0. No box can see inside another, so on a linked machine run the check there through a delegate.
 
-A `fail` row names something that has stopped a night before, and its fix. Apply a fix that lasts only for the night yourself; a `sleep` fail is closed by `--awake` in step 4. A fix that changes a system setting (power, swap, services, the network) is the owner's: show them the command and wait. When the agents do not fit in memory, move a lane to another box or night; adding swap or hoping does not make them fit.
+A `fail` row names something that has stopped a night before, and its fix. A `sleep` fail is closed by `--awake` in step 4; do not start a keep-awake command from your own shell, where it ends with the shell. A fix that changes a system setting (power, swap, services, the network) is the owner's: show them the command and wait. When the agents do not fit in memory, move a lane to another box or night; adding swap or hoping does not make them fit.
 
 Done when no box reports a `fail` and the owner has seen every `warn`.
 

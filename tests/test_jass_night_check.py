@@ -64,6 +64,27 @@ class ParserTests(unittest.TestCase):
     def test_pmset(self):
         self.assertEqual(probe.parse_pmset(PMSET), {"idle_minutes": 1, "prevented_by": ["powerd", "caffeinate"], "sleep_disabled": False})
         self.assertEqual(probe.parse_pmset(" sleep                0\n"), {"idle_minutes": 0, "prevented_by": []})
+        real = " sleep                1 (sleep prevented by caffeinate, caffeinate, coreaudiod, coreaudiod, xcodebuild, powerd, caffeinate)\n"
+        self.assertEqual(probe.parse_pmset(real), {"idle_minutes": 1, "prevented_by": ["caffeinate", "coreaudiod", "xcodebuild", "powerd"]})
+
+    def test_which_caffeinate_lasts_the_night(self):
+        t3_own = "  401 /Applications/T3 Code.app/Contents/MacOS/T3 Code\n  402 caffeinate -i -w 401\n"
+        self.assertFalse(probe.parse_caffeinate(t3_own))  # tied to T3 Code, which ends it when no run is going
+        self.assertFalse(probe.parse_caffeinate("  7 caffeinate -i make test\n"))
+        self.assertFalse(probe.parse_caffeinate(""))
+        self.assertTrue(probe.parse_caffeinate(t3_own + "  90 /usr/bin/caffeinate -s -i\n"))
+        self.assertTrue(probe.parse_caffeinate("  90 caffeinate -ims -t 28800\n"))
+        self.assertTrue(probe.parse_caffeinate("  50 python3 /usr/local/bin/jass night watch --awake\n  51 caffeinate -ims -w 50\n"))
+
+    def test_a_shut_lid_counts_only_where_it_causes_sleep(self):
+        def lid(text):
+            with mock.patch.object(probe.sys, "platform", "darwin"), mock.patch.object(probe, "run", lambda *argv, **_: text if argv[0] == "ioreg" else ""):
+                return probe.power()["lid_closed"]
+
+        self.assertIs(lid('  "AppleClamshellCausesSleep" = Yes\n  "AppleClamshellState" = Yes\n'), True)
+        self.assertIs(lid('  "AppleClamshellCausesSleep" = No\n  "AppleClamshellState" = Yes\n'), False)  # docked, on power, with a display
+        self.assertIs(lid('  "AppleClamshellCausesSleep" = Yes\n  "AppleClamshellState" = No\n'), False)
+        self.assertIsNone(lid(""))
         self.assertEqual(probe.parse_batt("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t64%; discharging; 3:10 remaining\n"),
                          {"on_ac": False, "charge": 64})
         self.assertEqual(probe.parse_batt("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged;\n"), {"on_ac": True, "charge": 100})
@@ -83,6 +104,7 @@ class SleepTests(unittest.TestCase):
         rows = self.mac()
         self.assertEqual(statuses(rows, "sleep"), ["fail"])
         self.assertIn("caffeinate -ims -t 28800", detail(rows, "sleep"))
+        self.assertIn("jass night watch --awake", detail(rows, "sleep"))
 
     def test_a_transient_holder_is_not_enough(self):
         rows = self.mac(prevented_by=["powerd", "coreaudiod"])
@@ -91,6 +113,13 @@ class SleepTests(unittest.TestCase):
 
     def test_caffeinate_or_no_idle_sleep_passes(self):
         self.assertEqual(statuses(self.mac(prevented_by=["powerd", "caffeinate"]), "sleep"), ["ok"])
+        self.assertEqual(statuses(self.mac(prevented_by=["powerd", "caffeinate"], caffeinate_lasts=True), "sleep"), ["ok"])
+        self.assertEqual(statuses(self.mac(prevented_by=["caffeinate", "Amphetamine"], caffeinate_lasts=False), "sleep"), ["ok"])
+
+    def test_a_caffeinate_that_ends_with_its_process_is_not_enough(self):
+        rows = self.mac(prevented_by=["powerd", "caffeinate"], caffeinate_lasts=False)
+        self.assertEqual(statuses(rows, "sleep"), ["fail"])
+        self.assertIn("as T3 Code's own does when no run is going", detail(rows, "sleep"))
         self.assertEqual(statuses(self.mac(idle_minutes=0), "sleep"), ["ok"])
         self.assertEqual(statuses(self.mac(sleep_disabled=True), "sleep"), ["ok"])
 
@@ -125,6 +154,8 @@ class SessionTests(unittest.TestCase):
             with mock.patch.object(probe, "run", return_value=""):
                 found = probe.session(7, folder)
                 self.assertEqual(probe.session(7, "/nonexistent/folder"), {"crashes": [], "hours": None})
+            with mock.patch.object(probe, "run", return_value=""), mock.patch.object(probe.Path, "read_text", side_effect=PermissionError("admins only")):
+                self.assertEqual([crash["buffers"] for crash in probe.session(7, folder)["crashes"]], [False, False])  # unreadable reports still count
         self.assertEqual([crash["buffers"] for crash in found["crashes"]], [False, True])
         rows = check.session_rows(dict(found, hours=26.5))
         self.assertEqual(statuses(rows, "session"), ["fail"])  # crashed twice, and this session is a day old
@@ -201,9 +232,33 @@ class T3Tests(unittest.TestCase):
     def test_signed_out_provider_and_settings(self):
         rows = check.t3_rows(self.t3([], resume_after_limit=False, keep_awake=False,
                                      providers={"Codex": {"ready": True, "signed_in": False, "plan": "", "windows": []}}), 8)
-        self.assertEqual((statuses(rows, "provider"), statuses(rows, "t3 setting")), (["fail"], ["warn", "warn"]))
+        self.assertEqual((statuses(rows, "provider"), statuses(rows, "t3 setting")), (["warn"], ["warn", "warn"]))  # no recent thread uses it
+        signed_out = self.t3([], providers={"Codex": {"id": "codex", "ready": True, "signed_in": False, "plan": "", "windows": []}})
+        self.assertEqual(statuses(check.t3_rows(signed_out, 8, {"codex"}), "provider"), ["fail"])
+        self.assertEqual(statuses(check.t3_rows(signed_out, 8, {"claudeAgent"}), "provider"), ["warn"])
+        now = probe.time.strftime("%Y-%m-%dT%H:%M:%S.000Z", probe.time.gmtime())
+        threads = [{"state": "ended", "since": now, "provider": "codex"}, {"state": "ended", "since": "2020-01-01T00:00:00.000Z", "provider": "old"},
+                   {"state": "working", "since": "", "provider": "claudeAgent"}]
+        self.assertEqual(check.recent_providers(threads), {"codex", "claudeAgent"})
+        self.assertEqual(check.recent_providers(None), set())
         self.assertIn("autoResumeLimitedThreads", detail(rows, "t3 setting"))
         self.assertEqual(check.t3_rows({"found": False}, 8), [])
+
+    def test_every_enabled_provider_is_read(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            base = probe.Path(folder)
+            (base / "caches").mkdir()
+            (base / "userdata").mkdir()
+            for name, enabled, status in (("claudeAgent", True, "authenticated"), ("antigravity", True, "unauthenticated"), ("grok", False, "unknown")):
+                (base / "caches" / f"{name}.json").write_text(json.dumps(
+                    {"enabled": enabled, "installed": enabled, "status": "ready", "displayName": name.title(), "auth": {"status": status}}))
+            (base / "caches" / "broken.json").write_text("{")
+            found = probe.t3(base)["providers"]
+        self.assertEqual({name: (p["id"], p["signed_in"]) for name, p in found.items()},
+                         {"Claudeagent": ("claudeAgent", True), "Antigravity": ("antigravity", False)})
 
     def test_usage_cache_parser(self):
         text = ('{"usageLimits": {"windows": [{"id": "seven_day", "label": "Weekly", "usedPercent": 91, "resetsAt": "2026-11-26T08:00:00.000Z"},'
@@ -235,6 +290,15 @@ class NetworkAndNeedTests(unittest.TestCase):
         self.assertEqual((statuses(rows, "network"), statuses(rows, "link")), (["fail"], ["ok"]))
         self.assertIn("2 of 9", detail(rows, "network"))
         self.assertEqual(check.network_rows({})[0][0], "warn")
+        rows = check.network_rows({"interface": "utun4", "wireless": False, "signal_dbm": None, "probes": 9, "failed": []})
+        self.assertEqual(statuses(rows, "link"), ["warn"])  # a tunnel hides whether Wi-Fi carries it
+
+    def test_online_when_any_provider_answers(self):
+        with mock.patch.object(probe, "reach", side_effect=lambda host: host == "api.openai.com:443") as reach:
+            self.assertTrue(probe.online())
+        self.assertEqual(reach.call_count, 2)  # stops at the first that answers
+        with mock.patch.object(probe, "reach", return_value=False):
+            self.assertFalse(probe.online())
 
     def test_need_commands_must_exit_zero(self):
         rows = check.need_rows(["true", "exit 3", "sleep 5"], timeout=0.5)
@@ -245,6 +309,8 @@ class NetworkAndNeedTests(unittest.TestCase):
     def test_disk(self):
         rows = check.disk_rows({"path": "/home/x", "free_mb": 900, "used_mb": 1}, {"path": "/tmp", "free_mb": 1, "used_mb": 1, "in_memory": True}, {})
         self.assertEqual([(status, name) for status, name, _ in rows], [("warn", "disk")])
+        same = {"free_mb": 263000, "used_mb": 700000}
+        self.assertEqual(len(check.disk_rows(dict(same, path="/Users/x"), dict(same, path="/var/folders/t"))), 1)  # one volume, one row
 
 
 if __name__ == "__main__":

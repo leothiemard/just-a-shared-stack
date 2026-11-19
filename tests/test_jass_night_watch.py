@@ -124,7 +124,22 @@ class StateTests(Sandbox):
         self.lane("top")
         self.store.thread("child", parent="top")
         self.store.thread("gone", deleted=True)
-        self.assertEqual(set(self.states()), {"top"})
+        self.store.thread("fork", parent="top", relationship="fork")  # a fork is a thread of its own
+        self.assertEqual(set(self.states()), {"top", "fork"})
+
+    def test_a_link_to_open_blocks_and_a_failure_is_read_from_its_own_run(self):
+        self.lane("link")
+        self.store.item("link", "link_request", "waiting")
+        self.lane("opened")
+        self.store.item("opened", "link_request", "completed")
+        self.lane("twice", "failed")
+        self.store.item("twice", "error", "failed", failure=LIMIT)
+        self.store.turn("twice", "Continue", "", status="failed")  # failed again, with no error item of its own
+        found = {t["id"]: t for t in t3state.snapshot(self.path)}
+        self.assertEqual((found["link"]["state"], found["link"]["detail"]), ("blocked", "waits for the owner: link"))
+        self.assertEqual(found["opened"]["state"], "ended")
+        self.assertEqual((found["twice"]["failure"], found["twice"]["reset"]), ("other", ""))  # not the earlier run's usage limit
+        self.assertEqual(found["link"]["provider"], "claudeAgent")
         self.assertEqual([t["id"] for t in t3state.snapshot(self.path, ["nothing"])], [])
 
     def test_failure_kinds(self):
@@ -483,6 +498,14 @@ class CommandTests(Sandbox):
             self.assertEqual(code, 0)
             self.assertIn("0 to fix before you leave", out)
 
+    def test_check_reports_a_store_it_cannot_read_instead_of_failing(self):
+        import sqlite3
+
+        with mock.patch("jass.night.probe.collect", return_value={}), mock.patch("jass.night.probe.t3", return_value={"found": False}), \
+                mock.patch.object(t3state, "snapshot", side_effect=sqlite3.OperationalError("database is locked")):
+            code, out, _ = self.jass("night", "check")
+        self.assertIn("T3 Code threads not checked: database is locked", out)
+
     def test_watch_refuses_an_unknown_thread_and_a_second_instance(self):
         code, _, err = self.jass("night", "watch", "--thread", "nothing")
         self.assertEqual(code, 1)
@@ -574,7 +597,7 @@ class HeavyTests(Sandbox):
     def test_a_worker_killed_at_the_cap_is_named_even_when_the_runner_reports_its_own_failure(self):
         hog = f"{sys.executable} -c 'x = bytearray(300 * 1024 * 1024)'"
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            code = heavy.run({}, ["sh", "-c", f"{hog}; exit 1"], 100)
+            code = heavy.run({}, ["sh", "-c", f"{hog} 2>/dev/null; exit 1"], 100)
         self.assertNotEqual(code, 0)
         self.assertIn("killed at the 100 MB memory cap", err.getvalue())
         with contextlib.redirect_stderr(io.StringIO()) as err:
@@ -599,6 +622,14 @@ class HeavyTests(Sandbox):
         code, _, err = self.jass("heavy")
         self.assertEqual(code, 1)
         self.assertIn("jass heavy -- npm run check", err)
+
+    def test_a_heavy_command_inside_a_heavy_command_runs_straight_through(self):
+        self.new_box()
+        from jass import paths
+
+        nested = [sys.executable, "-c", "import os, sys; sys.path.insert(0, sys.argv[1]); from jass.night import heavy; "
+                  "raise SystemExit(heavy.run({'night': {'heavy_mb': 0}}, [sys.executable, '-c', 'raise SystemExit(9)']))", str(paths.STACK)]
+        self.assertEqual(heavy.run({"night": {"heavy_mb": 0}}, nested), 9)  # the inner one does not wait for the lock its parent holds
 
     def test_a_second_heavy_command_waits_for_the_first(self):
         from jass import paths

@@ -106,7 +106,7 @@
     {
       "id": 18,
       "prompt": "Run the full test suite and tell me what fails.",
-      "expected_output": "Ordinary task; not the overnight skill. On a box where agents share memory, run the suite through `jass heavy --`.",
+      "expected_output": "Ordinary task; not the overnight skill.",
       "files": []
     }
   ]

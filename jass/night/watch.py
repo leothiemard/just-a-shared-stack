@@ -343,6 +343,7 @@ def run(cfg: dict, args) -> int:
         if not free:
             raise JassError("A night watch is already running on this box. Stop it first; two would each message the threads.")
         path = Path(args.log).expanduser() if args.log else log_path(start)
+        path.parent.mkdir(parents=True, exist_ok=True)
         state_file = paths.private_dir(folder) / "watch-state.json"
         state = load_state(state_file, start)
         with open(path, "a") as handle:
@@ -351,9 +352,10 @@ def run(cfg: dict, args) -> int:
                 handle.write(line + "\n")
                 handle.flush()
 
-            cap = int(cfg.get("night", {}).get("heavy_mb") or 3000)
+            night = cfg.get("night", {})
+            cap = int(night.get("heavy_mb") or 3000)  # room one heavy command may take, also where the box sets no cap
             watch = Watch(box, threads, until, resume=not args.no_resume, keep_going=args.keep_going, max_nudges=args.max_messages,
-                          peers=args.peer, need_mb=cap, dry_run=args.dry_run, t3_resumes=bool(probe.t3(box.base).get("resume_after_limit")),
+                          peers=args.peer, low_mb=int(night.get("reserve_mb") or 2000), need_mb=cap, dry_run=args.dry_run, t3_resumes=bool(probe.t3(box.base).get("resume_after_limit")),
                           state=state, keep=(lambda: None) if args.dry_run else (lambda: save_state(state_file, state)), emit=emit)
             helper = keep_awake(int(args.hours * 3600) + 60) if args.awake else None
             earlier = sum(len(times) for kinds in state["sent"].values() for times in kinds.values())

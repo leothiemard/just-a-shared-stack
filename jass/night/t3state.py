@@ -4,7 +4,7 @@ T3's own status calls a thread `completed` both when it has finished and when it
 delegate or a background command still works for it, so a watcher needs more than the run status:
 
 - `working`   a run is going.
-- `blocked`   a request waits for the owner (an approval, a question, a secret, a sign-in link).
+- `blocked`   a request waits for the owner (an approval, a question, a secret, a link to open).
 - `delegated`  no run is going, but a child agent of this thread still is.
 - `background` no run is going, but T3 lists a background command or task the thread still waits on.
 - `failed`     the last run failed; `failure` is `memory`, `network`, `limit`, `auth` or `other`. It wins over
@@ -32,7 +32,7 @@ from jass.sessions import t3
 
 T = t3.T
 PINNED = {
-    f"{T}threads": ("thread_id", "title", "updated_at", "archived_at", "deleted_at", "payload_json", "active_provider_thread_id"),
+    f"{T}threads": ("thread_id", "title", "updated_at", "archived_at", "deleted_at", "payload_json", "provider_instance_id", "active_provider_thread_id"),
     f"{T}runs": ("run_id", "thread_id", "ordinal", "status", "requested_at", "completed_at"),
     f"{T}turn_items": ("thread_id", "run_id", "type", "status", "updated_at", "payload_json"),
     f"{T}subagents": ("thread_id", "child_thread_id", "status"),
@@ -124,21 +124,23 @@ def loads(text) -> dict:
 
 
 def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
-    """One dict per top-level thread that is not archived or deleted: id, title, state, detail, failure, reset, since, run."""
+    """One dict per top-level thread that is not archived or deleted: id, title, state, detail, failure, reset, since, run, provider."""
     out = []
     with opened(store) as conn:
         rows = conn.execute(
-            f"SELECT thread_id, title, active_provider_thread_id, json_extract(payload_json, '$.lineage.parentThreadId') FROM {T}threads"
+            f"SELECT thread_id, title, active_provider_thread_id, json_extract(payload_json, '$.lineage.parentThreadId'),"
+            f" json_extract(payload_json, '$.lineage.relationshipToParent'), provider_instance_id FROM {T}threads"
             f" WHERE deleted_at IS NULL AND archived_at IS NULL"
         ).fetchall()
-        for thread_id, title, provider_thread, parent in rows:
-            if parent or (only is not None and thread_id not in only):
+        for thread_id, title, provider_thread, parent, relationship, provider in rows:
+            if (parent and relationship != "fork") or (only is not None and thread_id not in only):  # a fork is a thread of its own
                 continue
-            runs = conn.execute(f"SELECT ordinal, status, requested_at, completed_at FROM {T}runs WHERE thread_id = ? ORDER BY ordinal", (thread_id,)).fetchall()
+            runs = conn.execute(f"SELECT ordinal, status, requested_at, completed_at, run_id FROM {T}runs WHERE thread_id = ? ORDER BY ordinal", (thread_id,)).fetchall()
             (children,) = conn.execute(f"SELECT count(*) FROM {T}subagents WHERE thread_id = ? AND status IN {GOING}", (thread_id,)).fetchone()
             requests = [kind for kind, in conn.execute(f"SELECT kind FROM {T}runtime_requests WHERE thread_id = ? AND status = 'pending'", (thread_id,))]
             requests += ["secret" for _ in conn.execute(
                 f"SELECT 1 FROM {T}turn_items WHERE thread_id = ? AND type = 'secret_request' AND json_extract(payload_json, '$.secretStatus') = 'pending'", (thread_id,))]
+            requests += ["link" for _ in conn.execute(f"SELECT 1 FROM {T}turn_items WHERE thread_id = ? AND type = 'link_request' AND status = 'waiting'", (thread_id,))]
             pending = conn.execute(f"SELECT payload_json FROM {T}provider_threads WHERE provider_thread_id = ?", (provider_thread,)).fetchone()
             tasks = loads(pending[0]).get("pendingBackgroundTasks") if pending else None
             background = [str(task.get("kind") or "task").replace("_", " ") for task in tasks or [] if isinstance(task, dict)]
@@ -146,12 +148,12 @@ def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
             last = [run for run in runs if run[1] != "queued"]
             if last and last[-1][1] == "failed":
                 found = conn.execute(
-                    f"SELECT json_extract(payload_json, '$.failure') FROM {T}turn_items WHERE thread_id = ? AND type = 'error' AND status = 'failed'"
-                    f" ORDER BY updated_at DESC LIMIT 1", (thread_id,)).fetchone()
+                    f"SELECT json_extract(payload_json, '$.failure') FROM {T}turn_items WHERE thread_id = ? AND run_id = ? AND type = 'error' AND status = 'failed'"
+                    f" ORDER BY updated_at DESC LIMIT 1", (thread_id, last[-1][4])).fetchone()  # this run's own error, never an earlier run's
                 failure = loads(found[0]) if found else {}
             state, detail = classify([(run[0], run[1]) for run in runs], children, background, requests, failure)
             since = (last[-1][3] or last[-1][2]) if last else ""
-            out.append({"id": thread_id, "title": title or "", "state": state, "detail": detail, "since": since or "", "run": runs[-1][0] if runs else 0,
+            out.append({"id": thread_id, "title": title or "", "state": state, "detail": detail, "since": since or "", "run": runs[-1][0] if runs else 0, "provider": provider or "",
                         "failure": failure_kind(failure) if state == "failed" else "", "reset": str(failure.get("resetAt") or "") if state == "failed" else ""})
     return out
 

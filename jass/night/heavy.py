@@ -24,6 +24,7 @@ from jass import paths
 from jass.night import probe
 
 MIN_CAP_MB = 2000
+INSIDE = "JASS_HEAVY"  # set for the command, so a nested `jass heavy` runs straight through
 
 
 def cap_mb(cfg: dict, asked: int | None = None) -> int:
@@ -68,6 +69,8 @@ def run(cfg: dict, command: list[str], asked_mb: int | None = None) -> int:
     if not shutil.which(command[0]):
         print(f"jass heavy: cannot run {command[0]}: not found or not executable", file=sys.stderr)
         return 127
+    if os.environ.get(INSIDE):  # a script under `jass heavy` that calls it again would wait on its own lock for ever
+        return subprocess.call(command)
     mb = cap_mb(cfg, asked_mb)
     unit = f"jass-heavy-{os.getpid()}-{int(time.time())}" if can_scope() else ""
     argv = wrap(command, mb, unit)
@@ -78,7 +81,7 @@ def run(cfg: dict, command: list[str], asked_mb: int | None = None) -> int:
         lock.__enter__()
     try:
         try:
-            child = subprocess.Popen(argv)
+            child = subprocess.Popen(argv, env={**os.environ, INSIDE: "1"})
         except OSError as error:
             print(f"jass heavy: cannot run {command[0]}: {error}", file=sys.stderr)
             return 127

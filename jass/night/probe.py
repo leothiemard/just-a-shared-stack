@@ -116,7 +116,11 @@ def parse_usage(text: str, now: float) -> list[dict]:
 def t3(base: Path) -> dict:
     """What T3 Code's data folder says about its providers and the two settings that matter at night."""
     providers = {}
-    for name in ("claudeAgent", "codex"):
+    try:
+        names = sorted(path.stem for path in (base / "caches").glob("*.json"))
+    except OSError:
+        names = []
+    for name in names:
         text = read(str(base / "caches" / f"{name}.json"))
         try:
             cache = json.loads(text) if text else {}
@@ -125,7 +129,7 @@ def t3(base: Path) -> dict:
         if isinstance(cache, dict) and cache.get("enabled") and cache.get("installed"):
             auth = cache.get("auth") if isinstance(cache.get("auth"), dict) else {}
             providers[cache.get("displayName") or name] = {
-                "ready": cache.get("status") == "ready", "signed_in": auth.get("status") == "authenticated",
+                "id": name, "ready": cache.get("status") == "ready", "signed_in": auth.get("status") == "authenticated",
                 "plan": str(auth.get("label") or ""), "windows": parse_usage(text, time.time()),
             }
     try:
@@ -225,7 +229,8 @@ def network(hosts=PROBE_HOSTS, attempts: int = 3) -> dict:
     return {"interface": iface, "wireless": wireless, "signal_dbm": signal, "probes": len(hosts) * attempts, "failed": failed}
 
 
-def online(hosts=PROBE_HOSTS[:1]) -> bool:
+def online(hosts=PROBE_HOSTS) -> bool:
+    """Whether any provider answers; the first that does ends the probing."""
     return any(reach(host) for host in hosts)
 
 
@@ -238,11 +243,32 @@ def parse_pmset(text: str) -> dict:
     if line:
         facts["idle_minutes"] = int(line.group(1))
         note = line.group(2) or ""
-        facts["prevented_by"] = [name.strip() for name in note.split("by", 1)[1].split(",")] if "prevented by" in note else []
+        names = [name.strip() for name in note.split("by", 1)[1].split(",")] if "prevented by" in note else []
+        facts["prevented_by"] = list(dict.fromkeys(names))  # pmset names a process once per assertion
     disabled = re.search(r"^\s*SleepDisabled\s+(\d)", text, re.M)
     if disabled:
         facts["sleep_disabled"] = disabled.group(1) == "1"
     return facts
+
+
+def parse_caffeinate(text: str) -> bool:
+    """From `ps -axo pid=,args=`: whether a `caffeinate` runs that will last the night.
+
+    One tied to a command or to a process with `-w` ends with it; T3 Code starts such a one and it lasts
+    only while a run is going. The one `jass night watch --awake` starts lasts as long as the watch."""
+    rows = [line.split() for line in text.splitlines()]
+    args = {row[0]: row[1:] for row in rows if len(row) > 1}
+    for words in args.values():
+        if os.path.basename(words[0]) != "caffeinate":
+            continue
+        if not all(word.startswith("-") or word.isdigit() for word in words[1:]):
+            continue  # `caffeinate make test` lasts as long as the command
+        if "-w" not in words:
+            return True
+        watched = args.get(words[words.index("-w") + 1] if words.index("-w") + 1 < len(words) else "", [])
+        if "night" in watched and "watch" in watched:
+            return True
+    return False
 
 
 def parse_batt(text: str) -> dict:
@@ -256,8 +282,12 @@ def power() -> dict:
     if sys.platform == "darwin":
         facts = parse_pmset(run("pmset", "-g"))
         facts.update(parse_batt(run("pmset", "-g", "batt")))
-        lid = re.search(r'"AppleClamshellState" = (Yes|No)', run("ioreg", "-r", "-k", "AppleClamshellState", "-d", "1"))
-        facts["lid_closed"] = lid.group(1) == "Yes" if lid else None
+        clamshell = run("ioreg", "-r", "-k", "AppleClamshellState", "-d", "1")
+        lid = re.search(r'"AppleClamshellState" = (Yes|No)', clamshell)
+        sleeps = re.search(r'"AppleClamshellCausesSleep" = (Yes|No)', clamshell)
+        # A shut lid matters only where it causes sleep: a docked Mac on power with a display stays awake.
+        facts["lid_closed"] = lid.group(1) == "Yes" and not (sleeps and sleeps.group(1) == "No") if lid else None
+        facts["caffeinate_lasts"] = parse_caffeinate(run("ps", "-axo", "pid=,args="))
         facts["platform"] = "mac"
         return facts
     idle = re.search(r'"(\w+)"', run("busctl", "get-property", "org.freedesktop.login1", "/org/freedesktop/login1",
@@ -294,10 +324,14 @@ def session(days: float = 7, folder: str = "/Library/Logs/DiagnosticReports") ->
         reports = []
     for report in reports:
         try:
-            crashes.append({"when": time.strftime("%Y-%m-%d %H:%M", time.localtime(report.stat().st_mtime)),
-                            "buffers": "IOSurface" in report.read_text(errors="replace")})
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(report.stat().st_mtime))
         except OSError:
             continue
+        try:
+            buffers = "IOSurface" in report.read_text(errors="replace")
+        except OSError:  # only admins may read the reports; the crash still counts
+            buffers = False
+        crashes.append({"when": when, "buffers": buffers})
     pid = run("pgrep", "-x", "WindowServer").split()
     return {"crashes": crashes, "hours": parse_etime(run("ps", "-o", "etime=", "-p", pid[0])) if pid else None}
 

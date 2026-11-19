@@ -7,6 +7,7 @@ A `fail` is something that has stopped a night before; the detail names the comm
 from __future__ import annotations
 
 import subprocess
+import time
 
 from jass.night import probe
 
@@ -27,20 +28,24 @@ def sleep_rows(power: dict, hours: float) -> list[tuple]:
     """Will this box stay awake for `hours`?"""
     if not power:
         return [("warn", "sleep", "could not read the sleep policy; check by hand that this box stays awake")]
-    hold = f"caffeinate -ims -t {int(hours * 3600)} &"
+    hold = f"start `jass night watch --awake`, which holds it for as long as the watch runs, or run in a terminal that stays open: caffeinate -ims -t {int(hours * 3600)}"
     rows = []
     if power.get("platform") == "mac":
-        holders = [name for name in power.get("prevented_by", []) if any(tool in name.lower() for tool in probe.KEEP_AWAKE)]
+        holders = list(dict.fromkeys(name for name in power.get("prevented_by", []) if any(tool in name.lower() for tool in probe.KEEP_AWAKE)))
+        # T3 Code holds a Mac with a caffeinate of its own, but only while a run is going.
+        passing = bool(holders) and all("caffeinate" in name.lower() for name in holders) and power.get("caffeinate_lasts") is False
         if power.get("idle_minutes") is None:
             rows.append(("warn", "sleep", "could not read `pmset -g`; check by hand that this Mac stays awake"))
         elif power.get("sleep_disabled") or power["idle_minutes"] == 0:
             rows.append(("ok", "sleep", "idle sleep is off"))
-        elif holders:
+        elif holders and not passing:
             rows.append(("ok", "sleep", f"held awake by {', '.join(holders)}; it must keep running until the work ends"))
         else:
-            others = ", ".join(power.get("prevented_by", []))
+            others = ", ".join(dict.fromkeys(power.get("prevented_by", [])))
+            why = ("the caffeinate that holds it awake now ends with the command or process it is tied to, as T3 Code's own does when no run is going" if passing
+                   else f"only {others} holds it awake now, and that can end" if others else "")
             rows.append(("fail", "sleep", f"this Mac sleeps after {power['idle_minutes']} idle minutes and its threads freeze"
-                         + (f" (only {others} holds it awake now, and that can end)" if others else "") + f". Run: {hold}"))
+                         + (f" ({why})" if why else "") + f". To fix, {hold}"))
         if power.get("lid_closed"):
             rows.append(("fail", "lid", "the lid is closed: a MacBook sleeps with the lid shut unless it has power and an external display"))
         if power.get("on_ac") is False:
@@ -54,8 +59,8 @@ def sleep_rows(power: dict, hours: float) -> list[tuple]:
     elif power.get("idle_action") == "ignore":
         rows.append(("ok", "sleep", "logind does not suspend when idle (a desktop session's own auto-suspend is not checked)"))
     elif power.get("idle_action"):
-        rows.append(("fail", "sleep", f"logind IdleAction is {power['idle_action']}: this box can suspend when idle. "
-                     f"Hold it for the night with: systemd-inhibit --what=sleep:idle sleep {int(hours * 3600)} &"))
+        rows.append(("fail", "sleep", f"logind IdleAction is {power['idle_action']}: this box can suspend when idle. To fix, start `jass night watch --awake`, "
+                     f"or run in a terminal that stays open: systemd-inhibit --what=sleep:idle sleep {int(hours * 3600)}"))
     else:
         rows.append(("warn", "sleep", "could not read logind's IdleAction; check by hand that this box does not suspend"))
     if power.get("on_ac") is False:
@@ -94,6 +99,8 @@ def network_rows(net: dict) -> list[tuple]:
         weak = signal is not None and signal < WEAK_SIGNAL_DBM
         strength = f", signal {signal} dBm" + (" (weak)" if weak else "") if signal is not None else ""
         rows.append(("warn", "link", f"Wi-Fi ({name}{strength}): a short drop fails a run. Use a cable if you can, and run `jass night watch` so failed runs get noticed"))
+    elif name.startswith(("utun", "tun", "tailscale", "wg", "ppp")):
+        rows.append(("warn", "link", f"the default route is a tunnel ({name}); whether a cable or Wi-Fi carries it was not checked"))
     elif net.get("interface"):
         rows.append(("ok", "link", f"wired ({name})"))
     return rows
@@ -139,9 +146,10 @@ def memory_rows(mem: dict, temp: dict, agents: int, agent_mb: int = AGENT_MB, he
 
 
 def disk_rows(*spaces: dict) -> list[tuple]:
-    rows = []
+    rows, seen = [], set()
     for facts in spaces:
-        if facts and not facts.get("in_memory"):
+        if facts and not facts.get("in_memory") and (facts["free_mb"], facts["used_mb"]) not in seen:  # one row per volume
+            seen.add((facts["free_mb"], facts["used_mb"]))
             low = facts["free_mb"] < LOW_DISK_MB
             rows.append(("warn" if low else "ok", "disk", f"{facts['path']}: {facts['free_mb'] // 1024} GB free" + ("; builds and worktrees may fill it" if low else "")))
     return rows
@@ -169,14 +177,18 @@ def peer_rows(peers: list[str]) -> list[tuple]:
     return rows
 
 
-def t3_rows(t3: dict, hours: float) -> list[tuple]:
-    """Providers signed in and with quota left for the night, and T3 Code's own night settings."""
+def t3_rows(t3: dict, hours: float, in_use: set | None = None) -> list[tuple]:
+    """Providers signed in and with quota left for the night, and T3 Code's own night settings.
+
+    `in_use` holds the providers of threads that are working or worked lately; one of those signed out is a `fail`."""
     if not t3 or not t3.get("found"):
         return []
     rows = []
     for name, provider in sorted(t3.get("providers", {}).items()):
         if not (provider["ready"] and provider["signed_in"]):
-            rows.append(("fail", "provider", f"{name} is not signed in or not ready in T3 Code; threads on it fail at their first turn"))
+            used = provider.get("id") in (in_use or ())
+            rows.append(("fail" if used else "warn", "provider", f"{name} is not signed in or not ready in T3 Code; threads on it fail at their first turn"
+                         + ("" if used else ". No recent thread uses it; sign in if a lane will")))
             continue
         tight = [w for w in provider["windows"] if w["used"] >= 70 and (w["resets_in_hours"] is None or w["resets_in_hours"] > 1)]
         for window in tight:
@@ -193,6 +205,12 @@ def t3_rows(t3: dict, hours: float) -> list[tuple]:
     if not t3.get("keep_awake"):
         rows.append(("warn", "t3 setting", "keepAwakeWhileAgentsWork is off: T3 Code will not hold this box awake while agents run"))
     return rows
+
+
+def recent_providers(threads: list[dict] | None, days: float = 2) -> set:
+    """The providers of threads that are going now or whose last run ended in the last `days`."""
+    cutoff = time.strftime("%Y-%m-%dT%H:%M", time.gmtime(time.time() - days * 86400))
+    return {t.get("provider") for t in threads or [] if t["state"] in ("working", "delegated", "background", "blocked") or t["since"][:16] >= cutoff}
 
 
 def thread_rows(threads: list[dict] | None, problem: str = "") -> list[tuple]:
@@ -229,7 +247,7 @@ def report(cfg: dict, facts: dict, threads: list[dict] | None, problem: str, *, 
         *memory_rows(facts.get("memory", {}), facts.get("temp", {}), planned, int(night.get("agent_mb") or AGENT_MB), heavy or HEAVY_MB, int(night.get("reserve_mb") or RESERVE_MB)),
         *network_rows(facts.get("network", {})),
         *disk_rows(facts.get("home", {}), facts.get("temp", {})),
-        *t3_rows(facts.get("t3", {}), hours),
+        *t3_rows(facts.get("t3", {}), hours, recent_providers(threads)),
         *thread_rows(threads, problem),
         *need_rows(needs),
     ]

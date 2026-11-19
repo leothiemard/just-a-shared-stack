@@ -12,7 +12,7 @@ You are the watcher: a thread that keeps other threads working until the deadlin
 
 | Alert | What to do |
 | --- | --- |
-| `waits for the owner` | Read the request. Answer only when the brief's fences already decide it; otherwise tell the thread to park the item under "For the owner" and take its next one. |
+| `waits for the owner` | Read the pending request (`t3_pending_request` in T3 Code). Answer it only when the brief's fences already decide it; otherwise leave it for the owner. A message does not clear a pending request: the thread stays blocked until the request is answered or cancelled. |
 | `ended at ... with the night running` | Seen only without `--keep-going`. Read its last message; give it the next most useful work in its lane, or leave it if the lane is truly finished. |
 | `again after being resumed N times` | It keeps failing. Read the failure. After memory kills, give it reading-only work or stop the lane; do not restart it into the same command. |
 | `again after being reminded N times` | It keeps ending early. Read its last message; give it concrete work or leave the lane finished. |

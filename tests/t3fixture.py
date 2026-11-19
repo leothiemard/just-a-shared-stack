@@ -102,9 +102,11 @@ class Store:
         return run_id
 
     def item(self, thread_id: str, kind: str, status: str, at: float = 100, **payload) -> None:
-        """A turn item: an `error` with its `failure`, or a request that waits for the owner."""
+        """A turn item of the thread's latest run: an `error` with its `failure`, or a request that waits for the owner."""
         with self.db() as conn:
-            conn.execute(f"INSERT INTO {T}turn_items VALUES (?, ?, NULL, ?, ?, ?, ?)", (self.next_id("ti"), thread_id, kind, status, stamp(at), json.dumps(payload)))
+            run = conn.execute(f"SELECT run_id FROM {T}runs WHERE thread_id = ? ORDER BY ordinal DESC LIMIT 1", (thread_id,)).fetchone()
+            conn.execute(f"INSERT INTO {T}turn_items VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (self.next_id("ti"), thread_id, run[0] if run else None, kind, status, stamp(at), json.dumps(payload)))
 
     def request(self, thread_id: str, kind: str, status: str = "pending") -> None:
         with self.db() as conn:

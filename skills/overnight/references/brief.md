@@ -10,8 +10,8 @@ Start with: <first items, in order>.
 
 Standing mandate. Your list ending is not the night ending. When the items above are done, write
 your own list of the <eight> most valuable things left in this lane (deepen, verify, harden, measure,
-document what you found) and work down it. Repeat until <HH:MM UTC>. Stop early only when a rule
-below says so.
+document what you found) and work down it. Repeat until <HH:MM UTC>. Stop early only when every
+item left needs the owner; then say so in one line.
 
 Rules:
 1. Never wait for the clock. Set no timer, sleep or scheduled wake-up. While a long command runs in the

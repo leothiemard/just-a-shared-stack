@@ -147,6 +147,8 @@ def cmd_sync(args) -> int:
 
 
 def cmd_night(args) -> int:
+    import sqlite3
+
     from jass.night import check, probe, t3state, watch
 
     cfg = config.load()
@@ -160,8 +162,8 @@ def cmd_night(args) -> int:
     try:
         threads = t3state.snapshot(store)
         agents = t3state.going(store) if agents is None else agents
-    except JassError as error:
-        problem = str(error)
+    except (JassError, sqlite3.Error) as error:
+        threads, problem = None, str(error)
     facts = probe.collect()
     facts["t3"] = probe.t3(store.parent.parent)
     rows = check.report(cfg, facts, threads, problem, hours=args.hours, agents=agents or 1, needs=args.need, peers=args.peer)
