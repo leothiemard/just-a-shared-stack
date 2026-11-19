@@ -163,6 +163,14 @@ def driven_page(pages, state, proxy=None):
                      "run `iosim open <url>`: iosim then drives that page, whatever other tabs show")
 
 
+def stale_document(time_origin_ms, started, slack=2.0):
+    """True when a document's performance.timeOrigin (ms since the epoch, on the Mac's clock: the Simulator shares it)
+    lies before the open that should have loaded it. Unknown values are not called stale."""
+    if not isinstance(time_origin_ms, (int, float)) or not started:
+        return False
+    return time_origin_ms / 1000.0 < started - slack
+
+
 def url_matches(current, wanted):
     """Loose match after redirects: same host, and the wanted path is a prefix of the current one."""
     if not current or not wanted:
@@ -1400,7 +1408,7 @@ class Session:
         try:
             return insp.evaluate("({href: location.href, readyState: document.readyState, nav: window.__iosimNav || null,"
                                  " mark: window.__iosimMark || null, title: document.title,"
-                                 " visible: document.visibilityState === 'visible'" + extra + "})", timeout=5)
+                                 " visible: document.visibilityState === 'visible', t0: performance.timeOrigin" + extra + "})", timeout=5)
         finally:
             insp.close()
 
@@ -1453,7 +1461,7 @@ class Session:
             self.driver.open_url(url)
         result = {"url": url, "how": how, "driver": self.driver.mode}
         if wait:
-            result.update(self.wait_loaded(url, token, how, before, marked, timeout, driven=driven))
+            result.update(self.wait_loaded(url, token, how, before, marked, timeout, driven=driven, started=started))
         elif how == "new-tab":
             result.update(self._identify_new_tab(before))
         result["ms"] = int((time.time() - started) * 1000)
@@ -1465,12 +1473,17 @@ class Session:
         while time.time() < deadline:
             fresh = [p for p in list_pages(self.udid) if p["webSocketDebuggerUrl"] not in before]
             if len(fresh) == 1:
-                self.remember_page(fresh[0], fresh[0].get("url"))
-                return {"page": page_key(fresh[0])["page"]}
+                try:
+                    on_screen = self._probe(fresh[0]).get("visible") is True
+                except (IosimError, OSError, ConnectionError, ValueError):
+                    on_screen = False
+                if on_screen:  # a background tab the proxy listed late is not the tab this open made
+                    self.remember_page(fresh[0], fresh[0].get("url"))
+                    return {"page": page_key(fresh[0])["page"]}
             time.sleep(0.3)
         return {"page": None, "warning": "could not tell which tab opened; later commands refuse until `iosim open` names one"}
 
-    def wait_loaded(self, url, token, how, before, marked, timeout, driven=None):
+    def wait_loaded(self, url, token, how, before, marked, timeout, driven=None, started=None):
         """Wait for the document the open started: in the same tab, the navigated page (by identity) once it holds a
         document without our navigation tag; in a new tab, a page that did not exist before, or an old one that has
         since loaded a new document (no mark). Fails at once when Safari shows its own error page for an http(s) URL,
@@ -1505,16 +1518,20 @@ class Session:
                         continue  # still the old document
                     if how != "same-tab" and info["mark"] == token:
                         continue  # a document that was already open
-                    fresh_seen = True
-                    if info["readyState"] != "complete":
-                        continue
-                    if info["href"] == "about:blank" and url != "about:blank":
-                        continue
                     if how != "same-tab" and info.get("visible") is not True:
                         # The tab an open makes, or the tab Safari switches to because it already shows the URL, is
                         # the one on screen. A background tab that reloaded by itself is not it, and neither is one
                         # a just-started proxy had not listed yet, which is why `before` alone cannot tell.
                         last = dict(info, skipped="a background tab")
+                        continue
+                    if how != "same-tab" and stale_document(info.get("t0"), started):
+                        # The front tab as it was before this open (unmarked because the proxy listed it late).
+                        last = dict(info, skipped="a document loaded before this open")
+                        continue
+                    fresh_seen = True
+                    if info["readyState"] != "complete":
+                        continue
+                    if info["href"] == "about:blank" and url != "about:blank":
                         continue
                     failure = load_failure(url, info["href"])
                     if failure:
@@ -2459,6 +2476,15 @@ def remote_call(args, stdin_text=None, device=None):
     return subprocess.run([ssh, "-o", "BatchMode=yes", host, command], input=stdin_text, text=True, capture_output=True)
 
 
+def ssh_could_not_connect(proc):
+    """ssh's own failure to reach the host (refused, unknown host, no key), as against a remote command that died:
+    both exit 255, so the message decides."""
+    if proc.returncode != 255 or proc.stdout.strip():
+        return False
+    return bool(re.search(r"ssh: |Connection refused|Permission denied|Could not resolve|timed out|Host key verification failed",
+                          proc.stderr or ""))
+
+
 def remote_run(plan, out_dir, device=None):
     """Send a resolved plan over SSH, run it on the Mac, copy the evidence folder back, remove the remote copy."""
     run_id = f"iosim-runs/{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
@@ -2637,8 +2663,8 @@ def dispatch(args):
             report["localOut"] = str(Path(rp.out).resolve())
             return report, proc.returncode
         proc = remote_call(rest, device=device)
-        if proc.returncode == 255 and not proc.stdout.strip():
-            # ssh's own failure (refused, unknown host, no key): the Mac never ran iosim.
+        if ssh_could_not_connect(proc):
+            sys.stderr.write(proc.stderr)
             raise IosimError(f"could not reach the Mac over SSH ({os.environ.get('IOSIM_REMOTE')}): {proc.stderr.strip()[-300:]}",
                              "turn on Remote Login (or Tailscale SSH) on the Mac and install your key, or use T3 delegation "
                              "(see references/remote.md)")

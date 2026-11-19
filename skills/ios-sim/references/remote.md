@@ -46,7 +46,7 @@ Report back: pass or fail; each failure from report.json; the audit counts per T
 ### Open points
 
 - Files reach the caller only through `scp` from the Mac, which needs SSH into the caller's box (the Mac's own Remote Login can stay off). T3 attachments might carry images back across environments, but that is unverified.
-- Both boxes need the skill installed (`jass update --apply`; pull the stack first, because the preview does not fetch).
+- Both boxes need the skill installed (`jass update --apply`; pull the stack first, because `jass update` without `--apply` does not fetch).
 
 ## SSH (needs Remote Login or Tailscale SSH on the Mac)
 
