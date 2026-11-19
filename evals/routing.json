@@ -78,6 +78,18 @@
       "prompt": "Reward loop: get this parser twice as fast and keep trying until you hit it.",
       "expected_output": "Personal reward-loop, starting with the survey and interview. No episodes before the user approves the contract.",
       "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "Check the sign-up page on an iPhone at a large Text Size and tell me if anything scrolls sideways.",
+      "expected_output": "ios-sim: doctor first; on the Mac run a plan with shots at default and an accessibility Text Size plus audits, then read the screenshots. On a box without a Simulator, take the remote path (T3 delegation to the Mac, or IOSIM_REMOTE).",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "From this Linux box, take iOS Safari screenshots of my dev server.",
+      "expected_output": "ios-sim remote path: bind the dev server to 0.0.0.0, use the box's Tailscale name, and delegate to the Mac's T3 environment with the brief template (or iosim remote run when SSH to the Mac is on).",
+      "files": []
     }
   ]
 }
