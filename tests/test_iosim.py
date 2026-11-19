@@ -737,11 +737,33 @@ class OpenTest(unittest.TestCase):
 
     def test_new_tab_accepts_a_reloaded_document(self):
         old = {"url": "http://box/", "webSocketDebuggerUrl": "ws://p/1"}
-        probe = {"href": "http://box/", "readyState": "complete", "nav": None, "mark": None, "title": "new"}
+        probe = {"href": "http://box/", "readyState": "complete", "nav": None, "mark": None, "title": "new", "visible": True}
         sess, lp = self.session([old], [probe])
         with lp, mock.patch.object(iosim, "write_state"):
             res = sess.wait_loaded("http://box/", "tok", "new-tab", {"ws://p/1"}, {"ws://p/1"}, timeout=5)
         self.assertEqual(res["title"], "new")
+
+    def test_new_tab_passes_over_a_background_tab_that_reloaded_on_another_url(self):
+        stale = {"url": "http://box/recipes/1", "webSocketDebuggerUrl": "ws://p/1"}
+        new = {"url": "http://box/", "webSocketDebuggerUrl": "ws://p/2"}
+        stale_probe = {"href": "http://box/recipes/1", "readyState": "complete", "nav": None, "mark": None, "title": "stale", "visible": False}
+        new_probe = {"href": "http://box/", "readyState": "complete", "nav": None, "mark": None, "title": "new", "visible": True}
+        # Only the stale tab answers: the open must not settle on it.
+        sess, lp = self.session([stale], [stale_probe] * 100)
+        with lp, mock.patch.object(iosim, "write_state"):
+            with self.assertRaises(iosim.IosimError):
+                sess.wait_loaded("http://box/", "tok", "new-tab", {"ws://p/1"}, {"ws://p/1"}, timeout=1)
+        # Both answer: the new tab wins whatever the order.
+        sess, lp = self.session([stale, new], [new_probe])
+        with lp, mock.patch.object(iosim, "write_state"):
+            res = sess.wait_loaded("http://box/", "tok", "new-tab", {"ws://p/1"}, {"ws://p/1"}, timeout=5)
+        self.assertEqual(res["title"], "new")
+        # A visible page on another URL is a real redirect and still counts.
+        moved = dict(new_probe, href="http://box/sign-in?next=/", title="sign in")
+        sess, lp = self.session([dict(new, url="http://box/sign-in?next=/")], [moved])
+        with lp, mock.patch.object(iosim, "write_state"):
+            res = sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=5)
+        self.assertEqual(res["title"], "sign in")
 
     def test_about_blank_needs_a_current_tab(self):
         sess, lp = self.session([], [])

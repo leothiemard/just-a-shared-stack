@@ -1510,6 +1510,11 @@ class Session:
                         continue
                     if info["href"] == "about:blank" and url != "about:blank":
                         continue
+                    if how != "same-tab" and page["webSocketDebuggerUrl"] in before and info.get("visible") is not True:
+                        # A tab that was already open and reloaded by itself in the background is not the page this
+                        # open loaded. An old tab counts only when Safari brought it to the screen for this URL.
+                        last = dict(info, skipped="a background tab that was already open")
+                        continue
                     failure = load_failure(url, info["href"])
                     if failure:
                         raise IosimError(failure, f"check that the server is up and reachable from this Mac (curl -sI {url}), then open it again")
