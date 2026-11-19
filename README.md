@@ -54,7 +54,7 @@ It clones the stack to `~/Development/just-a-shared-stack` and runs `jass init` 
 | lore | Recall and record shared knowledge across projects and boxes with `jass`. |
 | diagnosing-bugs | Build a red-capable feedback loop, reproduce and minimize, then diagnose and fix. |
 | blast-radius | Trace contract and downstream risks beyond a diff. |
-| council | "council": Opus, Sol and Astra review or give feedback, with scored code reviews and further rounds as needed. |
+| council | "council": Opus, Sol, Astra and Gemini Neon review or give feedback, with scored code reviews and further rounds as needed. |
 | sol-loop | "sol loop": ask Sol for a bounded review and fix confirmed issues. |
 | reward-loop | "reward loop": interview to lock a goal, reward and loop, then run subagent episodes against a frozen evaluator. |
 | full-stop | "full stop": finish, prove, review and prepare a PR for the user to merge. |
