@@ -40,6 +40,7 @@ class SessionRecord:
     provider: str = ""
     model: str = ""
     parent_id: str = ""  # set on subagent sessions; the pipeline never exports those
+    delegated_from: str = ""  # the thread that launched this one as a step of its own work; never exported either
     pr_urls: list[str] = field(default_factory=list)
     prompts: list[str] = field(default_factory=list)  # human prompts only, oldest first
     turn_finals: list[str] = field(default_factory=list)  # last assistant text of each turn
@@ -52,6 +53,7 @@ class SessionRecord:
     native_ref: str = ""  # "claude:<session id>" or "codex:<thread id>"
     branch: str = ""
     created_by: str = ""  # user, agent or system
+    first_prompt: str = ""  # the opening message, whoever sent it; used by export filters only
 
 
 class Source:

@@ -22,12 +22,18 @@ HEADER = re.compile(r"""(?i)\b((?:proxy-)?authorization[ \t]*:[ \t]*)(?=[^\s"'\\
 # `key=value`, `key: value` and `"key": "value"` where the key is a credential word, alone or as a `_`, `-` or `.` suffix.
 # The key's quotes may be escaped (`\"key\"`), as in JSON inside a string.
 KEY = re.compile(
-    r"""(?<![\w.-])(\\?["']|)((?:[\w.-]*[_.-])?(?:password|passwd|secret|token|api_key|apikey|access_key|auth|authorization|credentials?))\1(?![\w-])"""
+    r"""(?<![\w.-])(\\?["']|)((?:[\w.-]*[_.-])?(?:password|passwd|passcode|passphrase|secret|token|api_key|apikey|access_key|auth|authorization|credentials?))\1(?![\w-])"""
     r"""[ \t]*[:=][ \t]*""",
     re.I,
 )
 OPENING = re.compile(r"""\\?["']""")
 UNQUOTED = re.compile(r"""[^\s"'&,;}]+""")
+# After `key:`, a sentence that opens with a function word is talk about the credential, not its value:
+# `Password: the leaked one was rotated`. `key=value` is never read as prose.
+PROSE = re.compile(
+    r"(?i)(?:the|a|an|is|was|were|it|its|this|that|these|those|not|never|no|none|we|you|they|ask|see|still|already|same|must|should|will|can)"
+    r"(?:[ \t]+[A-Za-z'][\w'-]*[,;.]?){2,}"
+)
 
 
 def closing(value: str, start: int, quote: str) -> int | None:
@@ -69,6 +75,9 @@ def credentials(value: str) -> str:
                 pos = end
         else:
             bare = UNQUOTED.match(value, start)
+            if bare and ":" in match.group() and PROSE.match(value, start):
+                pos = start
+                continue
             out.append(R if bare else "")
             pos = bare.end() if bare else start
 

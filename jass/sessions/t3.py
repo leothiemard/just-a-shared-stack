@@ -3,7 +3,8 @@
 The tables are internal to T3 Code and change often, so every table and column
 selected here is pinned in `PINNED` and checked before reading. Top-level threads
 (no parent, or a fork) with a completed run become records; their descendants are
-folded in. History imported from T3 Code v1 has messages but no runs; those threads
+folded in. A thread another thread launched as a step of its work (`delegatedFrom`)
+is marked so the pipeline can leave it out. History imported from T3 Code v1 has messages but no runs; those threads
 are exported too, with turns split at each user message.
 """
 
@@ -162,10 +163,11 @@ def load(conn: sqlite3.Connection, thread_id: str, with_runs: set[str]) -> dict:
         f" FROM {T}messages WHERE thread_id = ? ORDER BY created_at, message_id",
         (thread_id,),
     )
-    users = 0
+    users, first_prompt = 0, ""
     for role, run_id, text, author, *markers in rows:
         text = text if isinstance(text, str) else ""
         if role == "user":
+            first_prompt = first_prompt or text.strip()
             human = author == "user" and not any(markers)
             if (human or (not users and created_by == "agent")) and text.strip():
                 prompts.append(text)
@@ -218,4 +220,6 @@ def load(conn: sqlite3.Connection, thread_id: str, with_runs: set[str]) -> dict:
         "native_ref": native,
         "branch": payload.get("branch") or "",
         "created_by": created_by,
+        "delegated_from": str((payload.get("delegatedFrom") or {}).get("threadId") or "") if isinstance(payload.get("delegatedFrom"), dict) else "",
+        "first_prompt": first_prompt[:400],
     }

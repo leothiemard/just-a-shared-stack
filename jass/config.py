@@ -19,7 +19,12 @@ DEFAULTS = {
     "stack": "",
     "layers": [],
     "lore": {"path": "~/lore", "remote": ""},
-    "sessions": {"export": True, "sources": ["t3"], "t3_store": "", "idle_minutes": 30, "exclude_projects": []},
+    # Sessions never exported: whole projects, titles matching a regular expression (case ignored),
+    # and threads whose opening message starts with a given text (workers and probes that agents launch).
+    "sessions": {
+        "export": True, "sources": ["t3"], "t3_store": "", "idle_minutes": 30,
+        "exclude_projects": [], "exclude_title_patterns": [], "exclude_prompt_prefixes": [],
+    },
     "sync": {"max_age_minutes": 30},
     # `jass night` and `jass heavy`: memory per agent and held back for the system, and the cap of one heavy command
     # (null: a quarter of this box's memory; 0: no cap).

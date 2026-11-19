@@ -322,24 +322,70 @@ def headings(lines: list[str]) -> list[tuple[int, int, str]]:
 
 # Projects, logs, hubs and lessons.
 
-def project_key(root: Path, name: str | None = None, cwd: Path | None = None) -> str:
-    """The project's folder name: an existing folder when one matches, else the repo or directory name."""
-    if not name:
-        cwd = cwd or Path.cwd()
-        top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
-        name = Path(top.stdout.strip()).name if top.returncode == 0 else cwd.resolve().name
-    if not PROJECT_NAME.fullmatch(name) or name in (".", ".."):
-        raise JassError(f"Invalid project name {name!r}. Pass -p with a plain folder name.")
+def listed(value: object) -> list[str]:
+    """The items of a frontmatter value written as `[a, b]`, or as one plain name."""
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [item.strip().strip("\"'") for item in str(value or "").strip().strip("[]").split(",") if item.strip()]
+
+
+def repo_names(cwd: Path) -> list[str]:
+    """Names the directory's project may go by, best first.
+
+    A git worktree answers for its main repository, never for its own folder. A repository
+    also goes by the name in its origin URL, so one cloned under another folder name still
+    resolves. Anything under a `scratch` folder is `scratch`, as in the session export."""
+
+    def out(*args: str) -> str:
+        run = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+        return run.stdout.strip() if run.returncode == 0 else ""
+
+    common = out("rev-parse", "--path-format=absolute", "--git-common-dir")
+    top = out("rev-parse", "--show-toplevel")
+    if common and Path(common).name == ".git":
+        home = Path(common).parent
+    else:
+        home = Path(top) if top else cwd.resolve()
+    if "scratch" in home.parts:
+        return ["scratch"]
+    names = [home.name]
+    origin = re.sub(r"\.git$", "", out("remote", "get-url", "origin").rstrip("/")) if top else ""
+    remote_name = re.split(r"[/:]", origin)[-1] if origin else ""
+    if remote_name and remote_name not in names:
+        names.append(remote_name)
+    return names
+
+
+def known_project(root: Path, names: list[str]) -> str | None:
+    """The existing project folder that one of `names` matches, by its own name or by an `aliases:` entry of its hub."""
 
     def norm(text: str) -> str:
         return re.sub(r"[\s_-]+", "", text.lower())
 
     folder = root / "Projects"
-    if folder.is_dir():
-        for child in sorted(folder.iterdir()):
-            if child.is_dir() and norm(child.name) == norm(name):
+    children = sorted(child for child in folder.iterdir() if child.is_dir()) if folder.is_dir() else []
+    for name in names:
+        for child in children:
+            if norm(child.name) == norm(name):
                 return child.name
-    return name
+    for name in names:
+        for child in children:
+            hub = hub_path(root, child.name)
+            if not hub.is_file():
+                continue
+            meta, _ = frontmatter(hub.read_text(errors="replace"))
+            if norm(name) in {norm(alias) for alias in listed(meta.get("aliases"))}:
+                return child.name
+    return None
+
+
+def project_key(root: Path, name: str | None = None, cwd: Path | None = None) -> str:
+    """The project's folder name: an existing folder when one matches, else the repository or directory name."""
+    names = [name] if name else repo_names(cwd or Path.cwd())
+    for candidate in names:
+        if not PROJECT_NAME.fullmatch(candidate) or candidate in (".", ".."):
+            raise JassError(f"Invalid project name {candidate!r}. Pass -p with a plain folder name.")
+    return known_project(root, names) or names[0]
 
 
 def hub_path(root: Path, project: str) -> Path:

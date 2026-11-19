@@ -91,6 +91,48 @@ class NotesTests(Sandbox):
         self.ok("log", "-t", "From cwd")
         self.assertTrue((self.lore / "Projects" / "example-app" / "Log.md").exists())
 
+    def at(self, folder):
+        cwd = os.getcwd()
+        os.chdir(folder)
+        self.addCleanup(os.chdir, cwd)
+
+    def test_a_git_worktree_resolves_to_its_main_repository(self):
+        work = self.base / "example-app"
+        work.mkdir()
+        git(work, "init", "-q")
+        git(work, "commit", "-q", "--allow-empty", "-m", "first")
+        self.ok("log", "-t", "From the main checkout", "-p", "example-app")
+        tree = self.base / "worktrees" / "t3-0bac8dbf"
+        git(work, "worktree", "add", "-q", str(tree), "-b", "side")
+        self.at(tree)
+        self.assertIn("# example-app", self.ok("hub"))
+        self.ok("log", "-t", "From a worktree")
+        self.assertEqual([p.name for p in (self.lore / "Projects").iterdir()], ["example-app"])
+
+    def test_a_scratch_folder_is_the_scratch_project(self):
+        thread = self.base / "scratch" / "2026-01-02-some-question-1a2b3c4d"
+        thread.mkdir(parents=True)
+        self.at(thread)
+        self.assertTrue(self.ok("path", "project").strip().endswith("Projects/scratch"))
+        self.ok("log", "-t", "From a scratch thread")
+        self.assertEqual([p.name for p in (self.lore / "Projects").iterdir()], ["scratch"])
+
+    def test_a_clone_under_another_name_resolves_by_origin_or_alias(self):
+        self.ok("log", "-t", "First", "-p", "example-app")
+        clone = self.base / "renamed-checkout"
+        clone.mkdir()
+        git(clone, "init", "-q")
+        git(clone, "remote", "add", "origin", "https://example.invalid/someone/example-app.git")
+        self.at(clone)
+        self.assertTrue(self.ok("path", "project").strip().endswith("Projects/example-app"))
+        git(clone, "remote", "set-url", "origin", "git@example.invalid:someone/other-name.git")
+        self.assertTrue(self.ok("path", "project").strip().endswith("Projects/renamed-checkout"))
+        hub = self.lore / "Projects" / "example-app" / "example-app.md"
+        hub.write_text(hub.read_text().replace("---\nproject:", "---\naliases: [Other Name, renamed-checkout]\nproject:", 1))
+        self.assertTrue(self.ok("path", "project").strip().endswith("Projects/example-app"))
+        self.ok("log", "-t", "By alias", "-p", "other-name")
+        self.assertEqual([p.name for p in (self.lore / "Projects").iterdir()], ["example-app"])
+
     def test_lesson_format_duplicates_and_near_duplicates(self):
         self.ok("lesson", "Vercel", "Preview deploys ignore env vars added after the build starts", "-p", "example-app", "--thread", "5232d102", stdin="Redeploy after changing variables.\n")
         path = self.lore / "Lessons" / "vercel.md"

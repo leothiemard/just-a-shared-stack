@@ -52,27 +52,74 @@ def collect(cfg: dict, changed_after: dt.datetime | None) -> tuple[list[SessionR
     return out, complete
 
 
-def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry_run: bool = False) -> dict:
+EXCLUDED_IDS = "Sessions/excluded-ids.txt"
+
+
+def excluded_ids(root: Path) -> set[str]:
+    """Session ids listed in the lore's `Sessions/excluded-ids.txt`, one per line; `#` starts a comment.
+
+    The list travels with the lore, so a digest someone removed stays removed on every box."""
+    try:
+        lines = (root / EXCLUDED_IDS).read_text().split("\n")
+    except OSError:
+        return set()
+    return {line.split("#")[0].strip() for line in lines} - {""}
+
+
+def left_out(rec: SessionRecord, settings: dict, never: set[str] = frozenset()) -> bool:
+    """Whether a session is never worth a digest: a subagent, a step another thread launched, or one the lore or the box config excludes."""
+    if rec.parent_id or rec.delegated_from or rec.id in never or rec.project.lower() in {p.lower() for p in settings["exclude_projects"]}:
+        return True
+    if any(re.search(pattern, rec.title, re.I) for pattern in settings["exclude_title_patterns"]):
+        return True
+    return any(prefix and rec.first_prompt.startswith(prefix) for prefix in settings["exclude_prompt_prefixes"])
+
+
+def stale_digests(root: Path, box: str, ids: set[str]) -> list[Path]:
+    """This box's digests whose session is one of `ids`."""
+    out = []
+    for path in sorted((root / "Sessions" / box).glob("*/*.md")):
+        if not lore.inside(root, path):
+            continue
+        meta, _ = lore.frontmatter(path.read_text(errors="replace"))
+        if meta.get("kind") == "session" and meta.get("id") in ids:
+            out.append(path)
+    return out
+
+
+def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry_run: bool = False, prune: bool = False) -> dict:
     """Export finished top-level sessions. Returns counts and the written paths.
 
     Sessions updated before the last run's horizon (its time minus the idle window)
-    were final then, so incremental runs ask sources only for newer ones."""
+    were final then, so incremental runs ask sources only for newer ones. `prune`
+    reads every session instead and deletes this box's digests of sessions that are
+    now left out, which an incremental run would never see again; it writes only what
+    an incremental run would."""
     state = load_state(root)
     seen = state["sessions"]
     now = dt.datetime.now(dt.timezone.utc)
     idle = dt.timedelta(minutes=cfg["sessions"]["idle_minutes"])
-    excluded = {p.lower() for p in cfg["sessions"]["exclude_projects"]}
     horizon = None if everything or not state.get("horizon") else dt.datetime.fromisoformat(state["horizon"])
-    records, complete = collect(cfg, horizon)
+    records, complete = collect(cfg, None if prune else horizon)
+    never = excluded_ids(root)
     children: dict[str, int] = {}
     for rec in records:
         if rec.parent_id:
             children[rec.parent_id] = children.get(rec.parent_id, 0) + 1
-    result = {"written": [], "unchanged": 0, "skipped": 0}
+    result = {"written": [], "unchanged": 0, "skipped": 0, "pruned": []}
     pending = []  # every path is checked before the first digest is written
+    dropped = set()
     for rec in records:
         stamp = digest.iso(rec.updated)
-        if rec.parent_id or rec.project.lower() in excluded or now - rec.updated < idle or (since and rec.updated.date().isoformat() < since):
+        rec.project = lore.known_project(root, [rec.project]) or rec.project
+        if left_out(rec, cfg["sessions"], never):
+            dropped.add(rec.id)
+            result["skipped"] += 1
+            continue
+        if horizon and rec.updated <= horizon:  # read only for the prune; final at the last run
+            result["unchanged"] += 1
+            continue
+        if now - rec.updated < idle or (since and rec.updated.date().isoformat() < since):
             result["skipped"] += 1
             continue
         rel = digest.relpath(rec, cfg["box"])
@@ -83,11 +130,15 @@ def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry
             rec.subagent_count = children.get(rec.id, 0)
         result["written"].append(rel)
         pending.append((lore.within(root, root / rel), rec, stamp))
+    stale = stale_digests(root, cfg["box"], dropped) if prune and complete else []
+    result["pruned"] = [path.relative_to(root).as_posix() for path in stale]
     if not dry_run:
         for path, rec, stamp in pending:
             path.parent.mkdir(parents=True, exist_ok=True)
             paths.write_atomic(path, digest.render(scrub.record(rec), cfg["box"], cfg["zone"]))
             seen[rec.id] = stamp
+        for path in stale:
+            path.unlink()
         if complete and not since:
             state["horizon"] = (now - idle).isoformat()
         paths.private_dir(state_path(root).parent)
