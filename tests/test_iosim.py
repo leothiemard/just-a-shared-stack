@@ -753,6 +753,11 @@ class OpenTest(unittest.TestCase):
         with lp, mock.patch.object(iosim, "write_state"):
             with self.assertRaises(iosim.IosimError):
                 sess.wait_loaded("http://box/", "tok", "new-tab", {"ws://p/1"}, {"ws://p/1"}, timeout=1)
+        # A background tab the proxy had not listed before the open is passed over too.
+        sess, lp = self.session([stale], [stale_probe] * 100)
+        with lp, mock.patch.object(iosim, "write_state"):
+            with self.assertRaises(iosim.IosimError):
+                sess.wait_loaded("http://box/", "tok", "new-tab", set(), set(), timeout=1)
         # Both answer: the new tab wins whatever the order.
         sess, lp = self.session([stale, new], [new_probe])
         with lp, mock.patch.object(iosim, "write_state"):

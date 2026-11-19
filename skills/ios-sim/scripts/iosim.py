@@ -1510,10 +1510,11 @@ class Session:
                         continue
                     if info["href"] == "about:blank" and url != "about:blank":
                         continue
-                    if how != "same-tab" and page["webSocketDebuggerUrl"] in before and info.get("visible") is not True:
-                        # A tab that was already open and reloaded by itself in the background is not the page this
-                        # open loaded. An old tab counts only when Safari brought it to the screen for this URL.
-                        last = dict(info, skipped="a background tab that was already open")
+                    if how != "same-tab" and info.get("visible") is not True:
+                        # The tab an open makes, or the tab Safari switches to because it already shows the URL, is
+                        # the one on screen. A background tab that reloaded by itself is not it, and neither is one
+                        # a just-started proxy had not listed yet, which is why `before` alone cannot tell.
+                        last = dict(info, skipped="a background tab")
                         continue
                     failure = load_failure(url, info["href"])
                     if failure:
@@ -2636,6 +2637,11 @@ def dispatch(args):
             report["localOut"] = str(Path(rp.out).resolve())
             return report, proc.returncode
         proc = remote_call(rest, device=device)
+        if proc.returncode == 255 and not proc.stdout.strip():
+            # ssh's own failure (refused, unknown host, no key): the Mac never ran iosim.
+            raise IosimError(f"could not reach the Mac over SSH ({os.environ.get('IOSIM_REMOTE')}): {proc.stderr.strip()[-300:]}",
+                             "turn on Remote Login (or Tailscale SSH) on the Mac and install your key, or use T3 delegation "
+                             "(see references/remote.md)")
         sys.stderr.write(proc.stderr)
         sys.stdout.write(proc.stdout)
         return None, proc.returncode

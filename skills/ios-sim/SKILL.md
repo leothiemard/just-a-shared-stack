@@ -8,7 +8,7 @@ description: Test a web app in real Mobile Safari on an iOS Simulator with the `
 `iosim` drives Mobile Safari on an iOS Simulator and answers in JSON. Set it once:
 
 ```sh
-IOSIM="<this skill's directory>/scripts/iosim"   # Python 3.9+, stdlib only; runs on the Mac with the Simulator
+IOSIM="$HOME/.agents/skills/ios-sim/scripts/iosim"   # where `jass` links it (not on PATH); Python 3.9+, stdlib only; runs on the Mac with the Simulator
 ```
 
 Every command prints one JSON object with `ok`, and on failure `error` and `fix`. Exit codes: 0 means passed, 1 means a failure or a failed check, and 2 means bad arguments or a bad plan. `$IOSIM --help` and `$IOSIM <command> --help` list the flags. [references/cli.md](references/cli.md) explains each command and how it works inside.
