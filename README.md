@@ -66,6 +66,7 @@ It clones the stack to `~/Development/just-a-shared-stack` and runs `jass init` 
 | babysit-pr | Follow review and CI with the host watcher or the bundled non-T3 watcher. |
 | leaving-pr-comments | Attribute agent-authored GitHub comments and verify the posted result. |
 | writing-for-agents | Write skills and instructions using Matt's full guide and mechanics reference. |
+| ios-sim | Test web pages in Mobile Safari on an iOS Simulator with the bundled `iosim` CLI: drive, evaluate, screenshot, record, audit; callable from boxes without a Simulator. |
 | create-verification-skill | Generate and exercise a project-local verifier and feature map. |
 | sanity-best-practices | Sanity schemas, queries, Studio and integrations. |
 | content-modeling-best-practices | Structured content architecture. |

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Launcher for iosim.py. Follows its own symlink, so a link in ~/.local/bin works, and finds python3 off PATH.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(cd "$(dirname "$self")" && pwd -P)
+python=${IOSIM_PYTHON:-}
+if [ -z "$python" ]; then
+  for candidate in python3 /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then python=$candidate; break; fi
+  done
+fi
+if [ -z "$python" ]; then
+  echo '{"ok": false, "error": "no python3 found", "fix": "install Python 3.9 or newer, or set IOSIM_PYTHON"}'
+  exit 1
+fi
+exec "$python" "$dir/iosim.py" "$@"
