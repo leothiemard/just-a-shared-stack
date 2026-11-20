@@ -328,3 +328,36 @@ class ChannelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CliTests(unittest.TestCase):
+    def test_add_takes_the_brief_after_options(self):
+        from jass import cli
+
+        args = cli.parse(["board", "add", "shop", "--needs", "msg_1", "--for", "worker-ps5", "Review the fix."])
+        self.assertEqual((args.project, args.text, args.needs, args.for_profile), ("shop", "Review the fix.", ["msg_1"], "worker-ps5"))
+        args = cli.parse(["board", "add", "shop", "Fix it.", "--base", "none"])
+        self.assertEqual((args.text, args.base), ("Fix it.", "none"))
+
+    def test_other_extra_arguments_are_still_refused(self):
+        from jass import cli
+
+        with self.assertRaises(SystemExit):
+            cli.parse(["board", "add", "shop", "one", "--base", "none", "two"])
+        with self.assertRaises(SystemExit):
+            cli.parse(["board", "status", "--bogus"])
+
+
+class WaitTests(unittest.TestCase):
+    def test_stop_ends_a_long_wait_at_once(self):
+        import subprocess
+        import time
+        from unittest import mock
+
+        real = subprocess.Popen
+        stop = threading.Event()
+        threading.Timer(0.5, stop.set).start()
+        with mock.patch("jass.board.subprocess.Popen", side_effect=lambda cmd, **kw: real(["sleep", "30"], **kw)):
+            started = time.monotonic()
+            self.assertEqual(board.Board("worker-mac").wait_ready("build/", 300, stop), "")
+        self.assertLess(time.monotonic() - started, 5)

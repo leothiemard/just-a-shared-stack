@@ -340,8 +340,22 @@ def parser() -> argparse.ArgumentParser:
     return top
 
 
+def parse(argv: list[str] | None) -> argparse.Namespace:
+    """Parse the command line. `jass board add` also takes its brief after options (`add shop --needs 12 "brief"`),
+    which argparse alone refuses for an optional positional."""
+    top = parser()
+    args, extra = top.parse_known_args(argv)
+    if extra:
+        if (getattr(args, "command", None), getattr(args, "action", None)) == ("board", "add") and args.text is None \
+                and len(extra) == 1 and not extra[0].startswith("-"):
+            args.text = extra[0]
+        else:
+            top.error(f"unrecognized arguments: {' '.join(extra)}")
+    return args
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    args = parse(argv)
     try:
         return args.func(args)
     except JassError as error:
