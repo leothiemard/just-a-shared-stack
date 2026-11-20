@@ -185,10 +185,33 @@ class Board:
         rc, data, raw = self.run("label", task_id, *args)
         return "" if rc == 0 else self.reason(data, raw)
 
-    def wait_ready(self, prefix: str, timeout_s: int) -> str:
-        """Block until a task under `prefix` turns ready, or the timeout; '' when it woke or timed out normally."""
-        rc, data, raw = self.run("wait", prefix, "--label", "board.task=ready", "--timeout", f"{timeout_s}s", timeout=timeout_s + 30)
-        if rc == 0 or "Nothing matched" in raw or self.reason(data, raw) == "timeout":
+    def wait_ready(self, prefix: str, timeout_s: int, stop: threading.Event | None = None) -> str:
+        """Block until a task under `prefix` turns ready, the timeout, or `stop`; '' when it woke or timed out normally.
+
+        The wait runs as a child process that is ended as soon as `stop` is set, so a worker with nothing to do
+        stops at once instead of after its whole wait."""
+        command = ["vercel", "board", "wait", prefix, "--label", "board.task=ready", "--timeout", f"{timeout_s}s", "--as", self.profile, "--json"]
+        try:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except OSError as error:
+            raise BoardError(f"Cannot run the Vercel CLI: {error}. Install it with `npm install --global vercel@latest`.")
+        deadline = time.monotonic() + timeout_s + 30
+        while proc.poll() is None:
+            if (stop and stop.is_set()) or time.monotonic() > deadline:
+                proc.terminate()
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                proc.communicate()
+                return ""
+            if stop:
+                stop.wait(1)
+            else:
+                time.sleep(1)
+        out, err = proc.communicate()
+        data, raw = first_json(out), (out + err).strip()
+        if proc.returncode == 0 or "Nothing matched" in raw or self.reason(data, raw) == "timeout":
             return ""
         return self.reason(data, raw)
 
@@ -574,7 +597,7 @@ def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: thr
             if once:
                 log(f"[{profile}] nothing ready")
                 return 0 if done else 1
-            problem = board.wait_ready(prefix, wait_s)
+            problem = board.wait_ready(prefix, wait_s, stop)
             if problem:
                 log(f"[{profile}] waiting for tasks failed ({problem}); checking again in a minute")
                 clock.sleep(60, stop)
