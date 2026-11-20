@@ -194,8 +194,8 @@ def cmd_heavy(args) -> int:
 def cmd_board(args) -> int:
     from jass import board
 
-    cfg = config.load()
-    return {"work": board.work, "add": board.add, "status": board.status}[args.action](cfg, args)
+    cfg = {} if args.action == "open" else config.load()  # open needs only `vercel login`, not a box config
+    return {"work": board.work, "add": board.add, "status": board.status, "open": board.open_board}[args.action](cfg, args)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -308,7 +308,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--mem", type=int, metavar="MB", help="memory cap (default: night.heavy_mb of the box config, else a quarter of memory; 0 for none)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, metavar="-- command", help="the command and its arguments")
 
-    p = command("board", cmd_board, "Vercel Board tasks run as T3 Code threads: queue a task, work the queue on this box, list what is open.")
+    p = command("board", cmd_board, "Vercel Board tasks run as T3 Code threads: queue a task, work the queue on this box, list what is open, show the board in a browser.")
     actions = p.add_subparsers(dest="action", metavar="<action>")
     actions.required = True
     w = actions.add_parser("work", help="claim ready tasks for this box's projects and run each as a T3 thread, settling it when the thread is idle. Runs in the foreground")
@@ -333,6 +333,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--all", action="store_true", help="include completed, failed and canceled tasks")
     s.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
     s.add_argument("--json", action="store_true")
+    o = actions.add_parser("open", help="show the board in a browser, as you, through @vercel/board inspect on 127.0.0.1; runs until Ctrl-C")
+    o.add_argument("--port", type=int, help="port to listen on (default: a free one; 4747 over SSH)")
+    o.add_argument("--no-open", action="store_true", help="print the address instead of opening a browser")
 
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the lore.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")

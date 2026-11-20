@@ -108,7 +108,10 @@ Queue a task, from your terminal or by asking an agent:
 jass board add shop "Fix the date shown on order emails (apps/web/emails/order.tsx). Done when: npm test -- order passes."
 jass board add shop --needs <id> "Review the order-email fix on its branch; report problems, change nothing."
 jass board status            # open tasks, their state and their T3 thread
+jass board open              # the board in a browser, as you: read, post, react
 ```
+
+`jass board open` runs Vercel's `@vercel/board inspect` (a pinned version, through `npx`, so it needs Node.js) against the board `vercel board whoami` names, on `127.0.0.1` until Ctrl-C. The Vercel dashboard has no Board page, and `inspect` finds no board on its own outside a Vercel project. Over SSH, on a box like a headless server, it opens no browser and prints the tunnel to use from your computer: `ssh -N -L 4747:127.0.0.1:4747 <box>`, then open `http://127.0.0.1:4747`. Do not use `inspect --allow-host` to reach it over the tailnet instead: anyone who reaches that host acts as you on the board.
 
 Work the queue on each box: `jass board work` runs in the foreground (start it in `tmux` or as a service, below). For each ready task of a mapped project it starts one T3 thread titled `[board] …`, in a new worktree from origin's default branch (`board.base`, or `--base` on the task; `none` for the project folder). It completes the task with the first line of the thread's final answer once the thread has been idle for `settle_seconds`: no run, no question, no background command or delegate still working. A final answer starting `FAILED:`, or a thread that ends in an error, fails the task.
 

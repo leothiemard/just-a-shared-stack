@@ -33,4 +33,4 @@ Done when `jass board status` lists every task, and you have told the owner the 
 
 ## 4. Follow up
 
-`jass board status` shows each open task's state and its T3 thread. `waiting for an answer in T3` means a thread asked the owner a question: point them at that thread. A failed task's reason is on the board (`vercel board read <id>`); `vercel board tasks reopen <id>` retries it in the same thread.
+`jass board status` shows each open task's state and its T3 thread; `jass board open` shows the owner the board in a browser (it runs until Ctrl-C, so suggest it rather than run it). `waiting for an answer in T3` means a thread asked the owner a question: point them at that thread. A failed task's reason is on the board (`vercel board read <id>`); `vercel board tasks reopen <id>` retries it in the same thread.

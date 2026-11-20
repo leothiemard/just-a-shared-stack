@@ -39,6 +39,7 @@ jass night check --agents 4             # before leaving agents unattended: will
 jass night watch --thread "Lane A"      # watchdog: resume failed runs, report what needs you
 jass heavy -- npm run check             # one heavy command at a time, under a memory cap
 jass board add shop "<brief>"           # queue a task on Vercel Board; `jass board work` runs it as a T3 thread
+jass board open                         # show the board in a browser, as you (local only)
 ```
 
 **Add a skill.** Create `skills/<name>/SKILL.md` with `name` and `description` frontmatter, add `<name>` to `skills.json`, commit and push, then run `jass update --apply` on each box.

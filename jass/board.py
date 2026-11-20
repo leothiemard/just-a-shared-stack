@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import signal
 import subprocess
@@ -712,3 +713,43 @@ def status(cfg: dict, args) -> int:
         if row["detail"]:
             print(f"{'':12} {row['detail']}")
     return 0
+
+
+# `@vercel/board inspect` is the only visual view of a board: a local server that acts as the signed-in user.
+# Pinned, because npx runs whatever it downloads; bump it after checking the new version's `inspect --help`.
+INSPECT_PACKAGE = "@vercel/board@0.53.0"
+INSPECT_PORT = 4747
+
+
+def board_url(profile: str = "lead") -> str:
+    """The board `vercel board` uses, so `inspect` needs no team name."""
+    rc, data, raw = Board(profile).run("whoami", timeout=60)
+    url = data.get("board") if isinstance(data, dict) else None
+    url = url.strip() if isinstance(url, str) else ""
+    if rc != 0 or not url.startswith(("https://", "http://")):
+        raise BoardError(f"`vercel board whoami` gave no board ({Board.reason(data, raw)}). Run `vercel login`, then check `vercel board whoami`.")
+    return url
+
+
+def open_board(cfg: dict, args, env: dict | None = None) -> int:
+    """Run `@vercel/board inspect` in the foreground, against this box's board, until Ctrl-C.
+    It listens on 127.0.0.1 only. Over SSH it opens no browser and prints the tunnel to use instead:
+    `--allow-host` would let anyone who reaches that host act as the owner."""
+    env = os.environ if env is None else env
+    url = board_url()
+    remote = bool(env.get("SSH_CONNECTION"))
+    port = args.port or (INSPECT_PORT if remote else None)
+    command = ["npx", "--yes", INSPECT_PACKAGE, "inspect", "--url", url]
+    if port:
+        command += ["--port", str(port)]
+    if args.no_open or remote:
+        command.append("--no-open")
+    if remote:
+        print(f"Over SSH: no browser here. On your computer run `ssh -N -L {port}:127.0.0.1:{port} <this box>`, "
+              f"then open http://127.0.0.1:{port}", file=sys.stderr)
+    try:
+        return subprocess.call(command)
+    except OSError as error:
+        raise BoardError(f"Cannot run npx ({error}). Install Node.js, which brings npx.")
+    except KeyboardInterrupt:
+        return 0
