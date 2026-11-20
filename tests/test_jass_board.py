@@ -361,3 +361,62 @@ class WaitTests(unittest.TestCase):
             started = time.monotonic()
             self.assertEqual(board.Board("worker-mac").wait_ready("build/", 300, stop), "")
         self.assertLess(time.monotonic() - started, 5)
+
+
+class OpenTests(unittest.TestCase):
+    URL = "https://board.example.test"
+
+    def run_open(self, argv, env, whoami=(0, {"board": URL}, "")):
+        from unittest import mock
+
+        from jass import cli
+
+        args = cli.parse(["board", "open", *argv])
+        with mock.patch.object(board.Board, "run", return_value=whoami) as run, \
+                mock.patch("jass.board.subprocess.call", return_value=0) as call:
+            code = board.open_board(CFG, args, env=env)
+        return code, run, call
+
+    def test_runs_the_pinned_inspector_on_the_board_from_whoami(self):
+        code, run, call = self.run_open([], env={})
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_args.args, ("whoami",))
+        command = call.call_args.args[0]
+        self.assertEqual(command[:5], ["npx", "--yes", board.INSPECT_PACKAGE, "inspect", "--url"])
+        self.assertEqual(command[5], self.URL)
+        self.assertRegex(board.INSPECT_PACKAGE, r"^@vercel/board@\d+\.\d+\.\d+$")
+        self.assertNotIn("--no-open", command)
+        self.assertNotIn("--allow-host", command)
+
+    def test_port_and_no_open_pass_through(self):
+        _, _, call = self.run_open(["--port", "4800", "--no-open"], env={})
+        command = call.call_args.args[0]
+        self.assertEqual(command[-3:], ["--port", "4800", "--no-open"])
+
+    def test_over_ssh_it_opens_no_browser_and_uses_a_fixed_port(self):
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _, _, call = self.run_open([], env={"SSH_CONNECTION": "1 2 3 4"})
+        command = call.call_args.args[0]
+        self.assertIn("--no-open", command)
+        self.assertEqual(command[command.index("--port") + 1], str(board.INSPECT_PORT))
+        self.assertIn(f"ssh -N -L {board.INSPECT_PORT}:127.0.0.1:{board.INSPECT_PORT}", err.getvalue())
+        self.assertNotIn("--allow-host", command)
+
+    def test_no_board_from_whoami_says_to_log_in(self):
+        with self.assertRaisesRegex(board.BoardError, "vercel login"):
+            self.run_open([], env={}, whoami=(1, None, "Error: not logged in"))
+
+    def test_open_needs_no_box_config(self):
+        from unittest import mock
+
+        from jass import cli
+
+        args = cli.parse(["board", "open", "--no-open"])
+        with mock.patch("jass.cli.config.load", side_effect=AssertionError("loaded")), \
+                mock.patch("jass.board.open_board", return_value=0) as opened:
+            self.assertEqual(cli.cmd_board(args), 0)
+        self.assertEqual(opened.call_args.args[0], {})
