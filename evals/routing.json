@@ -108,6 +108,18 @@
       "prompt": "Run the full test suite and tell me what fails.",
       "expected_output": "Ordinary task; not the overnight skill.",
       "files": []
+    },
+    {
+      "id": 19,
+      "prompt": "Queue the next-js security bump and the flaky date test fix for the board workers on the shop project.",
+      "expected_output": "board-queue: check the project key with jass board status, write one stranger-proof brief per task with a Done-when check, queue each with jass board add, add a review task with --needs where results are relied on, report the ids.",
+      "files": []
+    },
+    {
+      "id": 20,
+      "prompt": "Leave the agents working overnight on these three lanes and check the box will last.",
+      "expected_output": "overnight, not board-queue: the board queue is for self-contained tasks, not standing lanes.",
+      "files": []
     }
   ]
 }

@@ -191,6 +191,13 @@ def cmd_heavy(args) -> int:
     return heavy.run(config.load(), command, args.mem)
 
 
+def cmd_board(args) -> int:
+    from jass import board
+
+    cfg = config.load()
+    return {"work": board.work, "add": board.add, "status": board.status}[args.action](cfg, args)
+
+
 def parser() -> argparse.ArgumentParser:
     top = argparse.ArgumentParser(prog="jass", description="Just a Shared Stack: box setup, the shared lore, recall and sync.")
     sub = top.add_subparsers(dest="command", metavar="<command>")
@@ -300,6 +307,32 @@ def parser() -> argparse.ArgumentParser:
     p = command("heavy", cmd_heavy, "Run one heavy command at a time on this box, under a memory cap, so an overrun kills the command and not the agent.")
     p.add_argument("--mem", type=int, metavar="MB", help="memory cap (default: night.heavy_mb of the box config, else a quarter of memory; 0 for none)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, metavar="-- command", help="the command and its arguments")
+
+    p = command("board", cmd_board, "Vercel Board tasks run as T3 Code threads: queue a task, work the queue on this box, list what is open.")
+    actions = p.add_subparsers(dest="action", metavar="<action>")
+    actions.required = True
+    w = actions.add_parser("work", help="claim ready tasks for this box's projects and run each as a T3 thread, settling it when the thread is idle. Runs in the foreground")
+    w.add_argument("--project", action="append", metavar="KEY", help="only this project of board.projects; repeatable")
+    w.add_argument("--workers", type=int, help="tasks this box works at once (default: board.workers, 1)")
+    w.add_argument("--once", action="store_true", help="work one task, or none when nothing is ready, then exit")
+    w.add_argument("--wait-minutes", type=float, default=5, help="how long one wait for a ready task lasts before the queue is checked again; a crashed worker's task, whose lease ran out, is picked up at the next check (default 5)")
+    w.add_argument("--log", help="log file (default: ~/.cache/jass/board/work-<date>.log)")
+    a = actions.add_parser("add", help="queue a task for a project; prints its id")
+    a.add_argument("project", help="project key, as in board.projects")
+    a.add_argument("text", nargs="?", help="the brief, written for an agent with no memory: what to do, scope, and how to prove it is done (- or nothing: stdin)")
+    a.add_argument("--base", help="ref the worktree starts from, or none (default: board.base)")
+    a.add_argument("--model", help="model slug for the thread (needs --provider)")
+    a.add_argument("--provider", help="provider instance id for the thread")
+    a.add_argument("--effort", help="reasoning effort option for the thread")
+    a.add_argument("--needs", action="append", metavar="ID", help="a task that must complete first; repeatable")
+    a.add_argument("--label", action="append", metavar="K=V", help="extra label; repeatable")
+    a.add_argument("--for", dest="for_profile", metavar="PROFILE", help="only this worker profile may claim it")
+    a.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE", help="board profile that owns the task (default lead)")
+    s = actions.add_parser("status", help="open tasks with their state and T3 thread")
+    s.add_argument("project", nargs="?", help="project key (default: all)")
+    s.add_argument("--all", action="store_true", help="include completed, failed and canceled tasks")
+    s.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
+    s.add_argument("--json", action="store_true")
 
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the lore.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")

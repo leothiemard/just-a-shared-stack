@@ -29,6 +29,15 @@ DEFAULTS = {
     # `jass night` and `jass heavy`: memory per agent and held back for the system, and the cap of one heavy command
     # (null: a quarter of this box's memory; 0: no cap).
     "night": {"agent_mb": 1500, "reserve_mb": 2000, "heavy_mb": None},
+    # `jass board`: Vercel Board tasks in `<channel>/<project>` run as T3 Code threads on this box. `projects` maps a
+    # project key to its folder here; `base` is the ref a task's worktree starts from ('' for origin's default branch,
+    # 'none' for no worktree); `worker` is the board profile ('' for worker-<box>); provider, model and options pick the
+    # threads' model ('' for the T3 project's default).
+    "board": {
+        "channel": "build", "projects": {}, "worker": "", "workers": 1, "base": "",
+        "provider": "", "model": "", "options": [],
+        "lease_minutes": 10, "poll_seconds": 15, "settle_seconds": 45, "board_poll_seconds": 60, "answer_hours": 24, "stall_minutes": 15,
+    },
 }
 
 
