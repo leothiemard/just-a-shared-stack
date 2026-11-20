@@ -724,10 +724,11 @@ INSPECT_PORT = 4747
 def board_url(profile: str = "lead") -> str:
     """The board `vercel board` uses, so `inspect` needs no team name."""
     rc, data, raw = Board(profile).run("whoami", timeout=60)
-    url = (data or {}).get("board") if isinstance(data, dict) else None
-    if rc != 0 or not url:
+    url = data.get("board") if isinstance(data, dict) else None
+    url = url.strip() if isinstance(url, str) else ""
+    if rc != 0 or not url.startswith(("https://", "http://")):
         raise BoardError(f"`vercel board whoami` gave no board ({Board.reason(data, raw)}). Run `vercel login`, then check `vercel board whoami`.")
-    return str(url)
+    return url
 
 
 def open_board(cfg: dict, args, env: dict | None = None) -> int:
@@ -736,7 +737,7 @@ def open_board(cfg: dict, args, env: dict | None = None) -> int:
     `--allow-host` would let anyone who reaches that host act as the owner."""
     env = os.environ if env is None else env
     url = board_url()
-    remote = bool(env.get("SSH_CONNECTION")) and not args.no_open
+    remote = bool(env.get("SSH_CONNECTION"))
     port = args.port or (INSPECT_PORT if remote else None)
     command = ["npx", "--yes", INSPECT_PACKAGE, "inspect", "--url", url]
     if port:

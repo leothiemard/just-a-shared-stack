@@ -406,6 +406,36 @@ class OpenTests(unittest.TestCase):
         self.assertIn(f"ssh -N -L {board.INSPECT_PORT}:127.0.0.1:{board.INSPECT_PORT}", err.getvalue())
         self.assertNotIn("--allow-host", command)
 
+    def test_over_ssh_an_explicit_port_wins_and_no_open_keeps_the_hint(self):
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _, _, call = self.run_open(["--port", "4800", "--no-open"], env={"SSH_CONNECTION": "1 2 3 4"})
+        command = call.call_args.args[0]
+        self.assertEqual(command.count("--no-open"), 1)
+        self.assertEqual(command[command.index("--port") + 1], "4800")
+        self.assertIn("ssh -N -L 4800:127.0.0.1:4800", err.getvalue())
+
+    def test_board_that_is_not_a_url_is_refused(self):
+        for value in ({"url": "https://x"}, "   ", None):
+            with self.assertRaisesRegex(board.BoardError, "vercel login"):
+                self.run_open([], env={}, whoami=(0, {"board": value}, ""))
+
+    def test_missing_npx_and_ctrl_c(self):
+        from unittest import mock
+
+        from jass import cli
+
+        args = cli.parse(["board", "open"])
+        with mock.patch.object(board.Board, "run", return_value=(0, {"board": self.URL}, "")):
+            with mock.patch("jass.board.subprocess.call", side_effect=FileNotFoundError("npx")):
+                with self.assertRaisesRegex(board.BoardError, "Node.js"):
+                    board.open_board(CFG, args, env={})
+            with mock.patch("jass.board.subprocess.call", side_effect=KeyboardInterrupt):
+                self.assertEqual(board.open_board(CFG, args, env={}), 0)
+
     def test_no_board_from_whoami_says_to_log_in(self):
         with self.assertRaisesRegex(board.BoardError, "vercel login"):
             self.run_open([], env={}, whoami=(1, None, "Error: not logged in"))
