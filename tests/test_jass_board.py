@@ -1,0 +1,302 @@
+import threading
+import unittest
+from pathlib import Path
+
+import jasshelp  # noqa: F401  (puts the stack on sys.path)
+
+from jass import board
+
+CFG = {"box": "mac", "board": {"channel": "build", "projects": {"demo": "/tmp/demo"}, "worker": "", "base": "",
+                               "lease_minutes": 3, "poll_seconds": 10, "settle_seconds": 30, "board_poll_seconds": 60,
+                               "answer_hours": 1, "max_misses": 3}}
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, seconds, stop=None):
+        self.t += seconds
+
+
+class FakeBoard:
+    def __init__(self, task, replies=()):
+        self.task, self.replies, self.actions, self.lost_at = task, list(replies), [], None
+        self.clock = None
+
+    def read(self, task_id):
+        return {"message": dict(self.task), "replies": list(self.replies)}
+
+    def settle(self, action, task_id, *args):
+        if self.lost_at is not None and self.clock.now() >= self.lost_at:
+            return "claim_lost"
+        self.actions.append((action, *args))
+        return ""
+
+    def renew(self, task_id, lease):
+        return self.settle("renew", task_id)
+
+    def reply(self, task_id, text):
+        self.actions.append(("reply", text))
+        return ""
+
+    def label(self, task_id, labels=None, unset=()):
+        self.actions.append(("label", dict(labels or {}), tuple(unset)))
+        return ""
+
+    def done(self):
+        return [a for a in self.actions if a[0] in ("complete", "fail", "block", "release")]
+
+
+class FakeT3:
+    """`timeline(t)` gives the thread's fields at clock time t."""
+
+    def __init__(self, clock, timeline, answer="Did it.\n\nDetails.", status="completed", known=()):
+        self.clock, self.timeline, self.answer, self.status = clock, timeline, answer, status
+        self.started, self.sent, self.known = [], [], set(known)
+
+    def start(self, project, title, brief, worktree="", options=None):
+        self.started.append({"project": project, "title": title, "brief": brief, "worktree": worktree, "options": options})
+        self.known.add("mcp:new")
+        return "mcp:new"
+
+    def show(self, thread, messages=0):
+        if thread not in self.known:
+            return None
+        fields = {"threadId": thread, "status": "running", "activeRunId": None, "latestRunId": "r1", "pendingRequestCount": 0,
+                  "pendingBackgroundTasks": [], "blockedOnThreadWait": False, "link": "https://t3/x"}
+        fields.update(self.timeline(self.clock.now()))
+        if not fields["activeRunId"] and not fields["pendingRequestCount"] and fields["status"] == "running":
+            fields["status"] = self.status
+        out = {"thread": fields}
+        if messages:
+            out["messages"] = [{"role": "assistant", "text": self.answer}]
+        return out
+
+    def send(self, thread, text):
+        self.sent.append(text)
+        return True
+
+
+def task(labels=None, text="Bump the lockfile.\nScope: package-lock.json."):
+    return {"id": "msg_1", "channel": "build/demo", "text": text, "labels": dict({"board.task": "claimed"}, **(labels or {}))}
+
+
+def job(t, timeline, replies=(), **t3kw):
+    clock = FakeClock()
+    b = FakeBoard(t, replies)
+    b.clock = clock
+    t3 = FakeT3(clock, timeline, **t3kw)
+    logs = []
+    j = board.Job(t, CFG, b, t3, clock, logs.append, threading.Event(), base=lambda project, base: "origin/main")
+    return j, b, t3, clock, logs
+
+
+def running_until(end, **extra):
+    return lambda t: dict({"activeRunId": "r1"} if t < end else {}, **extra)
+
+
+class HelperTests(unittest.TestCase):
+    def test_first_line_strips_markdown_and_skips_blanks(self):
+        self.assertEqual(board.first_line("\n\n## **Bumped** `next` to 16.4.4\nmore"), "Bumped next to 16.4.4")
+
+    def test_first_json_skips_banner(self):
+        self.assertEqual(board.first_json("\nVercel CLI 66\n{\"a\": 1}"), {"a": 1})
+        self.assertIsNone(board.first_json("no json"))
+
+    def test_thread_state(self):
+        self.assertEqual(board.thread_state({"pendingRequestCount": 1, "activeRunId": "r"}), "question")
+        self.assertEqual(board.thread_state({"pendingBackgroundTasks": [{"taskId": "b"}]}), "busy")
+        self.assertEqual(board.thread_state({"blockedOnThreadWait": True}), "busy")
+        self.assertEqual(board.thread_state({"activeRunId": None}), "idle")
+
+    def test_worker_profile_must_start_with_worker(self):
+        with self.assertRaises(board.BoardError):
+            board.settings({"box": "mac", "board": {"worker": "fx"}})
+        self.assertEqual(board.settings({"box": "ps5"})["worker"], "worker-ps5")
+
+
+class JobTests(unittest.TestCase):
+    def test_completes_with_the_first_line_once_idle_long_enough(self):
+        j, b, t3, clock, _ = job(task(), running_until(100))
+        self.assertEqual(j.run(), "completed")
+        self.assertEqual(b.done(), [("complete", "Did it.")])
+        self.assertGreaterEqual(clock.t, 130)
+        started = t3.started[0]
+        self.assertEqual(started["project"], "/tmp/demo")
+        self.assertEqual(started["worktree"], "origin/main")
+        self.assertEqual(started["title"], "[board] Bump the lockfile.")
+        self.assertIn("Bump the lockfile.", started["brief"])
+        self.assertIn("msg_1", started["brief"])
+        labels = [a[1] for a in b.actions if a[0] == "label"][0]
+        self.assertEqual(labels, {board.THREAD: "mcp:new", board.BOX: "mac"})
+        self.assertTrue(any(a[0] == "reply" and "Did it." in a[1] for a in b.actions))
+
+    def test_background_command_after_turn_end_holds_the_task(self):
+        # The turn ends at 20 s, but a background command runs until 200 s, then a second run reports.
+        def timeline(t):
+            if t < 20:
+                return {"activeRunId": "r1"}
+            if t < 200:
+                return {"status": "completed", "pendingBackgroundTasks": [{"taskId": "bg"}]}
+            if t < 230:
+                return {"activeRunId": "r2", "latestRunId": "r2"}
+            return {"latestRunId": "r2"}
+        j, b, _, clock, _ = job(task(), timeline)
+        self.assertEqual(j.run(), "completed")
+        self.assertGreaterEqual(clock.t, 260)
+
+    def test_short_gap_between_runs_does_not_settle(self):
+        # Idle for 20 s (less than settle_seconds) between two runs.
+        def timeline(t):
+            if t < 50:
+                return {"activeRunId": "r1"}
+            if t < 70:
+                return {}
+            if t < 150:
+                return {"activeRunId": "r2", "latestRunId": "r2"}
+            return {"latestRunId": "r2"}
+        j, b, _, clock, _ = job(task(), timeline)
+        self.assertEqual(j.run(), "completed")
+        self.assertGreaterEqual(clock.t, 180)
+
+    def test_question_labels_and_waits_then_completes_after_answer(self):
+        def timeline(t):
+            if t < 30:
+                return {"activeRunId": "r1"}
+            if t < 600:
+                return {"activeRunId": "r1", "pendingRequestCount": 1}
+            if t < 650:
+                return {"activeRunId": "r1"}
+            return {}
+        j, b, _, _, _ = job(task(), timeline)
+        self.assertEqual(j.run(), "completed")
+        labels = [a for a in b.actions if a[0] == "label"]
+        self.assertIn(("label", {board.WAITING: "answer"}, ()), labels)
+        self.assertIn(("label", {}, (board.WAITING,)), labels)
+        self.assertTrue(any(a[0] == "reply" and "waiting for an answer" in a[1] for a in b.actions))
+        self.assertEqual(b.done(), [("complete", "Did it.")])
+
+    def test_question_unanswered_for_answer_hours_blocks(self):
+        j, b, _, _, _ = job(task(), lambda t: {"activeRunId": "r1", "pendingRequestCount": 1})
+        self.assertEqual(j.run(), "blocked")
+        self.assertEqual(b.done()[0][0], "block")
+        self.assertIn("needs_input", b.done()[0])
+
+    def test_lease_is_renewed_during_long_work(self):
+        j, b, _, _, _ = job(task(), running_until(1000))
+        j.run()
+        renews = [a for a in b.actions if a[0] == "renew"]
+        self.assertGreaterEqual(len(renews), 1000 // 60 - 1)
+
+    def test_lost_claim_stops_without_settling(self):
+        j, b, _, _, _ = job(task(), running_until(10_000))
+        b.lost_at = 300
+        self.assertEqual(j.run(), "lost (claim_lost)")
+        self.assertEqual(b.done(), [])
+
+    def test_failed_first_line_fails_the_task(self):
+        j, b, _, _, _ = job(task(), running_until(20), answer="FAILED: the tests need a database.")
+        self.assertEqual(j.run(), "failed")
+        self.assertEqual(b.done(), [("fail", "FAILED: the tests need a database.")])
+
+    def test_thread_that_ends_in_error_fails_the_task(self):
+        j, b, _, _, _ = job(task(), running_until(20), status="failed", answer="")
+        self.assertEqual(j.run(), "failed")
+        self.assertEqual(b.done()[0][0], "fail")
+        self.assertIn("T3 thread failed", b.done()[0][1])
+
+    def test_attaches_to_its_own_thread_after_a_restart(self):
+        t = task({board.THREAD: "mcp:old", board.BOX: "mac"})
+        j, b, t3, _, _ = job(t, running_until(40), known=("mcp:old",))
+        self.assertEqual(j.run(), "completed")
+        self.assertEqual(t3.started, [])
+        self.assertFalse(any(a[0] == "reply" and a[1].startswith("Working in") for a in b.actions))
+
+    def test_thread_of_another_box_starts_a_new_one_with_a_note(self):
+        t = task({board.THREAD: "mcp:old", board.BOX: "ps5"})
+        j, _, t3, _, _ = job(t, running_until(40), known=("mcp:old",))
+        j.run()
+        self.assertEqual(len(t3.started), 1)
+        self.assertIn("mcp:old on box ps5", t3.started[0]["brief"])
+
+    def test_earlier_replies_go_into_the_brief_and_new_ones_are_forwarded(self):
+        lead = {"id": "msg_1_2", "text": "Use npm 11.", "by": {"profile": "lead"}, "author": {"name": "lead", "via": {"name": "leo"}}}
+        mine = {"id": "msg_1_3", "text": "Working in…", "by": {"profile": "worker-mac"}}
+        j, b, t3, _, _ = job(task(), running_until(400), replies=[lead, mine])
+        late = {"id": "msg_1_4", "text": "Also update the docs.", "by": {"profile": None}, "author": {"name": "leo"}}
+
+        original = b.read
+
+        def read(task_id):
+            data = original(task_id)
+            if j.clock.now() > 100:
+                data["replies"].append(late)
+            return data
+
+        b.read = read
+        self.assertEqual(j.run(), "completed")
+        self.assertIn("Use npm 11.", t3.started[0]["brief"])
+        self.assertEqual(len(t3.sent), 1)
+        self.assertIn("Also update the docs.", t3.sent[0])
+        self.assertIn("from leo", t3.sent[0])
+
+    def test_reply_posted_while_idle_gets_a_turn_before_settling(self):
+        j, b, t3, clock, _ = job(task(), running_until(20))
+        late = {"id": "msg_1_9", "text": "One more thing.", "by": {"profile": None}, "author": {"name": "leo"}}
+        original = b.read
+        b.read = lambda task_id: dict(original(task_id), replies=[late] if clock.now() > 30 else [])
+        self.assertEqual(j.run(), "completed")
+        self.assertEqual(len(t3.sent), 1)
+
+    def test_unreadable_thread_releases_the_task(self):
+        j, b, t3, _, _ = job(task(), lambda t: {})
+        t3.known = set()
+        t3.start = lambda *a, **k: "mcp:gone"
+        self.assertEqual(j.run(), "released")
+        self.assertEqual(b.done(), [("release",)])
+
+    def test_start_failure_fails_the_task(self):
+        j, b, t3, _, _ = job(task(), lambda t: {})
+
+        def boom(*a, **k):
+            raise board.BoardError("t3 thread start failed (exit 1): no project")
+
+        t3.start = boom
+        self.assertEqual(j.run(), "failed")
+        self.assertEqual(b.done()[0][0], "fail")
+
+    def test_stop_releases_and_leaves_the_thread(self):
+        j, b, _, _, _ = job(task(), running_until(10_000))
+        j.stop.set()
+        self.assertEqual(j.run(), "released")
+        self.assertEqual(b.done(), [("release",)])
+
+    def test_task_labels_choose_model_and_effort(self):
+        t = task({"provider": "claudeAgent", "model": "claude-opus-5-5", "effort": "high"})
+        j, _, t3, _, _ = job(t, running_until(20))
+        j.run()
+        self.assertEqual(t3.started[0]["options"], {"provider": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort=high"]})
+
+    def test_unknown_project_fails_the_task(self):
+        t = dict(task(), channel="build/other")
+        j, b, _, _, _ = job(t, running_until(20))
+        self.assertEqual(j.run(), "failed")
+        self.assertIn("board.projects", b.done()[0][1])
+
+
+class ChannelTests(unittest.TestCase):
+    def test_channels_follow_board_projects(self):
+        s = board.settings(CFG)
+        self.assertEqual(board.channels(s, None), ["build/demo"])
+        with self.assertRaises(board.BoardError):
+            board.channels(s, ["nope"])
+        with self.assertRaises(board.BoardError):
+            board.channels(board.settings({"box": "mac", "board": {"projects": {}}}), None)
+
+
+if __name__ == "__main__":
+    unittest.main()

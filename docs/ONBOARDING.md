@@ -86,6 +86,57 @@ jass night watch --hours 8 --thread "Lane A" --thread "Lane B" --keep-going --aw
 
 The `overnight` skill walks an agent through the whole routine: plan, pre-flight, brief, watch, report.
 
+## Queue work on a board
+
+`jass board` uses [Vercel Board](https://vercel.com/docs/board) as a task queue whose tasks run as ordinary T3 Code threads, so you keep watching and answering them in T3 Code. Use it for self-contained work: maintenance, dependency bumps, bug fixes with a clear check.
+
+Once per box: install the Vercel CLI, run `vercel login`, check `vercel board whoami`, and map the projects this box works on in `~/.config/jass/box.json`:
+
+```json
+"board": {
+  "projects": {"shop": "~/Development/shop"},
+  "workers": 2,
+  "provider": "claudeAgent", "model": "claude-sonnet-5-5", "options": ["effort=medium"]
+}
+```
+
+A project key names the channel `build/<key>` and must be the same on every box; the folder may differ. Leave `provider` and `model` empty to use the T3 project's default. Each project must already be a project in T3 Code on that box.
+
+Queue a task, from your terminal or by asking an agent:
+
+```sh
+jass board add shop "Fix the date shown on order emails (apps/web/emails/order.tsx). Done when: npm test -- order passes."
+jass board add shop --needs <id> "Review the order-email fix on its branch; report problems, change nothing."
+jass board status            # open tasks, their state and their T3 thread
+```
+
+Work the queue on each box: `jass board work` runs in the foreground (start it in `tmux` or as a service, below). For each ready task of a mapped project it starts one T3 thread titled `[board] …`, in a new worktree from origin's default branch (`board.base`, or `--base` on the task; `none` for the project folder). It completes the task with the first line of the thread's final answer once the thread has been idle for `settle_seconds`: no run, no question, no background command or delegate still working. A final answer starting `FAILED:`, or a thread that ends in an error, fails the task.
+
+- A question in the thread keeps the task held and labels it `t3.waiting=answer`; answer it in T3 Code. After `answer_hours` (24) without an answer the task is blocked; unblock it with `vercel board tasks unblock <id>` once you answered.
+- A reply that you or an agent posts in the task's board thread is forwarded into the T3 thread.
+- A worker that stops or crashes leaves the thread running; the task returns to the queue when its lease runs out, and the same box picks the same thread up again.
+- The agent in the thread never writes to the board. Board text is still instructions to an agent with your access: keep the `build/` channels to people and agents you trust.
+
+As a service on Linux, with systemd (`systemctl --user daemon-reload && systemctl --user enable --now jass-board`; `loginctl enable-linger $USER` keeps it running after you log out):
+
+```ini
+# ~/.config/systemd/user/jass-board.service
+[Unit]
+Description=jass board worker
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/jass board work
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+Add the folders of `vercel`, `t3` and `node` to that `PATH` if they live elsewhere (`command -v vercel t3 node`). The worker logs to `~/.cache/jass/board/` and to the journal (`journalctl --user -u jass-board -f`).
+
 ## Add a skill
 
 1. Create `skills/<name>/SKILL.md` with `name` and `description` frontmatter. Follow the `writing-for-agents` skill.
