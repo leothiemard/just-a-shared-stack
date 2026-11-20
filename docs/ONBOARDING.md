@@ -90,7 +90,7 @@ The `overnight` skill walks an agent through the whole routine: plan, pre-flight
 
 `jass board` uses [Vercel Board](https://vercel.com/docs/board) as a task queue whose tasks run as ordinary T3 Code threads, so you keep watching and answering them in T3 Code. Use it for self-contained work: maintenance, dependency bumps, bug fixes with a clear check.
 
-Once per box: install the Vercel CLI, run `vercel login`, check `vercel board whoami`, and map the projects this box works on in `~/.config/jass/box.json`:
+Once per box: install the Vercel CLI (version 66 or later, which has `vercel board tasks`), run `vercel login`, check `vercel board whoami`, and map the projects this box works on in `~/.config/jass/box.json`:
 
 ```json
 "board": {

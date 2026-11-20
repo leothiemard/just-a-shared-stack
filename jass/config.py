@@ -36,7 +36,7 @@ DEFAULTS = {
     "board": {
         "channel": "build", "projects": {}, "worker": "", "workers": 1, "base": "",
         "provider": "", "model": "", "options": [],
-        "lease_minutes": 10, "poll_seconds": 15, "settle_seconds": 45, "board_poll_seconds": 60, "answer_hours": 24,
+        "lease_minutes": 10, "poll_seconds": 15, "settle_seconds": 45, "board_poll_seconds": 60, "answer_hours": 24, "stall_minutes": 15,
     },
 }
 

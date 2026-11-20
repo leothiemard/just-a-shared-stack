@@ -59,8 +59,8 @@ BRIEF = """You are working board task {task} (channel `{channel}`), as an ordina
 
 - Do the task in this thread, inside this {where}. Commit on this branch when the task changes code; open a pull request only when the task asks for one.
 - The worker marks the task done once this thread is idle: no run going, no question waiting and no background command or delegate still working. So finish background work before your final answer, or end your turn and let its completion wake you.
-- When you need a decision from the owner, ask it with your question tool and wait. The task stays held while you wait.
-- Your final answer is posted to the board. Make its first line the result in one sentence, then add the detail. If you could not do the task, start that first line with `FAILED:` and say why.
+- When you need a decision from the owner, ask it with your multiple-choice question tool (never a secret or sign-in card) and wait. The task stays held while you wait.
+- Your final answer is posted to the board. Make its first line the result in one sentence, then add the detail. Start that first line with `FAILED:` only when the task's goal was not reached in the end; trouble you got past along the way is not a failure.
 - Do not post to the board yourself and do not run `vercel board` commands; the worker does that.
 """
 
@@ -264,10 +264,25 @@ class T3:
 # --- one task ------------------------------------------------------------------------------------
 
 
-def thread_state(thread: dict) -> str:
-    """`question`, `busy` or `idle`, from `t3 thread show --json`."""
+def epoch(text) -> float | None:
+    try:
+        return dt.datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def thread_state(thread: dict, now: float | None = None, stall_s: float = 0) -> str:
+    """`question`, `stalled`, `busy` or `idle`, from `t3 thread show --json`.
+
+    `stalled` is a run that has not changed the thread for `stall_s`: a card T3 does not count as a
+    question (a secret or sign-in request), an approval, or a hung tool. Background work and delegates
+    can be quiet for long, so only an active run with no pending background work counts."""
     if thread.get("pendingRequestCount"):
         return "question"
+    if thread.get("activeRunId") and not thread.get("pendingBackgroundTasks") and not thread.get("blockedOnThreadWait") and now and stall_s:
+        changed = epoch(thread.get("updatedAt"))
+        if changed and now - changed >= stall_s:
+            return "stalled"
     if thread.get("activeRunId") or thread.get("pendingBackgroundTasks") or thread.get("blockedOnThreadWait"):
         return "busy"
     return "idle"
@@ -367,6 +382,9 @@ class Job:
             if attach:
                 self.thread = self.labels[THREAD]
                 self.log(f"{self.id}: attaching to T3 thread {self.thread}")
+                if self.labels.get(WAITING):
+                    # An earlier worker's flag; the watch sets it again if the thread still waits.
+                    self.board.label(self.id, unset=(WAITING,))
             else:
                 self.thread = self.start(data)
                 self.log(f"{self.id}: started T3 thread {self.thread}")
@@ -387,8 +405,9 @@ class Job:
         settle_s = float(self.s.get("settle_seconds", 45))
         answer_s = float(self.s.get("answer_hours", 24)) * 3600
         board_every = float(self.s.get("board_poll_seconds", 60))
+        stall_s = float(self.s.get("stall_minutes", 15)) * 60
         renewed = last_board = self.clock.now()
-        idle_since, idle_run, asked_since, misses = None, None, None, 0
+        idle_since, idle_run, asked_since, asked_kind, misses = None, None, None, "", 0
         seen = self.labels.get(SEEN, "")
         while True:
             if self.stop.is_set():
@@ -417,21 +436,29 @@ class Job:
                 continue
             misses = 0
             thread = shown["thread"]
-            state = thread_state(thread)
-            if state == "question":
+            state = thread_state(thread, now, stall_s)
+            if state in ("question", "stalled"):
                 idle_since = None
-                if asked_since is None:
-                    asked_since = now
-                    self.board.label(self.id, {WAITING: "answer"})
-                    self.note(f"T3 thread `{self.thread}` is waiting for an answer from the owner. Answer it in T3 Code.\n{self.link}".strip())
-                    self.log(f"{self.id}: waiting for an answer in T3")
+                if asked_since is None or asked_kind != state:
+                    asked_since = asked_since or now
+                    asked_kind = state
+                    if state == "question":
+                        self.board.label(self.id, {WAITING: "answer"})
+                        self.note(f"T3 thread `{self.thread}` is waiting for an answer from the owner. Answer it in T3 Code.\n{self.link}".strip())
+                        self.log(f"{self.id}: waiting for an answer in T3")
+                    else:
+                        self.board.label(self.id, {WAITING: "check"})
+                        self.note(f"T3 thread `{self.thread}` has shown no progress for {stall_s / 60:g} minutes while its run is open. "
+                                  f"It may wait for something T3 does not report as a question (a secret, a sign-in, an approval). Check it in T3 Code.\n{self.link}".strip())
+                        self.log(f"{self.id}: no progress for {stall_s / 60:g} min; flagged for a check in T3")
                 elif now - asked_since >= answer_s:
-                    problem = self.board.settle("block", self.id, f"T3 thread {self.thread} waits for an answer", "--kind", "needs_input")
-                    self.log(f"{self.id}: blocked after waiting {answer_s / 3600:g} h for an answer")
+                    what = "waits for an answer" if state == "question" else "has made no progress"
+                    problem = self.board.settle("block", self.id, f"T3 thread {self.thread} {what}", "--kind", "needs_input")
+                    self.log(f"{self.id}: blocked after {answer_s / 3600:g} h: thread {what}")
                     return "blocked" if not problem else f"lost ({problem})"
             else:
                 if asked_since is not None:
-                    asked_since = None
+                    asked_since, asked_kind = None, ""
                     self.board.label(self.id, unset=(WAITING,))
                 if state == "busy":
                     idle_since = None
@@ -565,6 +592,18 @@ def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: thr
     return 0
 
 
+def preflight() -> None:
+    """Fail early, with the fix, when this box's CLIs cannot run the worker."""
+    for command, fix in ((["vercel", "board", "tasks", "claim", "--help"], "update the Vercel CLI: npm install --global vercel@latest (board tasks arrived in 66)"),
+                         (["t3", "thread", "show", "--help"], "install or update T3 Code: t3 update")):
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise BoardError(f"`{' '.join(command[:2])}` is not usable ({error}); {fix}")
+        if done.returncode != 0 or "unknown_command" in done.stdout or "Unknown command" in done.stderr:
+            raise BoardError(f"`{' '.join(command[:-1])}` is missing on this box; {fix}")
+
+
 def work(cfg: dict, args) -> int:
     s = settings(cfg)
     chans = channels(s, args.project)
@@ -579,6 +618,7 @@ def work(cfg: dict, args) -> int:
 
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, halt)
+    preflight()
     profiles = [s["worker"]] if count == 1 else [f"{s['worker']}-{n}" for n in range(1, count + 1)]
     for channel in chans:
         problem = Board(profiles[0]).ensure_channel(channel)
@@ -629,8 +669,10 @@ def status(cfg: dict, args) -> int:
         if not args.all and state in FINISHED:
             continue
         labels = message.get("labels") or {}
-        if labels.get(WAITING):
+        if labels.get(WAITING) == "answer":
             state += " (waiting for an answer in T3)"
+        elif labels.get(WAITING):
+            state += " (no progress: check its T3 thread)"
         detail = task.get("result") or task.get("reason") or (task.get("blocked") or {}).get("reason") or ""
         thread = f"{labels.get(THREAD)} on {labels.get(BOX)}" if labels.get(THREAD) else ""
         rows.append({"id": message.get("id"), "channel": message.get("channel"), "state": state, "task": first_line(message.get("text", ""), 70),

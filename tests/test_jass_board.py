@@ -1,6 +1,6 @@
+import datetime as dt
 import threading
 import unittest
-from pathlib import Path
 
 import jasshelp  # noqa: F401  (puts the stack on sys.path)
 
@@ -8,15 +8,24 @@ from jass import board
 
 CFG = {"box": "mac", "board": {"channel": "build", "projects": {"demo": "/tmp/demo"}, "worker": "", "base": "",
                                "lease_minutes": 3, "poll_seconds": 10, "settle_seconds": 30, "board_poll_seconds": 60,
-                               "answer_hours": 1, "max_misses": 3}}
+                               "answer_hours": 1, "stall_minutes": 15, "max_misses": 3}}
+
+
+BASE = 1_800_000_000.0
+
+
+def iso(seconds):
+    return dt.datetime.fromtimestamp(BASE + seconds, dt.timezone.utc).isoformat()
 
 
 class FakeClock:
+    """`t` counts seconds from the start of a test; `now` is a real epoch so `updatedAt` can be compared."""
+
     def __init__(self):
         self.t = 0.0
 
     def now(self):
-        return self.t
+        return BASE + self.t
 
     def sleep(self, seconds, stop=None):
         self.t += seconds
@@ -31,7 +40,7 @@ class FakeBoard:
         return {"message": dict(self.task), "replies": list(self.replies)}
 
     def settle(self, action, task_id, *args):
-        if self.lost_at is not None and self.clock.now() >= self.lost_at:
+        if self.lost_at is not None and self.clock.t >= self.lost_at:
             return "claim_lost"
         self.actions.append((action, *args))
         return ""
@@ -67,8 +76,10 @@ class FakeT3:
         if thread not in self.known:
             return None
         fields = {"threadId": thread, "status": "running", "activeRunId": None, "latestRunId": "r1", "pendingRequestCount": 0,
-                  "pendingBackgroundTasks": [], "blockedOnThreadWait": False, "link": "https://t3/x"}
-        fields.update(self.timeline(self.clock.now()))
+                  "pendingBackgroundTasks": [], "blockedOnThreadWait": False, "link": "https://t3/x", "updatedAt": iso(self.clock.t)}
+        fields.update(self.timeline(self.clock.t))
+        if "quiet_since" in fields:
+            fields["updatedAt"] = iso(fields.pop("quiet_since"))
         if not fields["activeRunId"] and not fields["pendingRequestCount"] and fields["status"] == "running":
             fields["status"] = self.status
         out = {"thread": fields}
@@ -186,6 +197,23 @@ class JobTests(unittest.TestCase):
         self.assertEqual(b.done()[0][0], "block")
         self.assertIn("needs_input", b.done()[0])
 
+    def test_silent_run_is_flagged_then_blocked(self):
+        # A secret card: the run stays open, nothing counts as a question, and the thread stops changing at 20 s.
+        j, b, _, _, _ = job(task(), lambda t: {"activeRunId": "r1", "quiet_since": min(t, 20)})
+        self.assertEqual(j.run(), "blocked")
+        self.assertIn(("label", {board.WAITING: "check"}, ()), [a for a in b.actions if a[0] == "label"])
+        self.assertTrue(any(a[0] == "reply" and "no progress" in a[1] for a in b.actions))
+        self.assertIn("made no progress", b.done()[0][1])
+
+    def test_quiet_background_work_is_not_a_stall(self):
+        def timeline(t):
+            if t < 2400:
+                return {"activeRunId": "r1", "pendingBackgroundTasks": [{"taskId": "bg"}], "quiet_since": 0}
+            return {}
+        j, b, _, _, _ = job(task(), timeline)
+        self.assertEqual(j.run(), "completed")
+        self.assertFalse(any(a[0] == "label" and board.WAITING in a[1] for a in b.actions))
+
     def test_lease_is_renewed_during_long_work(self):
         j, b, _, _, _ = job(task(), running_until(1000))
         j.run()
@@ -233,7 +261,7 @@ class JobTests(unittest.TestCase):
 
         def read(task_id):
             data = original(task_id)
-            if j.clock.now() > 100:
+            if j.clock.t > 100:
                 data["replies"].append(late)
             return data
 
@@ -248,7 +276,7 @@ class JobTests(unittest.TestCase):
         j, b, t3, clock, _ = job(task(), running_until(20))
         late = {"id": "msg_1_9", "text": "One more thing.", "by": {"profile": None}, "author": {"name": "leo"}}
         original = b.read
-        b.read = lambda task_id: dict(original(task_id), replies=[late] if clock.now() > 30 else [])
+        b.read = lambda task_id: dict(original(task_id), replies=[late] if clock.t > 30 else [])
         self.assertEqual(j.run(), "completed")
         self.assertEqual(len(t3.sent), 1)
 
