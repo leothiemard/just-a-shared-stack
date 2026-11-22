@@ -11,16 +11,16 @@
 -example Claude Opus, GPT Sol, and Gemini Pro.
 +For round 1, bring in three delegates to help with the user's request, usually for review
 +or feedback. Use this default panel at high reasoning effort:
- 
++
++- Claude Opus 5.5 (`claude-opus-5-5`, Claude provider)
 +- Gemini Neon (`gemini-4-neon`, Antigravity provider)
-+- Claude Opus
-+- Claude Fable (`claude-fable-5-2`)
++- GPT-6.1 Sol (`gpt-6.1-sol`, Codex provider)
 +
-+If the user's instructions name council members, use those instead. Opus and
-+Fable are separate Claude seats. Gemini Neon is the only Gemini model allowed:
-+never use another Gemini model, through Antigravity or another provider such
-+as `fx`, even to replace an unavailable member.
-+
++If the user's instructions name council members, use those instead. Gemini Neon
++is the only Gemini model allowed: never use another Gemini model, through
++Antigravity or another provider such as `fx`, even to replace an unavailable
++member.
+ 
  In T3 Code, use `orchestrator_capabilities` to resolve the models, then
  `delegate_task` to start one delegate per model in parallel. Elsewhere, use
 -the harness's subagent tools. If you cannot reach three providers, or a named
@@ -45,9 +45,9 @@
 -| Claude Opus | 7/10 | 9/10 |
 -| GPT Sol | 8/10 | 10/10 |
 -| Gemini Pro | 7/10 | 9/10 |
++| Claude Opus 5.5 | 7/10 | — |
 +| Gemini Neon | 8/10 | — |
-+| Claude Opus | 7/10 | — |
-+| Claude Fable | 8/10 | 9/10 |
++| GPT-6.1 Sol | 8/10 | 9/10 |
  ```
  
 -If a delegate gives no score, write `no score`. Do not invent one.
@@ -62,7 +62,7 @@
 +Fix findings you agree with. After round 1, use one follow-up reviewer on the
 +diff since the last review plus open findings, unless the user asks otherwise.
 +Through 2026-12-03 (trial), the follow-up reviewer is Gemini Neon; from
-+2026-12-04, it is Claude Fable. If it is unavailable, report it instead of
++2026-12-04, it is GPT-6.1 Sol. If it is unavailable, report it instead of
 +substituting.
 +Stop when no blocker/should remains, the requested score is reached, or after
 +3 rounds, whichever comes first. Also stop if there is no new blocker/should

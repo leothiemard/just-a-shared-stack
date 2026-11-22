@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "Council this design proposal before we write code. Do not implement anything.",
-      "expected_output": "Dispatch Gemini 4 Neon (Antigravity), Claude Opus and Claude Fable 5.2 at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
+      "expected_output": "Dispatch Claude Opus 5.5 (Claude), Gemini 4 Neon (Antigravity) and GPT-6.1 Sol (Codex) at high effort, unless the user named members. Review the proposal directly, keep work read-only and summarize useful findings and disagreements. No commit or exact-SHA gate is needed.",
       "files": []
     },
     {
       "id": 2,
       "prompt": "Council this code change. Gemini Neon cannot run. Can you use Gemini Argon instead?",
-      "expected_output": "Report Gemini Neon as unavailable instead of substituting. Neon is the only allowed Gemini model, through Antigravity or any other provider such as fx; the default panel is Neon / Opus / Fable.",
+      "expected_output": "Report Gemini Neon as unavailable instead of substituting. Neon is the only allowed Gemini model, through Antigravity or any other provider such as fx; the default panel is Opus 5.5 / Neon / 6.1 Sol.",
       "files": []
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "It is 2026-11-25. Council round 1 left two should findings, which you fixed. Who reviews round 2?",
-      "expected_output": "One Gemini Neon follow-up reviewer (trial through 2026-12-03) on the diff since the last review plus open findings. From 2026-12-04 the follow-up reviewer is Claude Fable. If Neon is unavailable, report it instead of substituting.",
+      "expected_output": "One Gemini Neon follow-up reviewer (trial through 2026-12-03) on the diff since the last review plus open findings. From 2026-12-04 the follow-up reviewer is GPT-6.1 Sol. If Neon is unavailable, report it instead of substituting.",
       "files": []
     }
   ]
