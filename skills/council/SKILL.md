@@ -15,7 +15,7 @@ or feedback. Use this default panel at high reasoning effort:
 
 - Claude Opus 5.5 (`claude-opus-5-5`, Claude provider)
 - Gemini Neon (`gemini-4-neon`, Antigravity provider)
-- GPT-6.1 Sol (`gpt-6.1-sol`, Codex provider)
+- GPT-6.2 Sol (`gpt-6.2-sol`, Codex provider)
 
 If the user's instructions name council members, use those instead. Gemini Neon
 is the only Gemini model allowed: never use another Gemini model, through
@@ -48,7 +48,7 @@ Rounds: 2
 | --- | --- | --- |
 | Claude Opus 5.5 | 7/10 | — |
 | Gemini Neon | 8/10 | — |
-| GPT-6.1 Sol | 8/10 | 9/10 |
+| GPT-6.2 Sol | 8/10 | 9/10 |
 ```
 
 If a delegate gives no score, write `no score`; if they skipped a round, `—`.
@@ -59,7 +59,7 @@ If there is no PR, put the same results in the final reply only.
 Fix findings you agree with. After round 1, use one follow-up reviewer on the
 diff since the last review plus open findings, unless the user asks otherwise.
 Through 2026-12-03 (trial), the follow-up reviewer is Gemini Neon; from
-2026-12-04, it is GPT-6.1 Sol. If it is unavailable, report it instead of
+2026-12-04, it is GPT-6.2 Sol. If it is unavailable, report it instead of
 substituting.
 Stop when no blocker/should remains, the requested score is reached, or after
 3 rounds, whichever comes first. Also stop if there is no new blocker/should
