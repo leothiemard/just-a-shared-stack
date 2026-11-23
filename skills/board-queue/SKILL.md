@@ -7,7 +7,12 @@ Tasks go to the board with `jass board add`; a worker on each box (`jass board w
 
 ## 1. Check the project key
 
-Run `jass board status` and read `board.projects` in `~/.config/jass/box.json`. The key there (such as `shop`) names the channel `build/<key>`. A project with no key has no worker on this box: tell the owner and stop, rather than queue work nothing will pick up.
+Run `jass board status` and read `~/.config/jass/box.json`. A key (such as `shop`) names the channel `build/<key>`, and two lists hold the keys that have workers:
+
+- `board.projects`: workers on boxes that run `jass board work`, this one among them;
+- `scale.channels`: cloud VMs that `jass board scale` wakes while their tasks wait (such as `shop-boat`). Use one of these keys when the owner asks for the VMs or the cloud, and the plain key for work that needs this box's data, devices or credentials.
+
+A project in neither list has no worker: tell the owner and stop, rather than queue work nothing will pick up.
 
 ## 2. Write each brief for a stranger
 
@@ -29,8 +34,8 @@ jass board add <key> --needs <id> "Review <id>'s branch: <what to check>. Change
 
 Add a review task with `--needs` for anything whose result others will rely on: a completed task is the thread's claim, not proof. Use `--model`, `--provider` and `--effort` only when the owner asks for a specific model.
 
-Done when `jass board status` lists every task, and you have told the owner the ids and that a worker must be running (`jass board work`) for them to start.
+Done when `jass board status` lists every task, and you have told the owner the ids and what starts them: a running worker (`jass board work`) for a `board.projects` key, the scaler's schedule for a `scale.channels` key.
 
 ## 4. Follow up
 
-`jass board status` shows each open task's state and its T3 thread; `jass board open` shows the owner the board in a browser (it runs until Ctrl-C, so suggest it rather than run it). `waiting for an answer in T3` means a thread asked the owner a question: point them at that thread. A failed task's reason is on the board (`vercel board read <id>`); `vercel board tasks reopen <id>` retries it in the same thread.
+`jass board status` shows each open task's state and its T3 thread with the box it runs on. A thread on another box is readable when that box is a linked environment (`t3_environment_links`): pass its `environmentId` to the T3 thread tools. `jass board open` shows the owner the board in a browser (it runs until Ctrl-C, so suggest it rather than run it). `waiting for an answer in T3` means a thread asked the owner a question: point them at that thread. A failed task's reason is on the board (`vercel board read <id>`); `vercel board tasks reopen <id>` retries it in the same thread.
