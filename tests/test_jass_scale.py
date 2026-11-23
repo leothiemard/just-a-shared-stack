@@ -114,10 +114,36 @@ class TickTests(unittest.TestCase):
         self.assertIn("cap", summary)
         self.assertEqual(boat.did("stop"), ["bx_1"])
         self.assertEqual(boat.did("resume"), [])
-        self.assertTrue(self.state.data["off"])
+        self.assertTrue(self.state.off().startswith("spend cap"))
         boat.calls.clear()
         self.assertTrue(self.tick(boat, FakeBoard(ready=4)).startswith("off"))
-        self.assertEqual(boat.calls, [])
+        self.assertEqual(boat.did("resume"), [])
+        self.assertEqual(boat.did("stop"), [])
+
+    def test_while_off_at_the_cap_it_keeps_stopping_whatever_is_not_stopped(self):
+        boat = FakeBoat({"bx_1": "error", "bx_2": "stopping"}, dollars={"bx_1": 9.0})
+        self.tick(boat, FakeBoard())
+        self.assertEqual(boat.did("stop"), ["bx_1", "bx_2"])
+        boat.vms["bx_2"] = "running"
+        boat.calls.clear()
+        self.tick(boat, FakeBoard())
+        self.assertEqual(boat.did("stop"), ["bx_2"])
+
+    def test_off_switch_wins_and_is_checked_before_each_resume(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"})
+        self.state.switch_off("jass board scale --off")
+        self.assertTrue(self.tick(boat, FakeBoard(ready=4)).startswith("off"))
+        self.assertEqual(boat.did("resume"), [])
+        self.state.switch_on()
+
+        class SwitchedMidway(FakeBoat):
+            def resume(inner, vm, ttl_s):
+                self.state.switch_off("jass board scale --off")
+                return FakeBoat.resume(inner, vm, ttl_s)
+
+        boat = SwitchedMidway({"bx_1": "stopped", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=4))
+        self.assertEqual(boat.did("resume"), ["bx_1"])
 
     def test_warning_is_logged_once(self):
         boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"}, dollars={"bx_1": 5.5})
@@ -139,6 +165,36 @@ class TickTests(unittest.TestCase):
         self.tick(boat, FakeBoard(ready=1))
         self.assertEqual(boat.did("worker"), ["bx_1"])
         self.assertEqual(self.state.starts_today("2027-01-15"), 2)
+
+    def test_a_running_vm_gets_its_worker_started_again_while_tasks_wait(self):
+        boat = FakeBoat({"bx_1": "running", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(boat.did("worker"), ["bx_1"])
+        boat.calls.clear()
+        self.tick(boat, FakeBoard())
+        self.assertEqual(boat.did("worker"), [])
+
+    def test_tasks_a_vm_stopped_without_claiming_wake_no_vm_until_new_ones_come(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(boat.did("resume"), ["bx_1"])
+        boat.vms["bx_1"] = "stopped"  # its worker found nothing it could claim and stopped the VM
+        boat.calls.clear()
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(boat.did("resume"), [])
+        self.assertTrue(any("offered" in line for line in self.logs))
+        self.tick(boat, FakeBoard(ready=2))
+        self.assertEqual(boat.did("resume"), ["bx_1"])
+
+    def test_a_failed_resume_does_not_count_the_tasks_as_offered(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"}, resume_fails={"bx_1", "bx_2"})
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(self.state.data["offered"], [])
+
+    def test_a_state_file_that_is_not_an_object_is_ignored(self):
+        path = Path(tempfile.mkdtemp()) / "state.json"
+        path.write_text("[]")
+        self.assertEqual(scale.State(path).data["starts"], {})
 
     def test_a_vm_running_without_demand_is_stopped_after_the_idle_limit(self):
         boat = FakeBoat({"bx_1": "running", "bx_2": "stopped"})
@@ -177,7 +233,8 @@ class StateTests(unittest.TestCase):
         again.count_start("2026-11-24")
         self.assertEqual(again.starts_today("2026-11-24"), 1)
         self.assertEqual(again.starts_today("2026-11-23"), 0)
-        self.assertEqual(json.loads(path.read_text())["off"], False)
+        again.save()
+        self.assertEqual(json.loads(path.read_text())["starts"], {"2026-11-24": 1})
 
 
 class BoatTests(unittest.TestCase):
@@ -211,11 +268,10 @@ class CommandTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JASS_HOME": home}):
             args = SimpleNamespace(off=True, on=False, status=False, as_profile="lead", verbose=False)
             self.assertEqual(scale.run(cfg(), args), 0)
-            state = scale.State(scale.scale_dir() / "state.json")
-            self.assertTrue(state.data["off"])
+            self.assertEqual(scale.State(scale.scale_dir() / "state.json").off(), "jass board scale --off")
             args.off, args.on = False, True
             scale.run(cfg(), args)
-            self.assertFalse(scale.State(scale.scale_dir() / "state.json").data["off"])
+            self.assertEqual(scale.State(scale.scale_dir() / "state.json").off(), "")
             # A tick that finds the lock held by another tick does nothing.
             from jass import paths
             with paths.Lock(scale.scale_dir() / "lock"):

@@ -46,7 +46,7 @@ DEFAULTS = {
     "scale": {
         "enabled": False, "pool": [], "channels": [], "per_vm": 2, "ttl_minutes": 120, "idle_stop_minutes": 15,
         "spend_warn_usd": 5, "spend_cap_usd": 8, "since": "", "max_starts_per_day": 30,
-        "start_command": "systemctl --user start jass-board-vm", "boat": "boat",
+        "start_command": "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} systemctl --user start jass-board-vm", "boat": "boat",
     },
 }
 

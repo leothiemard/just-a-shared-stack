@@ -172,7 +172,9 @@ Run `loginctl enable-linger $USER` once and `systemctl --user daemon-reload` aft
 }
 ```
 
-Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claimed tasks, then starts each one's worker (`start_command`, through a login shell). It pushes back the auto-stop (`ttl_minutes`) of a VM whose box holds a claimed task, stops a VM that has run `idle_stop_minutes` (15) with no task at all, and at `spend_cap_usd`, counted from `since`, stops the whole pool and switches itself off. It never creates or deletes a VM. `--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks.
+Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claimed tasks, and (re)starts the worker on every running pool VM while tasks wait (`start_command`, through a login shell; starting a running unit does nothing). It pushes back the auto-stop (`ttl_minutes`) of a VM whose box holds a claimed task, stops a VM that has run `idle_stop_minutes` (15) with no task at all, and at `spend_cap_usd`, counted from `since`, stops the whole pool and switches itself off, then keeps stopping any pool VM that is not stopped until you switch it back `--on`. Ready tasks that a VM was started for and left unclaimed (meant for another profile, or a worker that fails at start) wake no VM again; a new task does. It never creates or deletes a VM. Set `board.task_minutes` on the VMs, or a task waiting for your answer keeps its VM up for `answer_hours`.
+
+`--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the Mac sleeps no tick runs; the VMs still stop themselves.
 
 Run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
 
@@ -184,13 +186,15 @@ Run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/
   <key>Label</key><string>jass.board-scale</string>
   <key>ProgramArguments</key>
   <array><string>/bin/zsh</string><string>-lc</string><string>jass board scale</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/Users/you/.local/bin:/Users/you/.ascii/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>StartInterval</key><integer>120</integer>
   <key>StandardErrorPath</key><string>/tmp/jass-board-scale.err</string>
 </dict>
 </plist>
 ```
 
-The tick logs to `~/.cache/jass/scale/scale-<date>.log`. A tick that finds an earlier one still resuming a VM exits at once.
+Put the folders of `jass`, `boat` and `vercel` in that `PATH` (`command -v jass boat vercel`): a login `zsh` reads `.zprofile` but not `.zshrc`. The tick logs to `~/.cache/jass/scale/scale-<date>.log` and its errors to `/tmp/jass-board-scale.err`. A tick that finds an earlier one still resuming a VM exits at once.
 
 ## Add a skill
 

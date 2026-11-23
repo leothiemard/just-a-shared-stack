@@ -31,6 +31,7 @@ from jass.board import BOX, Board, BoardError, Logger
 
 ACTIVE = ("provisioned", "provisioning", "cloning", "starting", "resuming", "ready", "idle", "running")
 STOPPED = ("stopped",)
+UP = ("ready", "idle", "running")
 
 
 class ScaleError(JassError):
@@ -127,23 +128,41 @@ class Boat:
 
 
 class State:
-    """`~/.cache/jass/scale/state.json`: the off switch, starts per day, and when each VM was last seen without demand."""
+    """`~/.cache/jass/scale/state.json` (starts per day, idle clocks, the tasks each start was for) and the off switch,
+    a separate file `off` holding its reason, so `--off` works at once even while a tick holds the lock."""
 
     def __init__(self, path: Path):
-        self.path = path
+        self.path, self.off_path = path, path.parent / "off"
         try:
-            self.data = json.loads(path.read_text())
+            data = json.loads(path.read_text())
         except (OSError, ValueError):
-            self.data = {}
-        self.data.setdefault("off", False)
-        self.data.setdefault("off_reason", "")
-        self.data.setdefault("starts", {})
-        self.data.setdefault("idle_since", {})
-        self.data.setdefault("warned", False)
+            data = {}
+        self.data = data if isinstance(data, dict) else {}
+        for key, empty in (("starts", {}), ("idle_since", {}), ("offered", []), ("warned", False)):
+            if not isinstance(self.data.get(key), type(empty)):
+                self.data[key] = empty
 
     def save(self) -> None:
         paths.private_dir(self.path.parent)
         paths.write_atomic(self.path, json.dumps(self.data, indent=2) + "\n")
+
+    def off(self) -> str:
+        """Why scaling is off, or '' when it is on."""
+        try:
+            return self.off_path.read_text().strip() or "jass board scale --off"
+        except OSError:
+            return ""
+
+    def switch_off(self, reason: str) -> None:
+        paths.private_dir(self.off_path.parent)
+        paths.write_atomic(self.off_path, reason + "\n")
+
+    def switch_on(self) -> None:
+        try:
+            self.off_path.unlink()
+        except FileNotFoundError:
+            pass
+        self.data["warned"] = False
 
     def starts_today(self, today: str) -> int:
         return int(self.data["starts"].get(today, 0))
@@ -158,12 +177,14 @@ def scale_dir() -> Path:
 
 # --- one tick ------------------------------------------------------------------------------------
 
+CAP_PREFIX = "spend cap:"
 
-def demand(board: Board, chans: list[str]) -> tuple[int, int, set[str]]:
-    """Ready tasks, claimed tasks, and the boxes that hold the claimed ones."""
-    ready, claimed, boxes = 0, 0, set()
+
+def demand(board: Board, chans: list[str]) -> tuple[list[str], int, set[str]]:
+    """Ids of ready tasks, the number of claimed tasks, and the boxes that hold the claimed ones."""
+    ready, claimed, boxes = [], 0, set()
     for channel in chans:
-        ready += len(board.tasks(channel, "ready"))
+        ready += [str((item.get("message", item)).get("id", "")) for item in board.tasks(channel, "ready")]
         for item in board.tasks(channel, "claimed"):
             claimed += 1
             box = ((item.get("message", item)).get("labels") or {}).get(BOX)
@@ -172,37 +193,57 @@ def demand(board: Board, chans: list[str]) -> tuple[int, int, set[str]]:
     return ready, claimed, boxes
 
 
+def spend_of(boat: Boat, pool: list[dict], since: str) -> float:
+    return sum(boat.dollars(vm["id"], since) for vm in pool)
+
+
+def stop_all(boat: Boat, pool: list[dict], states: dict[str, str], log, why: str) -> None:
+    """Stop every pool VM that is not stopped, whatever its state (an `error` or `stopping` VM included)."""
+    for vm in pool:
+        if states.get(vm["id"]) not in STOPPED:
+            problem = boat.stop(vm["id"])
+            log(f"{why}: stopping {vm['id']} ({states.get(vm['id'], 'unknown')})" + (f" failed: {problem}" if problem else ""))
+
+
 def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> str:
     """One pass; returns a one-line summary of what it did."""
     s = settings(cfg)
     if not s.get("enabled"):
         return "scale.enabled is false"
-    if state.data["off"]:
-        return f"off ({state.data['off_reason'] or 'jass board scale --off'})"
     pool, chans = s["pool"], channels(cfg, s)
     if not pool or not chans:
         raise ScaleError("scale.pool and scale.channels must both be set: the VMs to wake and the project keys they work")
+    off = state.off()
+    if off.startswith(CAP_PREFIX):
+        # Keep stopping until the whole pool reads stopped: a stop can fail, and a VM can be mid-resume.
+        states = boat.states()
+        stop_all(boat, pool, states, log, "spend cap")
+        return f"off ({off})"
+    if off:
+        return f"off ({off})"
     ttl_s = int(float(s.get("ttl_minutes", 120)) * 60)
     cap, warn = float(s.get("spend_cap_usd", 8)), float(s.get("spend_warn_usd", 5))
+    since = s.get("since", "")
     today = dt.datetime.fromtimestamp(now).date().isoformat()
+    start_command = s.get("start_command") or "systemctl --user start jass-board-vm"
 
     states = boat.states()
     running = [vm for vm in pool if states.get(vm["id"]) in ACTIVE]
-    spend = sum(boat.dollars(vm["id"], s.get("since", "")) for vm in pool)
+    spend = spend_of(boat, pool, since)
     state.data["spend"] = round(spend, 4)
     if spend >= cap:
-        for vm in running:
-            problem = boat.stop(vm["id"])
-            log(f"spend cap: stopped {vm['id']}" + (f" (failed: {problem})" if problem else ""))
-        state.data["off"], state.data["off_reason"] = True, f"spend ${spend:.2f} reached the ${cap:g} cap"
-        log(f"spend ${spend:.2f} reached the ${cap:g} cap: stopped the pool and switched scaling off; `jass board scale --on` after raising the cap")
-        return f"spend cap reached (${spend:.2f}); off"
+        reason = f"{CAP_PREFIX} ${spend:.2f} reached ${cap:g}"
+        state.switch_off(reason)
+        stop_all(boat, pool, states, log, "spend cap")
+        log(f"{reason}: stopped the pool and switched scaling off; raise scale.spend_cap_usd, then `jass board scale --on`")
+        return f"off ({reason})"
     if spend >= warn and not state.data["warned"]:
         state.data["warned"] = True
         log(f"warning: pool spend ${spend:.2f} passed ${warn:g} (cap ${cap:g})")
 
     ready, claimed, busy_boxes = demand(board, chans)
-    wanted = min(len(pool), math.ceil((ready + claimed) / max(1, int(s.get("per_vm", 2)))))
+    tasks = len(ready) + claimed
+    wanted = min(len(pool), math.ceil(tasks / max(1, int(s.get("per_vm", 2)))))
     actions = []
 
     idle_s = float(s.get("idle_stop_minutes", 15)) * 60
@@ -211,11 +252,17 @@ def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> 
             problem = boat.extend(vm["id"], ttl_s)
             if problem:
                 log(f"extending {vm['id']} failed: {problem}")
-        if ready + claimed:
+        if tasks:
             state.data["idle_since"].pop(vm["id"], None)
+            if states.get(vm["id"]) in UP:
+                # Idempotent: a running worker is left alone, and a VM whose resume or worker start went wrong in an
+                # earlier tick gets its worker now instead of billing without one until its auto-stop.
+                problem = boat.start_worker(vm["id"], start_command)
+                if problem:
+                    log(f"starting the worker on {vm['id']} failed: {problem}")
             continue
-        since = state.data["idle_since"].setdefault(vm["id"], now)
-        if now - since >= idle_s:
+        idle_from = state.data["idle_since"].setdefault(vm["id"], now)
+        if now - idle_from >= idle_s:
             problem = boat.stop(vm["id"])
             log(f"stopped {vm['id']}: running with no task for {idle_s / 60:g} minutes" + (f" (failed: {problem})" if problem else ""))
             actions.append(f"stopped {vm['id']}")
@@ -224,22 +271,38 @@ def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> 
         if vm_id not in {vm["id"] for vm in running}:
             state.data["idle_since"].pop(vm_id)
 
+    # Ready tasks that a VM was already started for, and that are still ready with every VM stopped again, are tasks the
+    # VMs cannot take (meant for another profile, or a worker that fails at start). They wake no VM again; new tasks do.
+    offered = set(state.data["offered"]) & set(ready)
+    state.data["offered"] = sorted(offered)
     missing = wanted - len(running)
+    if missing > 0 and not running and not claimed and ready and set(ready) <= offered:
+        log(f"not starting a VM: the {len(ready)} ready tasks were offered to a VM that stopped without claiming them; check them on the board")
+        missing = 0
     for vm in [vm for vm in pool if states.get(vm["id"]) in STOPPED][:max(0, missing)]:
         if state.starts_today(today) >= int(s.get("max_starts_per_day", 30)):
             log(f"not starting {vm['id']}: {state.starts_today(today)} starts today reached scale.max_starts_per_day")
             break
+        # A resume can take many minutes, so check the switch and the spend again right before each one.
+        if state.off():
+            log(f"not starting {vm['id']}: scaling was switched off")
+            break
+        spend = spend_of(boat, pool, since)
+        if spend >= cap:
+            log(f"not starting {vm['id']}: spend ${spend:.2f} reached the cap; the next tick stops the pool")
+            break
         state.count_start(today)
         state.save()
-        log(f"starting {vm['id']} for {ready} ready and {claimed} claimed tasks")
+        log(f"starting {vm['id']} for {len(ready)} ready and {claimed} claimed tasks")
         problem = boat.resume(vm["id"], ttl_s)
         if problem:
             log(f"resuming {vm['id']} failed: {problem}; the next tick tries again")
             continue
-        problem = boat.start_worker(vm["id"], s.get("start_command") or "systemctl --user start jass-board-vm")
-        log(f"started the worker on {vm['id']}" if not problem else f"starting the worker on {vm['id']} failed: {problem}")
+        state.data["offered"] = sorted(set(state.data["offered"]) | set(ready))
+        problem = boat.start_worker(vm["id"], start_command)
+        log(f"started the worker on {vm['id']}" if not problem else f"starting the worker on {vm['id']} failed: {problem}; the next tick tries again")
         actions.append(f"started {vm['id']}")
-    return (f"{ready} ready, {claimed} claimed, {len(running)} of {len(pool)} running, spend ${spend:.2f}"
+    return (f"{len(ready)} ready, {claimed} claimed, {len(running)} of {len(pool)} running, spend ${spend:.2f}"
             + (f"; {', '.join(actions)}" if actions else ""))
 
 
@@ -249,20 +312,21 @@ def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> 
 def run(cfg: dict, args) -> int:
     s = settings(cfg)
     folder = paths.private_dir(scale_dir())
-    state = State(folder / "state.json")
     log = Logger(folder / f"scale-{dt.date.today().isoformat()}.log")
     if args.off or args.on:
-        with paths.Lock(folder / "lock", wait=True):
-            state = State(folder / "state.json")
-            state.data["off"] = bool(args.off)
-            state.data["off_reason"] = "jass board scale --off" if args.off else ""
-            if args.on:
-                state.data["warned"] = False
-            state.save()
+        # No lock: the switch is its own file, and a running tick reads it again before each resume.
+        state = State(folder / "state.json")
+        if args.off:
+            state.switch_off("jass board scale --off")
+        else:
+            with paths.Lock(folder / "lock", wait=True):
+                state = State(folder / "state.json")
+                state.switch_on()
+                state.save()
         log("scaling switched " + ("off" if args.off else "on"))
         return 0
     if args.status:
-        return status(cfg, s, state, folder)
+        return status(cfg, s, State(folder / "state.json"), folder)
     with paths.Lock(folder / "lock") as held:
         if not held:
             return 0  # an earlier tick is still resuming a VM
@@ -280,7 +344,7 @@ def run(cfg: dict, args) -> int:
 
 
 def status(cfg: dict, s: dict, state: State, folder: Path) -> int:
-    print(f"enabled: {bool(s.get('enabled'))}" + (f"; off: {state.data['off_reason']}" if state.data["off"] else ""))
+    print(f"enabled: {bool(s.get('enabled'))}" + (f"; off: {state.off()}" if state.off() else ""))
     print(f"spend since {s.get('since') or 'each VM was created'}: ${state.data.get('spend', 0):.2f} "
           f"(warn ${float(s.get('spend_warn_usd', 5)):g}, cap ${float(s.get('spend_cap_usd', 8)):g})")
     today = dt.date.today().isoformat()
