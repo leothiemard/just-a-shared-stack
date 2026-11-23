@@ -45,6 +45,8 @@ from jass import JassError, paths
 
 THREAD, BOX, SEEN, WAITING = "t3.thread", "t3.box", "t3.seen", "t3.waiting"
 FINISHED = ("completed", "failed", "canceled")
+# The model option that sets reasoning effort, per T3 provider instance; others use `effort`.
+EFFORT_OPTION = {"codex": "reasoningEffort", "antigravity": "thought_level"}
 WORKER_PREFIX = "worker-"
 REPLY_MAX = 9000
 RESULT_MAX = 240
@@ -354,11 +356,18 @@ class Job:
         return key, paths.expand(path)
 
     def options(self) -> dict:
-        provider = self.labels.get("provider") or self.s.get("provider") or ""
-        model = self.labels.get("model") or self.s.get("model") or ""
-        options = list(self.s.get("options") or [])
+        """The thread's provider, model and model options. A task on another provider than the box's takes none of the
+        box's model or options, since option ids differ between providers; `effort` uses that provider's option id."""
+        box_provider = self.s.get("provider") or ""
+        provider = self.labels.get("provider") or box_provider
+        same = provider == box_provider
+        model = self.labels.get("model") or (self.s.get("model") if same else "") or ""
+        if provider and not model:
+            raise BoardError(f"task sets provider {provider!r} but no model: add --model")
+        options = list(self.s.get("options") or []) if same else []
         if self.labels.get("effort"):
-            options = [o for o in options if not o.startswith("effort=")] + [f"effort={self.labels['effort']}"]
+            key = EFFORT_OPTION.get(provider, "effort")
+            options = [o for o in options if not o.startswith(key + "=")] + [f"{key}={self.labels['effort']}"]
         return {"provider": provider, "model": model, "options": options}
 
     def human_replies(self, data: dict) -> list[dict]:

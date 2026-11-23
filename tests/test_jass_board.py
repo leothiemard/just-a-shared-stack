@@ -309,6 +309,29 @@ class JobTests(unittest.TestCase):
         j.run()
         self.assertEqual(t3.started[0]["options"], {"provider": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort=high"]})
 
+    def boxed(self, labels):
+        cfg = {**CFG, "board": {**CFG["board"], "provider": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort=medium", "fastMode=false"]}}
+        j, b, t3, _, _ = job(task(labels), running_until(20))
+        j.cfg, j.s = cfg, cfg["board"]
+        return j, b, t3
+
+    def test_task_on_the_box_provider_keeps_box_options(self):
+        j, _, t3 = self.boxed({"model": "claude-sonnet-5-5", "effort": "high"})
+        j.run()
+        self.assertEqual(t3.started[0]["options"], {"provider": "claudeAgent", "model": "claude-sonnet-5-5", "options": ["fastMode=false", "effort=high"]})
+
+    def test_task_on_another_provider_drops_box_model_and_options_and_maps_effort(self):
+        for provider, model, effort in (("codex", "gpt-6.2-sol", "reasoningEffort=high"), ("antigravity", "gemini-4-neon", "thought_level=high")):
+            j, _, t3 = self.boxed({"provider": provider, "model": model, "effort": "high"})
+            j.run()
+            self.assertEqual(t3.started[0]["options"], {"provider": provider, "model": model, "options": [effort]})
+
+    def test_task_on_another_provider_without_a_model_fails(self):
+        j, b, t3 = self.boxed({"provider": "codex"})
+        self.assertEqual(j.run(), "failed")
+        self.assertIn("no model", b.done()[0][1])
+        self.assertEqual(t3.started, [])
+
     def test_unknown_project_fails_the_task(self):
         t = dict(task(), channel="build/other")
         j, b, _, _, _ = job(t, running_until(20))

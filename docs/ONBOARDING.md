@@ -100,7 +100,7 @@ Once per box: install the Vercel CLI (version 66 or later, which has `vercel boa
 }
 ```
 
-A project key names the channel `build/<key>` and must be the same on every box; the folder may differ. Leave `provider` and `model` empty to use the T3 project's default. Each project must already be a project in T3 Code on that box.
+A project key names the channel `build/<key>` and must be the same on every box; the folder may differ. Leave `provider` and `model` empty to use the T3 project's default. A task can pick another provider with `--provider` and `--model` (for example `codex` with `gpt-6.2-sol`, or `antigravity` with `gemini-4-neon`); it then takes none of the box's `model` or `options`, and `--effort` uses that provider's option (`reasoningEffort` for Codex, `thought_level` for Antigravity). The provider must be signed in on every box that serves the channel. Each project must already be a project in T3 Code on that box.
 
 Queue a task, from your terminal or by asking an agent:
 

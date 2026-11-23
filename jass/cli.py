@@ -323,7 +323,7 @@ def parser() -> argparse.ArgumentParser:
     a.add_argument("--base", help="ref the worktree starts from, or none (default: board.base)")
     a.add_argument("--model", help="model slug for the thread (needs --provider)")
     a.add_argument("--provider", help="provider instance id for the thread")
-    a.add_argument("--effort", help="reasoning effort option for the thread")
+    a.add_argument("--effort", help="reasoning effort for the thread, as the provider names its option")
     a.add_argument("--needs", action="append", metavar="ID", help="a task that must complete first; repeatable")
     a.add_argument("--label", action="append", metavar="K=V", help="extra label; repeatable")
     a.add_argument("--for", dest="for_profile", metavar="PROFILE", help="only this worker profile may claim it")
