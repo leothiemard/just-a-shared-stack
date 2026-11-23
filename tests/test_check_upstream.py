@@ -136,7 +136,7 @@ class UpstreamTests(unittest.TestCase):
         self.assertEqual(set(sources), {"mattpocock"})
         self.assertIn("pstack", omitted)
         with self.assertRaises(ValueError):
-            checker.load_sources(ROOT, ["sanity-agent-toolkit"])
+            checker.load_sources(ROOT, ["tailwind-agent-skills"])
 
 
 if __name__ == "__main__":

@@ -24,6 +24,12 @@
       "prompt": "It is 2026-11-25. Council round 1 left two should findings, which you fixed. Who reviews round 2?",
       "expected_output": "One Gemini Neon follow-up reviewer (trial through 2026-12-03) on the diff since the last review plus open findings. From 2026-12-04 the follow-up reviewer is GPT-6.2 Sol. If Neon is unavailable, report it instead of substituting.",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Council round 1 has two delegates still running on the shared checkout, and one delegate already returned findings. The user also marked one delegate non-blocking. What should you do?",
+      "expected_output": "Check the arriving findings against the code immediately and decide what to fix without waiting idle, but do not edit files while another delegate is still reviewing the same checkout. Do not wait for the non-blocking delegate; if it returns late, treat it as feedback and do not record its score.",
+      "files": []
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: sanity-best-practices
-description: Sanity development best practices for schema design, GROQ queries, TypeGen, Visual Editing, images, Portable Text, Studio structure, localization, migrations, Sanity Functions, Blueprints, and framework integrations such as Next.js, Nuxt, Astro, Remix, SvelteKit, Angular, Hydrogen, and the App SDK. Use this skill whenever working with Sanity schemas, defineType or defineField, GROQ or defineQuery, content modeling, Presentation or preview setups, Sanity-powered frontend integrations, Sanity Functions, documentEventHandler, defineDocumentFunction, defineMediaLibraryAssetFunction, @sanity/functions, @sanity/blueprints, sanity.blueprint.ts, event-driven content automation, or when reviewing and fixing a Sanity codebase.
+description: Sanity development best practices for schema design, GROQ queries, TypeGen, Visual Editing, images, Portable Text, Studio structure, localization, migrations, Sanity Functions, webhooks, Blueprints, and framework integrations such as Next.js, Nuxt, Astro, Remix, SvelteKit, Angular, Hydrogen, the App SDK, and Studios or apps running in the Sanity Dashboard (defineApplication). Use this skill whenever working with Sanity schemas, defineType or defineField, GROQ or defineQuery, content modeling, Presentation or preview setups, Sanity-powered frontend integrations, event-driven content automation, documentEventHandler, defineDocumentFunction, defineMediaLibraryAssetFunction, @sanity/functions, @sanity/blueprints, sanity.blueprint.ts, event-driven content automation, building links that open a document or field in Sanity Studio, or when reviewing and fixing a Sanity codebase.
 ---
 
 # Sanity Best Practices
@@ -21,25 +21,47 @@ Reference these guidelines when:
 - Implementing localization
 - Migrating content from other systems
 - Building custom apps with the Sanity App SDK
+- Developing or deploying a Studio or app in the Sanity Dashboard
 - Managing infrastructure with Blueprints
-- Automating content workflows with Sanity Functions
+- Automating content workflows with Sanity Functions or webhooks
+
+## Global Rules
+
+- Let Sanity generate `_id` values for ordinary documents. Do not create deterministic UUIDs, slug-derived IDs, or legacy-system IDs when creating documents.
+- Model relationships with `reference` fields, then resolve related documents with GROQ lookups, source-key fields, or returned `_id` values from created documents.
+- Use explicit document IDs mainly for singleton documents controlled by Studio Structure, including localized singletons such as `homePage-en`.
+
+## Video
+
+- Do not store or serve video from Sanity `file` assets for production playback. File assets are delivered as raw downloads with no transcoding or adaptive streaming, and video traffic drives very high bandwidth usage and unexpectedly large bills.
+- On Enterprise plans with the video add-on, use Sanity Media Library for video: uploads are transcoded and streamed adaptively via Mux. Model video fields with `defineVideoField()` from `sanity/media-library` and play them with `@mux/mux-player-react` using the asset's playback ID.
+- On other plans, use a dedicated video service: install `sanity-plugin-mux-input` to upload and manage videos in your Mux account from the Studio, or host video on a platform such as YouTube or Vimeo and store only the embed URL in Sanity.
+- Small clips and short previews in a `file` field are acceptable, but any user-facing video at scale must go through Media Library or a streaming service.
+
+## Studio Edit Links
+
+- Before building a URL that opens a document or a field in Studio (an "Edit in Studio" button, a link in a message or report), read https://www.sanity.io/docs/visual-editing/studio-edit-intent-links.md. Use the intent form, `{studioUrl}/intent/edit/id={id};type={type};path={path}`: it opens the document wherever it sits in the Structure tree, and `path` focuses one field.
+- Encode the `path` value with `encodeURIComponent`. Studio splits each parameter on `=`, so an unencoded `body[_key=="abc"]` is cut short at `body[_key` and the link focuses the wrong field.
+- Select array items by `_key`, not by index, in links that are stored or sent. Path syntax: https://www.sanity.io/docs/studio/how-form-paths-work.md
+- With only a Content Source Map and no document ID, use `resolveEditUrl` from `@sanity/client/csm` instead of building the URL by hand.
 
 ## Quick Reference
 
 ### Integration Guides
 
 - `get-started` - Interactive onboarding for new Sanity projects
-- `nextjs` - Next.js App Router, Live Content API, embedded Studio
+- `nextjs` - Next.js App Router, Live Content API, standalone Studio
 - `nuxt` - Nuxt integration with @nuxtjs/sanity
-- `angular` - Angular integration with @sanity/client, signals, resource API
+- `angular` - Angular integration with @sanity/client, signals, resource API, Visual Editing
 - `astro` - Astro integration with @sanity/astro
 - `remix` - React Router / Remix integration
 - `svelte` - SvelteKit integration with @sanity/svelte-loader
 - `hydrogen` - Shopify Hydrogen with Sanity
-- `project-structure` - Monorepo and embedded Studio patterns
+- `project-structure` - Standalone Studio and monorepo patterns
 - `app-sdk` - Custom applications with Sanity App SDK
-- `blueprints` - Infrastructure as Code with Sanity Blueprints
-- `functions` - Automating content workflows with Sanity Functions
+- `dashboard` - Studios and apps in the Sanity Dashboard: defineApplication, local dev, deploys, Dashboard hooks
+- `blueprints` - Infrastructure as Code: blueprint files, stacks, plan/deploy workflow, error recovery, CI deploys
+- `functions` - Automating content workflows with Sanity Functions and webhooks
 
 ### Topic Guides
 

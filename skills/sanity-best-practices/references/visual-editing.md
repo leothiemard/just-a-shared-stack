@@ -75,6 +75,7 @@ export default defineConfig({
     presentationTool({
       resolve, // Document locations (see below)
       previewUrl: {
+        initial: process.env.SANITY_STUDIO_PREVIEW_URL || 'http://localhost:3000',
         previewMode: {
           enable: '/api/draft-mode/enable',
         },
@@ -83,6 +84,8 @@ export default defineConfig({
   ],
 })
 ```
+
+A relative `initial` (e.g. `'/en'`) resolves against the Studio's origin, so use an absolute URL when the front-end is a separate app. Don't use the deprecated `previewUrl.origin`: it is ignored whenever `initial` is a string.
 
 ### Document Locations
 
@@ -185,7 +188,7 @@ import { stegaClean } from "@sanity/client/stega";
 
 export async function generateMetadata({ params }) {
   const { data } = await sanityFetch({ query: PAGE_QUERY })
-  return {
+  return { 
     title: stegaClean(data.title),
     description: stegaClean(data.description),
     openGraph: { url: stegaClean(data.canonicalUrl) }
@@ -261,3 +264,5 @@ This pattern works for both Page Builder blocks (`pageBuilder[]`) and Portable T
 | **Svelte** | `@sanity/svelte-loader` | `createRequestHandler`, `useLiveMode`, `enableVisualEditing` |
 | **Nuxt** | `@nuxtjs/sanity` | Automatic via module config (`visualEditing: {}`) |
 | **Astro** | `@sanity/astro` | `sanity({ useCdn: false, stega: true })` |
+
+Frameworks without a first-party loader (Angular, Vue, vanilla JavaScript and other non-React environments) use `@sanity/visual-editing-standalone`, which exports `enableVisualEditing` and `createDataAttribute` and needs no React dependencies. For Angular, see `angular.md` (Section 9).

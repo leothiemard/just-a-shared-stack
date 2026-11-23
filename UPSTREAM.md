@@ -9,8 +9,9 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 | [Theo's tstack](https://github.com/t3dotgg/tstack) | `92e38e2cf677a84a142e8df296861c588542135c` | council, sol-loop, full-stop, full-send, file-pr, babysit-pr, leaving-pr-comments |
 | [Matt Pocock's skills](https://github.com/mattpocock/skills) | `59db609eb1e18aaf59b63284d0e52255aff0c63c` | diagnosing-bugs, grilling, handoff, retro, writing-for-agents |
 | [Lauren's pstack](https://github.com/cursor/plugins/tree/main/pstack) | `519d36aa98955bf680db01bcde5fdfba686dc901` | blast-radius, create-verification-skill |
+| [Sanity agent-toolkit](https://github.com/sanity-io/agent-toolkit) | `828641ff3bae87327ec73844d9c72f38e591842e` | content-modeling-best-practices, portable-text-conversion, portable-text-serialization, sanity-best-practices, seo-aeo-best-practices |
 
-`sources.json` maps each complete upstream folder to its local folder. Original audit identifiers remain historical provenance; reviewed commits advance only for the adopted folders. The six Sanity/Tailwind packages were outside this restoration and retain their existing provenance.
+`sources.json` maps each complete upstream folder to its local folder. Original audit identifiers and folder hashes remain historical provenance; reviewed commits advance only for the adopted folders. The Tailwind package was outside this restoration and retains its existing folder-hash provenance.
 
 ## Restoration decisions
 
@@ -22,7 +23,9 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 
 ## Complete local patches
 
-Council additionally adopts `1085050f3baed1ac724caa4a8166145fb2ac88af` (2026-10-28): resolve known issues and run checks before requesting an audit. The other six Theo folders retain the table pin.
+Council additionally adopts `1085050f3baed1ac724caa4a8166145fb2ac88af` (2026-10-28: resolve known issues and run checks before requesting an audit) and `11e37a74d0a6868c121cd0910ab2b3bd9873b92a` (2026-11-23: evaluate delegate findings as they arrive without editing during active reviews, and treat non-blocking delegates as feedback without recording a score). The other six Theo folders retain the table pin.
+
+On 2026-11-23, `grilling` additionally adopted `abeeaf95660ba9e8b7c753eb38f441ca707a8823` (dispatch fact-finding sub-agents with a fresh context window), `blast-radius` adopted `7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9` (drop two `why` cross-references in Steps 1 and 4), and Sanity's `sanity-best-practices` and `portable-text-conversion` were refreshed to `828641ff3bae87327ec73844d9c72f38e591842e` with Git update tracking enabled for all five Sanity skills.
 
 On 2026-11-06, the user approved bounded reviews and lean-thread handoffs to
 reduce review and cache-rebuild costs. Upstream pins are unchanged.
@@ -40,4 +43,4 @@ These patches contain every local difference, including added files. Apply them 
 
 ## Future updates
 
-Run `python3 scripts/check_upstream.py` (or `--source <name>` for one source) to inspect source changes. It fetches the mapped public scopes into temporary bare repositories, never runs upstream code or edits skills, and writes `report.md` and `report.json` under the ignored `.local/upstream/`. It exits 1 only when a fetch fails. Sanity and Tailwind folders have folder hashes, not Git commits, so they are not checked. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.
+Run `python3 scripts/check_upstream.py` (or `--source <name>` for one source) to inspect source changes. It fetches the mapped public scopes into temporary bare repositories, never runs upstream code or edits skills, and writes `report.md` and `report.json` under the ignored `.local/upstream/`. It exits 1 only when a fetch fails. The Tailwind folder has a folder hash, not a Git commit, so it is not checked. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.

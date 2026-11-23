@@ -14,6 +14,7 @@ Use this contents list to jump to the schema design decision you are making.
 - Shared fields pattern
 - Field patterns
 - References vs nested objects
+- Document creation and IDs
 - Safe schema updates
 - Validation patterns
 
@@ -32,14 +33,14 @@ Always use the helper functions from `sanity` for type safety and autocompletion
 - **ALWAYS** use `defineType` for the root export.
 - **ALWAYS** use `defineField` for fields.
 - **ALWAYS** use `defineArrayMember` for items inside arrays.
+- **OMIT** `title` when it only repeats the `name`. It is optional and defaults to the title-cased `name` (`mainImage` → "Main Image"), so never write `name: 'author', title: 'Author'`. Set it only when it adds something: acronyms (`'SEO'`), clarification (`'Alternative Text'` for `alt`), or notes like `'(Deprecated)'`.
 
 ```typescript
 import { defineType, defineField, defineArrayMember } from 'sanity'
-import { TagIcon } from '@sanity/icons'
+import { TagIcon } from '@sanity/icons/Tag'
 
 export const article = defineType({
   name: 'article',
-  title: 'Article',
   type: 'document',
   icon: TagIcon,
   fields: [
@@ -113,17 +114,26 @@ Every item in a Sanity array automatically gets a `_key` property. This is **cri
 ### B. Icons
 Always assign an icon from `@sanity/icons` to documents and objects. This improves the Studio UX significantly. Browse all icons at [icons.sanity.build](https://icons.sanity.build/all).
 
-| Content Type | Icon |
-|--------------|------|
-| Article, Post | `DocumentTextIcon` |
-| Author, Person | `UserIcon` |
-| Category, Tag | `TagIcon` |
-| Settings | `CogIcon` |
-| Page | `DocumentIcon` |
-| Image block | `ImageIcon` |
-| Video block | `PlayIcon` |
-| FAQ | `HelpCircleIcon` |
-| Link | `LinkIcon` |
+```typescript
+// ✅ Correct — import each icon from its own subpath
+import { DocumentTextIcon } from '@sanity/icons/DocumentText'
+
+// ❌ Wrong — root named exports were removed in v5.
+// Type-checks clean, then fails at bundle time.
+import { DocumentTextIcon } from '@sanity/icons'
+```
+
+| Content Type | Icon | Import |
+|--------------|------|--------|
+| Article, Post | `DocumentTextIcon` | `@sanity/icons/DocumentText` |
+| Author, Person | `UserIcon` | `@sanity/icons/User` |
+| Category, Tag | `TagIcon` | `@sanity/icons/Tag` |
+| Settings | `CogIcon` | `@sanity/icons/Cog` |
+| Page | `DocumentIcon` | `@sanity/icons/Document` |
+| Image block | `ImageIcon` | `@sanity/icons/Image` |
+| Video block | `PlayIcon` | `@sanity/icons/Play` |
+| FAQ | `HelpCircleIcon` | `@sanity/icons/HelpCircle` |
+| Link | `LinkIcon` | `@sanity/icons/Link` |
 
 ### C. Boolean vs. List
 Avoid boolean fields for binary states that might expand later.
@@ -221,7 +231,46 @@ defineField({
 *[_type == "post"]{ seo { title, description } }
 ```
 
-## 6. Safe Schema Updates (The Deprecation Pattern)
+## 6. Document Creation and IDs
+
+Sanity document `_id` values are implementation identifiers, not a content modeling tool.
+
+- **Prefer generated IDs:** Let Sanity assign `_id` values for ordinary content documents. Avoid deterministic UUIDs, slug-derived IDs, and IDs copied from legacy systems.
+- **Use relationships, not ID conventions:** Connect documents with `reference` fields and set `_ref` from an actual lookup or from the `_id` returned after creating the related document.
+- **Store source identity as content:** For imports, put legacy IDs, external IDs, or stable slugs in explicit fields such as `legacyId`, `externalId`, or `slug`, then query by those fields when you need to find or upsert content.
+- **Keep explicit IDs rare:** Directly setting `_id` is mainly useful for singleton documents managed through Studio Structure, such as `settings` or localized singletons like `homePage-en`.
+
+```typescript
+// ✅ Correct - relationship comes from a lookup
+import {defineQuery} from 'groq'
+
+const AUTHOR_BY_EXTERNAL_ID_QUERY = defineQuery(`
+  *[_type == "author" && externalId == $externalId][0]{_id}
+`)
+
+const author = await client.fetch(AUTHOR_BY_EXTERNAL_ID_QUERY, {
+  externalId: post.authorId,
+})
+
+if (!author?._id) throw new Error(`Missing author for ${post.authorId}`)
+
+await client.create({
+  _type: 'post',
+  title: post.title,
+  slug: {_type: 'slug', current: post.slug},
+  legacyId: post.id,
+  author: {_type: 'reference', _ref: author._id},
+})
+
+// ❌ Wrong - IDs encode relationships and source data
+await client.createOrReplace({
+  _id: `post-${post.id}`,
+  _type: 'post',
+  author: {_type: 'reference', _ref: `author-${post.authorId}`},
+})
+```
+
+## 7. Safe Schema Updates (The Deprecation Pattern)
 
 **NEVER** delete a field that contains production data. It will cause data loss or Studio crashes. Instead, follow the **ReadOnly -> Hidden -> Deprecated** lifecycle.
 
@@ -273,15 +322,15 @@ export default defineMigration({
 
 ```bash
 # Dry run first (default)
-sanity migration run rename-oldTitle-to-newTitle
+sanity migrations run rename-oldTitle-to-newTitle
 
 # Execute when ready
-sanity migration run rename-oldTitle-to-newTitle --no-dry-run
+sanity migrations run rename-oldTitle-to-newTitle --no-dry-run
 ```
 
 **Phase 3: Remove** — Once `oldTitle` is undefined for all documents, delete the field definition.
 
-## 7. Validation Patterns
+## 8. Validation Patterns
 
 Beyond `rule.required()`, Sanity offers powerful validation options.
 
