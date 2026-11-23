@@ -193,7 +193,7 @@ Create a redirect document type for content team management.
 ```typescript
 // schemaTypes/redirectType.ts
 import { defineField, defineType, SanityDocumentLike } from "sanity";
-import { LinkIcon } from "@sanity/icons";
+import { LinkIcon } from "@sanity/icons/Link";
 
 function isValidPath(value: string | undefined) {
   if (!value) return "Required";
@@ -204,7 +204,6 @@ function isValidPath(value: string | undefined) {
 
 export const redirectType = defineType({
   name: "redirect",
-  title: "Redirect",
   type: "document",
   icon: LinkIcon,
   validation: (Rule) =>

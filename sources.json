@@ -16,7 +16,7 @@
         {
           "id": "blast-radius",
           "path": "pstack/skills/blast-radius",
-          "reviewed_commit": "519d36aa98955bf680db01bcde5fdfba686dc901",
+          "reviewed_commit": "7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9",
           "local_paths": [
             "skills/blast-radius"
           ],
@@ -66,7 +66,7 @@
         {
           "id": "grilling",
           "path": "skills/productivity/grilling",
-          "reviewed_commit": "59db609eb1e18aaf59b63284d0e52255aff0c63c",
+          "reviewed_commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
           "local_paths": [
             "skills/grilling"
           ]
@@ -121,7 +121,7 @@
         {
           "id": "council",
           "path": "skills/council",
-          "reviewed_commit": "1085050f3baed1ac724caa4a8166145fb2ac88af",
+          "reviewed_commit": "11e37a74d0a6868c121cd0910ab2b3bd9873b92a",
           "local_paths": [
             "skills/council"
           ],
@@ -183,6 +183,8 @@
   "sanity-agent-toolkit": {
     "repository": "https://github.com/sanity-io/agent-toolkit",
     "installed_on": "2026-05-18",
+    "updated_on": "2026-11-23",
+    "adopted_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
     "folder_hashes": {
       "content-modeling-best-practices": "a9cdf383668a8c38871f75e8ef34ece0bb0d2d7e",
       "portable-text-conversion": "ac7a669a4eaef5ec46798f607cd6b5412b5aac5c",
@@ -190,7 +192,53 @@
       "sanity-best-practices": "931f808becfac767f2f37ca901ea1028dea34fb7",
       "seo-aeo-best-practices": "b78a397999f979d85eeea8deb32656733672e9b3"
     },
-    "note": "Folder hashes from the original skill lock, not Git commit IDs. These installed copies were preserved; not refreshed to upstream HEAD. Inherited trailing whitespace was normalized during packaging.",
+    "update_tracking": {
+      "git_url": "https://github.com/sanity-io/agent-toolkit.git",
+      "ref": "HEAD",
+      "items": [
+        {
+          "id": "content-modeling-best-practices",
+          "path": "skills/content-modeling-best-practices",
+          "reviewed_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
+          "local_paths": [
+            "skills/content-modeling-best-practices"
+          ]
+        },
+        {
+          "id": "portable-text-conversion",
+          "path": "skills/portable-text-conversion",
+          "reviewed_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
+          "local_paths": [
+            "skills/portable-text-conversion"
+          ]
+        },
+        {
+          "id": "portable-text-serialization",
+          "path": "skills/portable-text-serialization",
+          "reviewed_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
+          "local_paths": [
+            "skills/portable-text-serialization"
+          ]
+        },
+        {
+          "id": "sanity-best-practices",
+          "path": "skills/sanity-best-practices",
+          "reviewed_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
+          "local_paths": [
+            "skills/sanity-best-practices"
+          ]
+        },
+        {
+          "id": "seo-aeo-best-practices",
+          "path": "skills/seo-aeo-best-practices",
+          "reviewed_commit": "828641ff3bae87327ec73844d9c72f38e591842e",
+          "local_paths": [
+            "skills/seo-aeo-best-practices"
+          ]
+        }
+      ]
+    },
+    "note": "Original folder hashes are retained as historical provenance. On 2026-11-23, sanity-best-practices and portable-text-conversion were refreshed to commit 828641ff3bae87327ec73844d9c72f38e591842e (the other three folders were unchanged except normalized trailing whitespace), and Git update tracking was added for all five skills.",
     "license": "licenses/sanity-agent-toolkit.LICENSE"
   },
   "tailwind-agent-skills": {

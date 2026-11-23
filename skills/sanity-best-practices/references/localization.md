@@ -43,7 +43,7 @@ Don't create nearly identical copies with slight differences (e.g., US vs Britis
 
 ```typescript
 // schemaTypes/locale.ts
-import { TranslateIcon } from '@sanity/icons'
+import { TranslateIcon } from '@sanity/icons/Translate'
 import { defineField, defineType } from 'sanity'
 
 export const localeType = defineType({
@@ -117,33 +117,48 @@ Pre-set language when creating documents outside the translation UI:
 
 ```typescript
 // sanity.config.ts
-import { template } from 'sanity'
+import { defineConfig } from 'sanity'
+import type { Template } from 'sanity'
+
+const LOCALIZED_TYPES = ['post', 'page']
+const BASE_LANGUAGE = 'en'
 
 export default defineConfig({
   // ...
   document: {
-    newDocumentOptions: (prev, { creationContext }) => {
-      // Filter to only show base language in "New document" menu
-      // The plugin handles creating translations from there
-      return prev.filter((item) =>
-        !['post', 'page'].includes(item.templateId) ||
-        item.parameters?.language === 'en'
-      )
-    },
+    newDocumentOptions: (prev) => [
+      // Drop the auto-generated entries for localized types — they create
+      // documents with no `language` set
+      ...prev.filter((item) => !LOCALIZED_TYPES.includes(item.templateId)),
+      // Offer the base-language templates instead
+      // The plugin handles creating translations from the document itself
+      ...LOCALIZED_TYPES.map((schemaType) => ({
+        templateId: `${schemaType}-${BASE_LANGUAGE}`,
+        parameters: {language: BASE_LANGUAGE},
+      })),
+    ],
   },
-  // Initial value templates for each language
-  templates: (prev) => [
-    ...prev,
-    template.initial({
-      id: 'post-en',
-      title: 'Post (English)',
-      schemaType: 'post',
-      parameters: [{name: 'language', type: 'string'}],
-      value: ({language}) => ({language}),
-    }),
-  ],
+  schema: {
+    // A base-language template per localized type
+    templates: (prev): Template[] => [
+      ...prev,
+      ...LOCALIZED_TYPES.map((schemaType) => ({
+        id: `${schemaType}-${BASE_LANGUAGE}`,
+        title: `${schemaType} (${BASE_LANGUAGE})`,
+        schemaType,
+        parameters: [{name: 'language', type: 'string'}],
+        value: ({language}: {language: string}) => ({language}),
+      })),
+    ],
+  },
 })
 ```
+
+A template that declares `parameters` is left out of the auto-generated "New
+document" list, so it only appears if `newDocumentOptions` adds it explicitly,
+with the parameter values supplied on the item. The auto-generated items carry
+no `parameters` of their own, so a filter that tests `item.parameters` matches
+nothing and empties the menu.
 
 ### Querying Translated Documents
 ```groq
@@ -167,12 +182,11 @@ For singletons like homepages that need a separate document per locale, combine 
 
 ```typescript
 // schemaTypes/homePage.ts
-import { HomeIcon } from '@sanity/icons'
+import { HomeIcon } from '@sanity/icons/Home'
 import { defineType, defineField } from 'sanity'
 
 export const homePageType = defineType({
   name: 'homePage',
-  title: 'Home Page',
   type: 'document',
   icon: HomeIcon,
   fields: [
@@ -204,7 +218,8 @@ Create templates that pre-set the language for each locale:
 
 ```typescript
 // sanity.config.ts
-import { defineConfig, Template } from 'sanity'
+import { defineConfig } from 'sanity'
+import type { Template } from 'sanity'
 
 // Define your supported locales
 const LOCALES = [
@@ -215,17 +230,19 @@ const LOCALES = [
 
 export default defineConfig({
   // ...
-  templates: (prev) => {
-    // Create a template for each locale
-    const homePageTemplates: Template[] = LOCALES.map((locale) => ({
-      id: `homePage-${locale.id}`,
-      title: `Home Page (${locale.title})`,
-      schemaType: 'homePage',
-      parameters: [{ name: 'language', type: 'string' }],
-      value: { language: locale.id },
-    }))
+  schema: {
+    templates: (prev) => {
+      // Create a template for each locale
+      const homePageTemplates: Template[] = LOCALES.map((locale) => ({
+        id: `homePage-${locale.id}`,
+        title: `Home Page (${locale.title})`,
+        schemaType: 'homePage',
+        parameters: [{ name: 'language', type: 'string' }],
+        value: { language: locale.id },
+      }))
 
-    return [...prev, ...homePageTemplates]
+      return [...prev, ...homePageTemplates]
+    },
   },
 })
 ```
@@ -237,7 +254,7 @@ Create a helper to show one singleton per locale in the Structure:
 ```typescript
 // src/structure/index.ts
 import { StructureBuilder, StructureResolver } from 'sanity/structure'
-import { HomeIcon } from '@sanity/icons'
+import { HomeIcon } from '@sanity/icons/Home'
 
 const LOCALES = ['en', 'fr', 'de']
 
@@ -300,7 +317,7 @@ export const structure: StructureResolver = (S) =>
 
 ### Key Points
 
-- **Fixed IDs:** Use `${typeName}-${locale}` pattern for predictable document IDs
+- **Fixed IDs:** Use `${typeName}-${locale}` only for localized singletons; let Sanity generate IDs for ordinary localized content
 - **Initial Value Templates:** Essential for the "New document" menu to work correctly
 - **Structure:** Group all locale versions under one list item for cleaner navigation
 - **See also:** `studio-structure.md` for more singleton patterns

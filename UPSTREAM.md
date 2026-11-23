@@ -9,8 +9,14 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 | [Theo's tstack](https://github.com/t3dotgg/tstack) | `92e38e2cf677a84a142e8df296861c588542135c` | council, sol-loop, full-stop, full-send, file-pr, babysit-pr, leaving-pr-comments |
 | [Matt Pocock's skills](https://github.com/mattpocock/skills) | `59db609eb1e18aaf59b63284d0e52255aff0c63c` | diagnosing-bugs, grilling, handoff, retro, writing-for-agents |
 | [Lauren's pstack](https://github.com/cursor/plugins/tree/main/pstack) | `519d36aa98955bf680db01bcde5fdfba686dc901` | blast-radius, create-verification-skill |
+| [Sanity agent-toolkit](https://github.com/sanity-io/agent-toolkit) | `828641ff3bae87327ec73844d9c72f38e591842e` | content-modeling-best-practices, portable-text-conversion, portable-text-serialization, sanity-best-practices, seo-aeo-best-practices |
 
-`sources.json` maps each complete upstream folder to its local folder. Original audit identifiers remain historical provenance; reviewed commits advance only for the adopted folders. The six Sanity/Tailwind packages were outside this restoration and retain their existing provenance.
+`sources.json` maps each complete upstream folder to its local folder. Original audit identifiers and folder hashes remain historical provenance; reviewed commits advance only for the adopted folders. The Tailwind package was outside this restoration and retains its existing folder-hash provenance.
+
+### Later adoptions
+
+- 2026-10-28: `council` adopted `1085050f3baed1ac724caa4a8166145fb2ac88af` (resolve known issues and run checks before requesting an audit).
+- 2026-11-23: `council` adopted `11e37a74d0a6868c121cd0910ab2b3bd9873b92a` (evaluate delegate findings as they arrive without editing during active reviews, and treat non-blocking delegates as feedback without recording a score); `grilling` adopted `abeeaf95660ba9e8b7c753eb38f441ca707a8823` (dispatch fact-finding sub-agents with a fresh context window); `blast-radius` adopted `7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9` (drop two `why` cross-references in Steps 1 and 4); and Sanity's `sanity-best-practices` and `portable-text-conversion` were refreshed to `828641ff3bae87327ec73844d9c72f38e591842e` with Git update tracking enabled for all five Sanity skills. All other Theo, Matt, and Lauren folders retain the table pins above.
 
 ## Restoration decisions
 
@@ -22,12 +28,10 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 
 ## Complete local patches
 
-Council additionally adopts `1085050f3baed1ac724caa4a8166145fb2ac88af` (2026-10-28): resolve known issues and run checks before requesting an audit. The other six Theo folders retain the table pin.
-
 On 2026-11-06, the user approved bounded reviews and lean-thread handoffs to
 reduce review and cache-rebuild costs. Upstream pins are unchanged.
 
-Theo's four other folders and Matt's five folders are copied without local modifications. The complete patches are:
+Theo's four other folders, Matt's five folders, and Sanity's five folders are copied without local modifications (apart from historical trailing-whitespace normalization on the untouched `content-modeling-best-practices` and `seo-aeo-best-practices` folders). The complete patches are:
 
 - [council](patches/tstack-council.patch): retain the user-selected Opus 5.5 / Gemini Neon / GPT-6.2 Sol panel, with Neon as the only allowed Gemini model (2026-11-22); bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only follow-up reviewer after round 1 (Gemini Neon through 2026-12-03 as a user-approved trial, then GPT-6.2 Sol) and escalate contradictions.
 - [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context; use Gemini Neon instead of Sol through 2026-12-03 (user-approved trial, 2026-11-19), then Sol again.
@@ -40,4 +44,4 @@ These patches contain every local difference, including added files. Apply them 
 
 ## Future updates
 
-Run `python3 scripts/check_upstream.py` (or `--source <name>` for one source) to inspect source changes. It fetches the mapped public scopes into temporary bare repositories, never runs upstream code or edits skills, and writes `report.md` and `report.json` under the ignored `.local/upstream/`. It exits 1 only when a fetch fails. Sanity and Tailwind folders have folder hashes, not Git commits, so they are not checked. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.
+Run `python3 scripts/check_upstream.py` (or `--source <name>` for one source) to inspect source changes. It fetches the mapped public scopes into temporary bare repositories, never runs upstream code or edits skills, and writes `report.md` and `report.json` under the ignored `.local/upstream/`. It exits 1 only when a fetch fails. The Tailwind folder has a folder hash, not a Git commit, so it is not checked. Compare the local folder with its pinned source plus its recorded patch as a separate fidelity check: an upstream-to-upstream result of “unchanged” says nothing about local fidelity. Review resources as well as SKILL.md, retain license notices, update affected patches and record adoption or decline before advancing reviewed commits.

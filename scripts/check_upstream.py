@@ -165,7 +165,7 @@ def render_markdown(report: dict) -> str:
         "Tracked skill folders include their supporting files and newly added files. A separately mapped source file covers only that file. Changes elsewhere in an upstream repository are outside this report.",
         "",
         "Sources not checked in this run: " + (", ".join(f"`{name}`" for name in report["not_checked"]) or "none") + ".",
-        "", "Sanity and Tailwind installed folder hashes are provenance, not verified Git commit baselines, and are not used as update-check baselines.", "",
+        "", "Tailwind installed folder hash is provenance, not a verified Git commit baseline, and is not used as an update-check baseline.", "",
     ])
     return "\n".join(lines)
 

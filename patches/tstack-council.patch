@@ -1,6 +1,6 @@
 --- a/skills/council/SKILL.md
 +++ b/skills/council/SKILL.md
-@@ -10,22 +10,29 @@
+@@ -10,16 +10,22 @@
  fixes until reviews return. If the user wants to discard the implementation
  and explore new ideas, skip fixes to code being replaced.
  
@@ -30,7 +30,9 @@
  
  Give each delegate the request and relevant context. For review or feedback,
  keep their work read-only. Collect their responses and summarize the useful
- findings, disagreements, and recommended next steps.
+@@ -31,7 +37,8 @@
+ instructions mark a delegate as non-blocking, do not wait for it; treat a
+ late result as feedback and do not record its score.
  
 -For a code review, ask each delegate for a score out of 10.
 +For a code review, ask each delegate for a score out of 10 and findings labeled
@@ -38,7 +40,7 @@
  Count each full review pass as one round.
  A fresh review after fixes starts a new round.
  
-@@ -39,18 +46,26 @@
+@@ -45,18 +52,26 @@
  
  | Delegate | Round 1 | Round 2 |
  | --- | --- | --- |

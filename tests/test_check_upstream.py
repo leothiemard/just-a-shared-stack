@@ -135,8 +135,11 @@ class UpstreamTests(unittest.TestCase):
         sources, omitted = checker.load_sources(ROOT, ["mattpocock"])
         self.assertEqual(set(sources), {"mattpocock"})
         self.assertIn("pstack", omitted)
+        sanity_sources, _ = checker.load_sources(ROOT, ["sanity-agent-toolkit"])
+        self.assertEqual(set(sanity_sources), {"sanity-agent-toolkit"})
+        self.assertEqual(len(sanity_sources["sanity-agent-toolkit"]["items"]), 5)
         with self.assertRaises(ValueError):
-            checker.load_sources(ROOT, ["sanity-agent-toolkit"])
+            checker.load_sources(ROOT, ["tailwind-agent-skills"])
 
 
 if __name__ == "__main__":
