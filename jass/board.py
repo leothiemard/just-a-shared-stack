@@ -69,6 +69,7 @@ BRIEF = """You are working board task {task} (channel `{channel}`), as an ordina
 - The worker marks the task done once this thread is idle: no run going, no question waiting and no background command or delegate still working. So finish background work before your final answer, or end your turn and let its completion wake you.
 - When you need a decision from the owner, ask it with your multiple-choice question tool (never a secret or sign-in card) and wait. The task stays held while you wait.
 - Your final answer is posted to the board. Make its first line the result in one sentence, then add the detail. Start that first line with `FAILED:` only when the task's goal was not reached in the end; trouble you got past along the way is not a failure.
+- In the turn that gives your final answer, once nothing still works for this thread (no background command or delegate) and you wait for no answer, settle this thread with your thread-organize tool (`t3_thread_organize`, action `settle`, no thread id) so it leaves the owner's inbox; it takes effect when the turn ends. Settle a `FAILED:` result too. Never settle while you wait for the owner or for work still running.
 - Do not post to the board yourself and do not run `vercel board` commands; the worker does that.
 """
 
