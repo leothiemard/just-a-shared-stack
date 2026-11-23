@@ -45,6 +45,8 @@ from jass import JassError, paths
 
 THREAD, BOX, SEEN, WAITING = "t3.thread", "t3.box", "t3.seen", "t3.waiting"
 FINISHED = ("completed", "failed", "canceled")
+# The model option that sets reasoning effort, per T3 provider instance id. `--effort` on another instance fails.
+EFFORT_OPTION = {"claudeAgent": "effort", "codex": "reasoningEffort", "antigravity": "thought_level", "fx": "effort"}
 WORKER_PREFIX = "worker-"
 REPLY_MAX = 9000
 RESULT_MAX = 240
@@ -354,11 +356,23 @@ class Job:
         return key, paths.expand(path)
 
     def options(self) -> dict:
-        provider = self.labels.get("provider") or self.s.get("provider") or ""
-        model = self.labels.get("model") or self.s.get("model") or ""
-        options = list(self.s.get("options") or [])
+        """The thread's provider, model and model options. A task on another provider than the box's takes none of the
+        box's model or options, since option ids differ between providers; on the box's provider it keeps the box's
+        options. `effort` uses the provider's option id. A model or effort that could not reach T3 fails the task."""
+        box_provider = self.s.get("provider") or ""
+        provider = self.labels.get("provider") or box_provider
+        same = provider == box_provider
+        model = self.labels.get("model") or (self.s.get("model") if same else "") or ""
+        if self.labels.get("provider") and not model:
+            raise BoardError(f"task sets provider {provider!r} but no model: queue it with --model")
+        if (self.labels.get("model") or self.labels.get("effort")) and not (provider and model):
+            raise BoardError("task sets a model or effort but this box has no board.provider and board.model: queue it with --provider and --model")
+        options = list(self.s.get("options") or []) if same else []
         if self.labels.get("effort"):
-            options = [o for o in options if not o.startswith("effort=")] + [f"effort={self.labels['effort']}"]
+            key = EFFORT_OPTION.get(provider)
+            if not key:
+                raise BoardError(f"jass does not know which option sets effort for provider {provider!r}: queue the task without --effort")
+            options = [o for o in options if not o.startswith(key + "=")] + [f"{key}={self.labels['effort']}"]
         return {"provider": provider, "model": model, "options": options}
 
     def human_replies(self, data: dict) -> list[dict]:
@@ -675,6 +689,8 @@ def add(cfg: dict, args) -> int:
     for key in ("base", "model", "provider", "effort"):
         if getattr(args, key, None):
             labels[key] = getattr(args, key)
+    if labels.get("provider") and not labels.get("model"):
+        raise BoardError("--provider needs --model.")
     task = Board(args.as_profile).create(f"{prefix}/{args.project}", text, labels, args.needs or [], args.for_profile)
     print(task["id"])
     return 0

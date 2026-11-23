@@ -96,13 +96,13 @@ def task(labels=None, text="Bump the lockfile.\nScope: package-lock.json."):
     return {"id": "msg_1", "channel": "build/demo", "text": text, "labels": dict({"board.task": "claimed"}, **(labels or {}))}
 
 
-def job(t, timeline, replies=(), **t3kw):
+def job(t, timeline, replies=(), cfg=CFG, **t3kw):
     clock = FakeClock()
     b = FakeBoard(t, replies)
     b.clock = clock
     t3 = FakeT3(clock, timeline, **t3kw)
     logs = []
-    j = board.Job(t, CFG, b, t3, clock, logs.append, threading.Event(), base=lambda project, base: "origin/main")
+    j = board.Job(t, cfg, b, t3, clock, logs.append, threading.Event(), base=lambda project, base: "origin/main")
     return j, b, t3, clock, logs
 
 
@@ -309,6 +309,54 @@ class JobTests(unittest.TestCase):
         j.run()
         self.assertEqual(t3.started[0]["options"], {"provider": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort=high"]})
 
+    def boxed(self, labels, **box):
+        box = {"provider": "claudeAgent", "model": "claude-opus-5-5", "options": ["effort=medium", "fastMode=false"], **box}
+        j, b, t3, _, _ = job(task(labels), running_until(20), cfg={**CFG, "board": {**CFG["board"], **box}})
+        return j, b, t3
+
+    def started(self, labels, **box):
+        j, b, t3 = self.boxed(labels, **box)
+        outcome = j.run()
+        return (t3.started[0]["options"] if t3.started else None), outcome, b
+
+    def test_task_on_the_box_provider_keeps_box_options(self):
+        for labels in ({"model": "claude-sonnet-5-5", "effort": "high"}, {"provider": "claudeAgent", "model": "claude-sonnet-5-5", "effort": "high"}):
+            with self.subTest(labels=labels):
+                options, _, _ = self.started(labels)
+                self.assertEqual(options, {"provider": "claudeAgent", "model": "claude-sonnet-5-5", "options": ["fastMode=false", "effort=high"]})
+
+    def test_task_on_another_provider_drops_box_model_and_options_and_maps_effort(self):
+        for provider, model, effort in (("codex", "gpt-6.2-sol", "reasoningEffort=high"), ("antigravity", "gemini-4-neon", "thought_level=high")):
+            with self.subTest(provider=provider):
+                options, _, _ = self.started({"provider": provider, "model": model, "effort": "high"})
+                self.assertEqual(options, {"provider": provider, "model": model, "options": [effort]})
+
+    def test_task_on_another_provider_without_effort_gets_no_options(self):
+        options, _, _ = self.started({"provider": "codex", "model": "gpt-6.2-sol"})
+        self.assertEqual(options["options"], [])
+
+    def test_effort_replaces_a_codex_box_option_of_the_same_id(self):
+        options, _, _ = self.started({"effort": "high"}, provider="codex", model="gpt-6.2-sol", options=["reasoningEffort=low", "serviceTier=default"])
+        self.assertEqual(options["options"], ["serviceTier=default", "reasoningEffort=high"])
+
+    def test_box_provider_without_model_still_runs_plain_tasks(self):
+        options, outcome, _ = self.started({}, model="")
+        self.assertEqual(outcome, "completed")
+        self.assertEqual(options["model"], "")
+
+    def test_overrides_that_cannot_reach_t3_fail_the_task(self):
+        cases = (
+            ({"provider": "codex"}, {}, "no model"),
+            ({"model": "claude-sonnet-5-5"}, {"provider": "", "model": ""}, "no board.provider"),
+            ({"effort": "high"}, {"provider": "", "model": ""}, "no board.provider"),
+            ({"provider": "codex-work", "model": "gpt-6.2-sol", "effort": "high"}, {}, "codex-work"),
+        )
+        for labels, box, reason in cases:
+            with self.subTest(labels=labels):
+                options, outcome, b = self.started(labels, **box)
+                self.assertEqual((outcome, options), ("failed", None))
+                self.assertIn(reason, b.done()[0][1])
+
     def test_unknown_project_fails_the_task(self):
         t = dict(task(), channel="build/other")
         j, b, _, _, _ = job(t, running_until(20))
@@ -338,6 +386,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual((args.project, args.text, args.needs, args.for_profile), ("shop", "Review the fix.", ["msg_1"], "worker-ps5"))
         args = cli.parse(["board", "add", "shop", "Fix it.", "--base", "none"])
         self.assertEqual((args.text, args.base), ("Fix it.", "none"))
+
+    def test_add_refuses_a_provider_without_a_model(self):
+        from jass import cli
+
+        args = cli.parse(["board", "add", "shop", "--provider", "codex", "Fix it."])
+        with self.assertRaisesRegex(board.BoardError, "--model"):
+            board.add(CFG, args)
 
     def test_other_extra_arguments_are_still_refused(self):
         from jass import cli
