@@ -24,6 +24,11 @@ The agent in the thread never touches the board: its brief asks it to end with a
 first line starting `FAILED:`. The worker posts the final answer as a reply and completes or fails the
 task with that line.
 
+Two limits are off by default and meant for boxes that cost money while they run (cloud VMs):
+`board.task_minutes` fails a task whose thread is still going after that long, and `jass board work
+--idle-exit MINUTES` ends the worker once none of its workers has had a task for that long, so the box's
+service manager can stop the machine.
+
 `Job` holds every decision and touches nothing but the `Board`, `T3` and `Clock` it is given, so tests
 drive it with fakes.
 """
@@ -444,7 +449,8 @@ class Job:
         answer_s = float(self.s.get("answer_hours", 24)) * 3600
         board_every = float(self.s.get("board_poll_seconds", 60))
         stall_s = float(self.s.get("stall_minutes", 15)) * 60
-        renewed = last_board = self.clock.now()
+        limit_s = float(self.s.get("task_minutes", 0) or 0) * 60
+        renewed = last_board = started = self.clock.now()
         idle_since, idle_run, asked_since, asked_kind, misses = None, None, None, "", 0
         seen = self.labels.get(SEEN, "")
         while True:
@@ -475,6 +481,9 @@ class Job:
             misses = 0
             thread = shown["thread"]
             state = thread_state(thread, now, stall_s)
+            if limit_s and now - started >= limit_s and state != "idle":
+                # An idle thread is settling and gets to finish; a question or a stall is cut off like work.
+                return self.timebox(limit_s, state)
             if state in ("question", "stalled"):
                 idle_since = None
                 if asked_since is None or asked_kind != state:
@@ -512,6 +521,20 @@ class Job:
                         else:
                             return self.finish(thread)
             self.clock.sleep(poll, self.stop)
+
+    def timebox(self, limit_s: float, state: str) -> str:
+        """Fail a task that outran `board.task_minutes`, a wait for an answer included: on a box that bills while it
+        runs, waiting costs as much as working. T3 has no way to interrupt a thread, so the thread is left as it is;
+        reopening the task on the same box attaches to it again."""
+        minutes = f"{limit_s / 60:g}"
+        doing = {"question": "waiting for an answer", "stalled": "showing no progress"}.get(state, "still working")
+        if self.labels.get(WAITING) or state in ("question", "stalled"):
+            self.board.label(self.id, unset=(WAITING,))
+        self.note(f"T3 thread `{self.thread}` was {doing} after {minutes} minutes (board.task_minutes), so the worker failed the task. "
+                  f"The thread keeps its work; reopen the task to continue it on box {self.cfg.get('box')}.\n{self.link}".strip())
+        problem = self.board.settle("fail", self.id, f"timebox: {doing} after {minutes} minutes")
+        self.log(f"{self.id}: failed: past the {minutes} minute timebox")
+        return "failed" if not problem else f"lost ({problem})"
 
     def forward(self, seen: str) -> tuple[str, int]:
         """Send people's new board replies into the thread.
@@ -578,6 +601,48 @@ class Logger:
                     handle.write(line + "\n")
 
 
+class Idle:
+    """Shared by a box's workers for `--idle-exit`: once none of them has held a task for `seconds`, they all stop.
+
+    A worker calls `take` before it looks for a task and `release` after, so a claim in progress counts as busy
+    and no worker can claim a task after the box has decided to stop. `seconds` 0 turns it off."""
+
+    def __init__(self, seconds: float, clock: Clock):
+        self.seconds, self.clock = float(seconds or 0), clock
+        self.lock = threading.Lock()
+        self.busy, self.since, self.done = 0, clock.now(), False
+
+    def take(self) -> bool:
+        with self.lock:
+            if self.done:
+                return False
+            self.busy += 1
+            return True
+
+    def release(self, worked: bool) -> None:
+        with self.lock:
+            self.busy -= 1
+            if worked:
+                self.since = self.clock.now()
+
+    def expired(self) -> bool:
+        with self.lock:
+            if self.seconds and not self.done and not self.busy and self.clock.now() - self.since >= self.seconds:
+                self.done = True
+            return self.done
+
+    def wait_for(self, wait_s: int) -> int:
+        """How long a worker with nothing to do may wait before it checks again."""
+        if not self.seconds:
+            return wait_s
+        with self.lock:
+            if self.busy:
+                # The worker that settles the busy task restarts the clock and does the timed wait itself.
+                return wait_s
+            left = self.seconds - (self.clock.now() - self.since)
+        return int(max(5, min(wait_s, left + 1)))
+
+
 def channels(s: dict, only: list[str] | None) -> list[str]:
     prefix = s.get("channel", "build").rstrip("/")
     keys = list((s.get("projects") or {}).keys())
@@ -591,38 +656,52 @@ def channels(s: dict, only: list[str] | None) -> list[str]:
     return [f"{prefix}/{key}" for key in keys]
 
 
-def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: threading.Event, log, wait_s: int) -> int:
+def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: threading.Event, log, wait_s: int,
+                idle: Idle | None = None, board: Board | None = None, t3: T3 | None = None, clock: Clock | None = None) -> int:
     s = settings(cfg)
-    board, t3, clock = Board(profile), T3(), Clock()
+    board, t3, clock = board or Board(profile), t3 or T3(), clock or Clock()
+    idle = idle or Idle(0, clock)
     lease = f"{int(s.get('lease_minutes', 10))}m"
     prefix = s.get("channel", "build").rstrip("/") + "/"
     done = 0
     while not stop.is_set():
-        task = None
+        if not idle.take():
+            return 0
+        task, worked = None, False
         try:
-            for channel in chans:
-                task = board.claim(channel, lease)
-                if task:
-                    break
-        except BoardError as error:
-            log(f"[{profile}] {error}; retrying in a minute")
-            clock.sleep(60, stop)
-            continue
+            try:
+                for channel in chans:
+                    task = board.claim(channel, lease)
+                    if task:
+                        break
+            except BoardError as error:
+                log(f"[{profile}] {error}; retrying in a minute")
+                clock.sleep(60, stop)
+                continue
+            if task:
+                worked = True
+                log(f"[{profile}] claimed {task['id']} in {task.get('channel')}: {first_line(task.get('text', ''), 80)}")
+                try:
+                    outcome = Job(task, cfg, board, t3, clock, lambda text: log(f"[{profile}] {text}"), stop).run()
+                except BoardError as error:
+                    log(f"[{profile}] {task['id']}: {error}")
+                    outcome = "error"
+        finally:
+            # Always, so an unexpected error in this worker cannot keep the whole box from going idle.
+            idle.release(worked)
         if not task:
             if once:
                 log(f"[{profile}] nothing ready")
                 return 0 if done else 1
-            problem = board.wait_ready(prefix, wait_s, stop)
+            if idle.expired():
+                log(f"[{profile}] no task for {idle.seconds / 60:g} minutes on this box; stopping (--idle-exit)")
+                stop.set()
+                return 0
+            problem = board.wait_ready(prefix, idle.wait_for(wait_s), stop)
             if problem:
                 log(f"[{profile}] waiting for tasks failed ({problem}); checking again in a minute")
                 clock.sleep(60, stop)
             continue
-        log(f"[{profile}] claimed {task['id']} in {task.get('channel')}: {first_line(task.get('text', ''), 80)}")
-        try:
-            outcome = Job(task, cfg, board, t3, clock, lambda text: log(f"[{profile}] {text}"), stop).run()
-        except BoardError as error:
-            log(f"[{profile}] {task['id']}: {error}")
-            outcome = "error"
         log(f"[{profile}] {task['id']}: {outcome}")
         done += 1
         if once:
@@ -662,9 +741,12 @@ def work(cfg: dict, args) -> int:
         problem = Board(profiles[0]).ensure_channel(channel)
         if problem:
             raise BoardError(f"cannot create channel {channel}: {problem}. Check `vercel board whoami`.")
-    log(f"board worker on {cfg.get('box')}: {', '.join(profiles)} on {', '.join(chans)}")
+    idle = Idle((getattr(args, "idle_exit", None) or 0) * 60, Clock())
+    log(f"board worker on {cfg.get('box')}: {', '.join(profiles)} on {', '.join(chans)}"
+        + (f"; exits after {idle.seconds / 60:g} idle minutes" if idle.seconds else ""))
     results: list[int] = []
-    threads = [threading.Thread(target=lambda p=p: results.append(worker_loop(cfg, p, chans, args.once, stop, log, int(args.wait_minutes * 60))), daemon=True) for p in profiles]
+    threads = [threading.Thread(target=lambda p=p: results.append(worker_loop(cfg, p, chans, args.once, stop, log, int(args.wait_minutes * 60), idle)), daemon=True)
+               for p in profiles]
     for thread in threads:
         thread.start()
     while any(t.is_alive() for t in threads):

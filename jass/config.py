@@ -32,11 +32,13 @@ DEFAULTS = {
     # `jass board`: Vercel Board tasks in `<channel>/<project>` run as T3 Code threads on this box. `projects` maps a
     # project key to its folder here; `base` is the ref a task's worktree starts from ('' for origin's default branch,
     # 'none' for no worktree); `worker` is the board profile ('' for worker-<box>); provider, model and options pick the
-    # threads' model ('' for the T3 project's default).
+    # threads' model ('' for the T3 project's default). `task_minutes` fails a task still running after that long (0: no
+    # limit), for boxes that cost money while they run.
     "board": {
         "channel": "build", "projects": {}, "worker": "", "workers": 1, "base": "",
         "provider": "", "model": "", "options": [],
         "lease_minutes": 10, "poll_seconds": 15, "settle_seconds": 45, "board_poll_seconds": 60, "answer_hours": 24, "stall_minutes": 15,
+        "task_minutes": 0,
     },
 }
 
