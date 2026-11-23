@@ -367,6 +367,18 @@ class JobTests(unittest.TestCase):
         self.assertLess(clock.t, 150)
         self.assertEqual(t3.sent, [])
 
+    def test_timebox_lets_a_settling_thread_complete(self):
+        cfg = {**CFG, "board": {**CFG["board"], "task_minutes": 2}}
+        j, b, _, _, _ = job(task(), running_until(110), cfg=cfg)
+        self.assertEqual(j.run(), "completed")
+
+    def test_timebox_cuts_off_a_wait_for_an_answer_and_clears_the_label(self):
+        cfg = {**CFG, "board": {**CFG["board"], "task_minutes": 2}}
+        j, b, _, _, _ = job(task(), lambda t: {"activeRunId": "r1", "pendingRequestCount": 1}, cfg=cfg)
+        self.assertEqual(j.run(), "failed")
+        self.assertEqual(b.done(), [("fail", "timebox: waiting for an answer after 2 minutes")])
+        self.assertIn(("label", {}, (board.WAITING,)), b.actions)
+
     def test_no_timebox_by_default(self):
         j, b, _, clock, _ = job(task(), running_until(4000))
         self.assertEqual(j.run(), "completed")
@@ -423,6 +435,25 @@ class IdleTests(unittest.TestCase):
         clock.t = 680
         self.assertTrue(idle.expired())
         self.assertFalse(idle.take())
+
+    def test_a_free_worker_waits_normally_while_another_holds_a_task(self):
+        clock = FakeClock()
+        idle = board.Idle(180, clock)
+        idle.take()
+        clock.t = 500
+        self.assertEqual(idle.wait_for(300), 300)
+
+    def test_an_unexpected_error_still_frees_the_box(self):
+        clock, stop = FakeClock(), threading.Event()
+        idle = board.Idle(180, clock)
+
+        class Broken(IdleBoard):
+            def claim(self, channel, lease):
+                raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            board.worker_loop(CFG, "worker-mac", ["build/demo"], False, stop, lambda line: None, 300, idle, Broken(clock), object(), clock)
+        self.assertEqual(idle.busy, 0)
 
     def test_a_claim_attempt_that_finds_nothing_does_not_restart_the_clock(self):
         clock = FakeClock()
