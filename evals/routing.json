@@ -120,6 +120,12 @@
       "prompt": "Leave the agents working overnight on these three lanes and check the box will last.",
       "expected_output": "overnight, not board-queue: the board queue is for self-contained tasks, not standing lanes.",
       "files": []
+    },
+    {
+      "id": 21,
+      "prompt": "Add an 'Edit in Studio' button that links directly to a nested Portable Text field, and register the Studio in the Sanity Dashboard with defineApplication.",
+      "expected_output": "sanity-best-practices: follow Studio edit intent link rules (URI-encoded path, _key selectors) and references/dashboard.md.",
+      "files": []
     }
   ]
 }
