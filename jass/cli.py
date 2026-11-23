@@ -195,6 +195,10 @@ def cmd_board(args) -> int:
     from jass import board
 
     cfg = {} if args.action == "open" else config.load()  # open needs only `vercel login`, not a box config
+    if args.action == "scale":
+        from jass import scale
+
+        return scale.run(cfg, args)
     return {"work": board.work, "add": board.add, "status": board.status, "open": board.open_board}[args.action](cfg, args)
 
 
@@ -334,6 +338,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--all", action="store_true", help="include completed, failed and canceled tasks")
     s.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
     s.add_argument("--json", action="store_true")
+    sc = actions.add_parser("scale", help="one tick: wake this box's cloud VMs (scale.pool) while tasks wait in scale.channels, stop them all at scale.spend_cap_usd; run it from launchd or cron")
+    mode = sc.add_mutually_exclusive_group()
+    mode.add_argument("--status", action="store_true", help="show the pool, spend, starts today and the last actions; change nothing")
+    mode.add_argument("--off", action="store_true", help="switch scaling off until --on; running VMs are left to stop themselves")
+    mode.add_argument("--on", action="store_true", help="switch scaling back on, after --off or the spend cap")
+    sc.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE", help="board profile that lists the tasks (default lead)")
+    sc.add_argument("--verbose", action="store_true", help="print what the tick saw and did")
     o = actions.add_parser("open", help="show the board in a browser, as you, through @vercel/board inspect on 127.0.0.1; runs until Ctrl-C")
     o.add_argument("--port", type=int, help="port to listen on (default: a free one; 4747 over SSH)")
     o.add_argument("--no-open", action="store_true", help="print the address instead of opening a browser")
