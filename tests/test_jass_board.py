@@ -63,9 +63,10 @@ class FakeBoard:
 class FakeT3:
     """`timeline(t)` gives the thread's fields at clock time t."""
 
-    def __init__(self, clock, timeline, answer="Did it.\n\nDetails.", status="completed", known=()):
+    def __init__(self, clock, timeline, answer="Did it.\n\nDetails.", status="completed", known=(), children=None):
         self.clock, self.timeline, self.answer, self.status = clock, timeline, answer, status
         self.started, self.sent, self.known = [], [], set(known)
+        self.children = dict(children or {})  # delegate thread id -> its timeline
 
     def start(self, project, title, brief, worktree="", options=None):
         self.started.append({"project": project, "title": title, "brief": brief, "worktree": worktree, "options": options})
@@ -73,11 +74,11 @@ class FakeT3:
         return "mcp:new"
 
     def show(self, thread, messages=0):
-        if thread not in self.known:
+        if thread not in self.known and thread not in self.children:
             return None
         fields = {"threadId": thread, "status": "running", "activeRunId": None, "latestRunId": "r1", "pendingRequestCount": 0,
                   "pendingBackgroundTasks": [], "blockedOnThreadWait": False, "link": "https://t3/x", "updatedAt": iso(self.clock.t)}
-        fields.update(self.timeline(self.clock.t))
+        fields.update((self.children.get(thread) or self.timeline)(self.clock.t))
         if "quiet_since" in fields:
             fields["updatedAt"] = iso(fields.pop("quiet_since"))
         if not fields["activeRunId"] and not fields["pendingRequestCount"] and fields["status"] == "running":
@@ -211,6 +212,35 @@ class JobTests(unittest.TestCase):
                 return {"activeRunId": "r1", "pendingBackgroundTasks": [{"taskId": "bg"}], "quiet_since": 0}
             return {}
         j, b, _, _, _ = job(task(), timeline)
+        self.assertEqual(j.run(), "completed")
+        self.assertFalse(any(a[0] == "label" and board.WAITING in a[1] for a in b.actions))
+
+    def test_delegate_waiting_on_an_approval_is_flagged_then_blocked(self):
+        # The parent waits on its delegate; the delegate's run stops changing at 20 s (an approval prompt).
+        delegate = [{"taskId": "d", "kind": "subagent", "childThreadId": "child"}]
+        j, b, _, _, _ = job(task(), lambda t: {"status": "waiting", "pendingBackgroundTasks": delegate},
+                            children={"child": lambda t: {"activeRunId": "c1", "quiet_since": min(t, 20)}})
+        self.assertEqual(j.run(), "blocked")
+        self.assertIn(("label", {board.WAITING: "check"}, ()), [a for a in b.actions if a[0] == "label"])
+        self.assertTrue(any(a[0] == "reply" and "delegate `child`" in a[1] for a in b.actions))
+        self.assertIn("delegate child", b.done()[0][1])
+
+    def test_delegate_question_labels_and_clears_once_answered(self):
+        delegate = [{"taskId": "d", "kind": "subagent", "childThreadId": "child"}]
+        def parent(t):
+            return {"status": "waiting", "pendingBackgroundTasks": delegate} if t < 700 else {}
+        def child(t):
+            return {"activeRunId": "c1", "pendingRequestCount": 1} if t < 600 else {"activeRunId": "c1"}
+        j, b, _, _, _ = job(task(), parent, children={"child": child})
+        self.assertEqual(j.run(), "completed")
+        labels = [a for a in b.actions if a[0] == "label"]
+        self.assertIn(("label", {board.WAITING: "answer"}, ()), labels)
+        self.assertIn(("label", {}, (board.WAITING,)), labels)
+
+    def test_busy_delegate_is_not_flagged(self):
+        delegate = [{"taskId": "d", "kind": "subagent", "childThreadId": "child"}]
+        j, b, _, _, _ = job(task(), lambda t: {"status": "waiting", "pendingBackgroundTasks": delegate} if t < 2400 else {},
+                            children={"child": lambda t: {"activeRunId": "c1"}})
         self.assertEqual(j.run(), "completed")
         self.assertFalse(any(a[0] == "label" and board.WAITING in a[1] for a in b.actions))
 

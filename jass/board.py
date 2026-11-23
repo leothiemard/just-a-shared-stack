@@ -481,6 +481,12 @@ class Job:
             misses = 0
             thread = shown["thread"]
             state = thread_state(thread, now, stall_s)
+            where = f"T3 thread `{self.thread}`"
+            if state == "busy":
+                # A delegate that waits for the owner leaves its parent busy, so look at the delegates too.
+                waiting, child = self.delegate_wait(thread, now, stall_s)
+                if waiting:
+                    state, where = waiting, f"T3 thread `{self.thread}` (its delegate `{child}`)"
             if limit_s and now - started >= limit_s and state != "idle":
                 # An idle thread is settling and gets to finish; a question or a stall is cut off like work.
                 return self.timebox(limit_s, state)
@@ -491,16 +497,16 @@ class Job:
                     asked_kind = state
                     if state == "question":
                         self.board.label(self.id, {WAITING: "answer"})
-                        self.note(f"T3 thread `{self.thread}` is waiting for an answer from the owner. Answer it in T3 Code.\n{self.link}".strip())
+                        self.note(f"{where} is waiting for an answer from the owner. Answer it in T3 Code.\n{self.link}".strip())
                         self.log(f"{self.id}: waiting for an answer in T3")
                     else:
                         self.board.label(self.id, {WAITING: "check"})
-                        self.note(f"T3 thread `{self.thread}` has shown no progress for {stall_s / 60:g} minutes while its run is open. "
+                        self.note(f"{where} has shown no progress for {stall_s / 60:g} minutes while its run is open. "
                                   f"It may wait for something T3 does not report as a question (a secret, a sign-in, an approval). Check it in T3 Code.\n{self.link}".strip())
                         self.log(f"{self.id}: no progress for {stall_s / 60:g} min; flagged for a check in T3")
                 elif now - asked_since >= answer_s:
                     what = "waits for an answer" if state == "question" else "has made no progress"
-                    problem = self.board.settle("block", self.id, f"T3 thread {self.thread} {what}", "--kind", "needs_input")
+                    problem = self.board.settle("block", self.id, f"{where.replace('`', '')} {what}", "--kind", "needs_input")
                     self.log(f"{self.id}: blocked after {answer_s / 3600:g} h: thread {what}")
                     return "blocked" if not problem else f"lost ({problem})"
             else:
@@ -521,6 +527,19 @@ class Job:
                         else:
                             return self.finish(thread)
             self.clock.sleep(poll, self.stop)
+
+    def delegate_wait(self, thread: dict, now: float, stall_s: float) -> tuple[str, str]:
+        """`question` or `stalled` and the delegate's thread id when a delegated subthread waits for the owner, else
+        ('', ''). A delegate's approval prompt (Codex asks before `rm -f` even with full access) keeps the parent's
+        background task open, so without this the task would look busy until a timebox."""
+        for task in thread.get("pendingBackgroundTasks") or []:
+            child = task.get("childThreadId") if isinstance(task, dict) else None
+            shown = self.t3.show(child) if child else None
+            if shown:
+                state = thread_state(shown["thread"], now, stall_s)
+                if state in ("question", "stalled"):
+                    return state, child
+        return "", ""
 
     def timebox(self, limit_s: float, state: str) -> str:
         """Fail a task that outran `board.task_minutes`, a wait for an answer included: on a box that bills while it
