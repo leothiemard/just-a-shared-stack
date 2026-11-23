@@ -138,7 +138,7 @@ class State:
         except (OSError, ValueError):
             data = {}
         self.data = data if isinstance(data, dict) else {}
-        for key, empty in (("starts", {}), ("idle_since", {}), ("offered", []), ("warned", False)):
+        for key, empty in (("starts", {}), ("idle_since", {}), ("offered", []), ("held", []), ("warned", False)):
             if not isinstance(self.data.get(key), type(empty)):
                 self.data[key] = empty
 
@@ -163,6 +163,7 @@ class State:
         except FileNotFoundError:
             pass
         self.data["warned"] = False
+        self.data["offered"], self.data["held"] = [], []
 
     def starts_today(self, today: str) -> int:
         return int(self.data["starts"].get(today, 0))
@@ -200,7 +201,7 @@ def spend_of(boat: Boat, pool: list[dict], since: str) -> float:
 def stop_all(boat: Boat, pool: list[dict], states: dict[str, str], log, why: str) -> None:
     """Stop every pool VM that is not stopped, whatever its state (an `error` or `stopping` VM included)."""
     for vm in pool:
-        if states.get(vm["id"]) not in STOPPED:
+        if vm["id"] in states and states[vm["id"]] not in STOPPED:
             problem = boat.stop(vm["id"])
             log(f"{why}: stopping {vm['id']} ({states.get(vm['id'], 'unknown')})" + (f" failed: {problem}" if problem else ""))
 
@@ -243,7 +244,6 @@ def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> 
 
     ready, claimed, busy_boxes = demand(board, chans)
     tasks = len(ready) + claimed
-    wanted = min(len(pool), math.ceil(tasks / max(1, int(s.get("per_vm", 2)))))
     actions = []
 
     idle_s = float(s.get("idle_stop_minutes", 15)) * 60
@@ -275,10 +275,20 @@ def tick(cfg: dict, boat: Boat, board: Board, state: State, now: float, log) -> 
     # VMs cannot take (meant for another profile, or a worker that fails at start). They wake no VM again; new tasks do.
     offered = set(state.data["offered"]) & set(ready)
     state.data["offered"] = sorted(offered)
+    fresh = [task for task in ready if task not in offered]
+    if running:
+        # Running VMs take offered tasks as they free up; only claimed and new tasks call for more VMs.
+        count = claimed + len(fresh)
+    elif claimed or fresh:
+        count = claimed + len(ready)
+    else:
+        count = 0
+    held = sorted(offered) if ready and not fresh and not claimed and not running else []
+    if held and held != state.data.get("held"):
+        log(f"not starting a VM: the {len(held)} ready tasks were offered to a VM that stopped without claiming them; check them on the board")
+    state.data["held"] = held
+    wanted = min(len(pool), math.ceil(count / max(1, int(s.get("per_vm", 2)))))
     missing = wanted - len(running)
-    if missing > 0 and not running and not claimed and ready and set(ready) <= offered:
-        log(f"not starting a VM: the {len(ready)} ready tasks were offered to a VM that stopped without claiming them; check them on the board")
-        missing = 0
     for vm in [vm for vm in pool if states.get(vm["id"]) in STOPPED][:max(0, missing)]:
         if state.starts_today(today) >= int(s.get("max_starts_per_day", 30)):
             log(f"not starting {vm['id']}: {state.starts_today(today)} starts today reached scale.max_starts_per_day")
@@ -317,7 +327,8 @@ def run(cfg: dict, args) -> int:
         # No lock: the switch is its own file, and a running tick reads it again before each resume.
         state = State(folder / "state.json")
         if args.off:
-            state.switch_off("jass board scale --off")
+            if not state.off().startswith(CAP_PREFIX):  # the cap's reason keeps its repeated stops going
+                state.switch_off("jass board scale --off")
         else:
             with paths.Lock(folder / "lock", wait=True):
                 state = State(folder / "state.json")

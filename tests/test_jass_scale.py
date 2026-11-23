@@ -186,6 +186,47 @@ class TickTests(unittest.TestCase):
         self.tick(boat, FakeBoard(ready=2))
         self.assertEqual(boat.did("resume"), ["bx_1"])
 
+    def test_offered_tasks_wake_no_second_vm_while_one_runs(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(boat.did("resume"), ["bx_1"])
+        boat.calls.clear()
+        # bx_1 works two tasks; the offered ready task it could not take must not start bx_2 on every tick.
+        self.tick(boat, FakeBoard(ready=1, claimed=["boat-w1", "boat-w1"]))
+        self.assertEqual(boat.did("resume"), [])
+
+    def test_tasks_ready_at_once_start_enough_vms_in_one_tick(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=4))
+        self.assertEqual(boat.did("resume"), ["bx_1", "bx_2"])
+
+    def test_the_held_message_is_logged_once_and_on_clears_the_offers(self):
+        boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"})
+        self.tick(boat, FakeBoard(ready=1))
+        boat.vms["bx_1"] = "stopped"
+        self.tick(boat, FakeBoard(ready=1))
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(sum("offered" in line for line in self.logs), 1)
+        self.state.switch_on()
+        boat.calls.clear()
+        self.tick(boat, FakeBoard(ready=1))
+        self.assertEqual(boat.did("resume"), ["bx_1"])
+
+    def test_off_does_not_replace_the_cap_reason(self):
+        import os
+        from types import SimpleNamespace
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {"JASS_HOME": tempfile.mkdtemp()}):
+            scale.State(scale.scale_dir() / "state.json").switch_off("spend cap: $9.00 reached $8")
+            scale.run(cfg(), SimpleNamespace(off=True, on=False, status=False, as_profile="lead", verbose=False))
+            self.assertTrue(scale.State(scale.scale_dir() / "state.json").off().startswith("spend cap"))
+
+    def test_the_cap_skips_ids_boat_does_not_list(self):
+        boat = FakeBoat({"bx_1": "running"}, dollars={"bx_1": 9.0})
+        self.tick(boat, FakeBoard())
+        self.assertEqual(boat.did("stop"), ["bx_1"])
+
     def test_a_failed_resume_does_not_count_the_tasks_as_offered(self):
         boat = FakeBoat({"bx_1": "stopped", "bx_2": "stopped"}, resume_fails={"bx_1", "bx_2"})
         self.tick(boat, FakeBoard(ready=1))
