@@ -316,6 +316,7 @@ def parser() -> argparse.ArgumentParser:
     w.add_argument("--workers", type=int, help="tasks this box works at once (default: board.workers, 1)")
     w.add_argument("--once", action="store_true", help="work one task, or none when nothing is ready, then exit")
     w.add_argument("--wait-minutes", type=float, default=5, help="how long one wait for a ready task lasts before the queue is checked again; a crashed worker's task, whose lease ran out, is picked up at the next check (default 5)")
+    w.add_argument("--idle-exit", type=float, metavar="MINUTES", help="exit once no worker on this box has had a task for this long, so a cloud VM's service can stop the machine (default: never)")
     w.add_argument("--log", help="log file (default: ~/.cache/jass/board/work-<date>.log)")
     a = actions.add_parser("add", help="queue a task for a project; prints its id")
     a.add_argument("project", help="project key, as in board.projects")

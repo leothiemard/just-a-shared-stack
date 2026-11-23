@@ -140,6 +140,23 @@ WantedBy=default.target
 
 Add the folders of `vercel`, `t3` and `node` to that `PATH` if they live elsewhere (`command -v vercel t3 node`). The worker logs to `~/.cache/jass/board/` and to the journal (`journalctl --user -u jass-board -f`).
 
+On a cloud VM that bills while it runs, let the worker end itself and the VM stop after it. `--idle-exit 3` ends `jass board work` once no worker on the box has had a task for 3 minutes, and `board.task_minutes` (for example 60) fails a task whose thread is still working after that long, keeping it below the VM's own auto-stop. The thread is left as it is; reopening the task (`vercel board tasks reopen <id>`) on the same box attaches to it again. Replace `ExecStopPost` with your provider's command for a VM to stop itself (here boat.dev's):
+
+```ini
+# ~/.config/systemd/user/jass-board-vm.service
+[Unit]
+Description=jass board worker that stops this VM when the queue is empty
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/jass board work --workers 2 --idle-exit 3
+ExecStopPost=%h/.ascii/bin/boat stop self
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=no
+```
+
+Start it with `systemctl --user start jass-board-vm` after each boot or resume, not `enable`: a VM that stops itself on every start would never stay up for setup. `Restart=no` matters for the same reason, and so does stopping the VM after any exit, a crash included, since a crashed worker's tasks return to the queue when their leases run out.
+
 ## Add a skill
 
 1. Create `skills/<name>/SKILL.md` with `name` and `description` frontmatter. Follow the `writing-for-agents` skill.

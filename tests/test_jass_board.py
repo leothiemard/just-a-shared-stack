@@ -357,11 +357,81 @@ class JobTests(unittest.TestCase):
                 self.assertEqual((outcome, options), ("failed", None))
                 self.assertIn(reason, b.done()[0][1])
 
+    def test_timebox_fails_a_task_that_runs_too_long_and_leaves_the_thread(self):
+        cfg = {**CFG, "board": {**CFG["board"], "task_minutes": 2}}
+        j, b, t3, clock, logs = job(task(), running_until(10_000), cfg=cfg)
+        self.assertEqual(j.run(), "failed")
+        self.assertEqual(b.done(), [("fail", "timebox: still working after 2 minutes")])
+        self.assertTrue(any(a[0] == "reply" and "reopen the task" in a[1] for a in b.actions))
+        self.assertGreaterEqual(clock.t, 120)
+        self.assertLess(clock.t, 150)
+        self.assertEqual(t3.sent, [])
+
+    def test_no_timebox_by_default(self):
+        j, b, _, clock, _ = job(task(), running_until(4000))
+        self.assertEqual(j.run(), "completed")
+        self.assertGreater(clock.t, 4000)
+
     def test_unknown_project_fails_the_task(self):
         t = dict(task(), channel="build/other")
         j, b, _, _, _ = job(t, running_until(20))
         self.assertEqual(j.run(), "failed")
         self.assertIn("board.projects", b.done()[0][1])
+
+
+class IdleBoard:
+    """Claims hand out `tasks` in order (None: nothing ready); a wait advances the clock by its timeout."""
+
+    def __init__(self, clock, tasks=()):
+        self.clock, self.tasks, self.waits = clock, list(tasks), []
+
+    def claim(self, channel, lease):
+        return self.tasks.pop(0) if self.tasks else None
+
+    def wait_ready(self, prefix, timeout_s, stop=None):
+        self.waits.append(timeout_s)
+        self.clock.t += timeout_s
+        return ""
+
+
+class IdleTests(unittest.TestCase):
+    def test_worker_exits_once_idle_long_enough_and_stops_the_others(self):
+        clock, stop, logs = FakeClock(), threading.Event(), []
+        idle = board.Idle(180, clock)
+        b = IdleBoard(clock)
+        self.assertEqual(board.worker_loop(CFG, "worker-mac", ["build/demo"], False, stop, logs.append, 300, idle, b, object(), clock), 0)
+        self.assertTrue(stop.is_set())
+        self.assertGreaterEqual(clock.t, 180)
+        self.assertLess(clock.t, 200)
+        self.assertTrue(all(w <= 181 for w in b.waits))
+        self.assertTrue(any("--idle-exit" in line for line in logs))
+
+    def test_without_idle_exit_the_wait_is_unchanged(self):
+        clock = FakeClock()
+        self.assertEqual(board.Idle(0, clock).wait_for(300), 300)
+        self.assertFalse(board.Idle(0, clock).expired())
+
+    def test_a_busy_worker_keeps_the_box_up_and_a_finished_task_restarts_the_clock(self):
+        clock = FakeClock()
+        idle = board.Idle(180, clock)
+        self.assertTrue(idle.take())
+        clock.t = 500
+        self.assertFalse(idle.expired())
+        idle.release(True)
+        clock.t = 600
+        self.assertFalse(idle.expired())
+        clock.t = 680
+        self.assertTrue(idle.expired())
+        self.assertFalse(idle.take())
+
+    def test_a_claim_attempt_that_finds_nothing_does_not_restart_the_clock(self):
+        clock = FakeClock()
+        idle = board.Idle(180, clock)
+        clock.t = 100
+        idle.take()
+        idle.release(False)
+        clock.t = 180
+        self.assertTrue(idle.expired())
 
 
 class ChannelTests(unittest.TestCase):
