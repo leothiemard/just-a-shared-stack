@@ -455,6 +455,18 @@ class IdleTests(unittest.TestCase):
             board.worker_loop(CFG, "worker-mac", ["build/demo"], False, stop, lambda line: None, 300, idle, Broken(clock), object(), clock)
         self.assertEqual(idle.busy, 0)
 
+    def test_an_unreachable_board_still_lets_the_box_go_idle(self):
+        clock, stop = FakeClock(), threading.Event()
+        idle = board.Idle(180, clock)
+
+        class Down(IdleBoard):
+            def claim(self, channel, lease):
+                raise board.BoardError("claim in build/demo failed: fetch failed")
+
+        self.assertEqual(board.worker_loop(CFG, "worker-mac", ["build/demo"], False, stop, lambda line: None, 300, idle, Down(clock), object(), clock), 0)
+        self.assertTrue(stop.is_set())
+        self.assertLess(clock.t, 260)
+
     def test_a_claim_attempt_that_finds_nothing_does_not_restart_the_clock(self):
         clock = FakeClock()
         idle = board.Idle(180, clock)

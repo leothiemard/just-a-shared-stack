@@ -667,7 +667,7 @@ def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: thr
     while not stop.is_set():
         if not idle.take():
             return 0
-        task, worked = None, False
+        task, worked, retry = None, False, False
         try:
             try:
                 for channel in chans:
@@ -676,8 +676,7 @@ def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: thr
                         break
             except BoardError as error:
                 log(f"[{profile}] {error}; retrying in a minute")
-                clock.sleep(60, stop)
-                continue
+                retry = True
             if task:
                 worked = True
                 log(f"[{profile}] claimed {task['id']} in {task.get('channel')}: {first_line(task.get('text', ''), 80)}")
@@ -689,6 +688,14 @@ def worker_loop(cfg: dict, profile: str, chans: list[str], once: bool, stop: thr
         finally:
             # Always, so an unexpected error in this worker cannot keep the whole box from going idle.
             idle.release(worked)
+        if retry:
+            # Outside the busy count, so a board that stays unreachable lets the box go idle too.
+            if idle.expired():
+                log(f"[{profile}] no task for {idle.seconds / 60:g} minutes on this box; stopping (--idle-exit)")
+                stop.set()
+                return 0
+            clock.sleep(60, stop)
+            continue
         if not task:
             if once:
                 log(f"[{profile}] nothing ready")

@@ -148,13 +148,53 @@ On a cloud VM that bills while it runs, let the worker end itself and the VM sto
 Description=jass board worker that stops this VM when the queue is empty
 
 [Service]
-ExecStart=%h/.local/bin/jass board work --workers 2 --idle-exit 3
-ExecStopPost=%h/.ascii/bin/boat stop self
+# Login shells: boat puts the VM's environment variables (tokens, its in-VM key) there only.
+ExecStart=/bin/bash -lc 'exec jass board work --workers 2 --idle-exit 3'
+ExecStopPost=/bin/bash -lc 'boat stop self'
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=no
 ```
 
 Run `loginctl enable-linger $USER` once and `systemctl --user daemon-reload` after writing the unit. Without linger, the user's systemd stops when your SSH session ends, and with it the worker and the VM. Then start it with `systemctl --user start jass-board-vm` after each boot or resume, not `enable`: a VM that stops itself on every start would never stay up for setup. `Restart=no` matters for the same reason. Any end of the worker stops the VM: an empty queue, a crash (its tasks return to the queue when their leases run out), a failure at startup such as no network yet, and a manual `systemctl --user stop` too.
+
+### Wake VMs when tasks wait
+
+`jass board scale` runs on an always-on box (the Mac) and starts stopped VMs when their tasks wait; the VMs stop themselves as above. Give the VMs their own project keys (`fma-boat` mapped to the checkout in each VM's `box.json`), so the Mac and other boxes never take those tasks, and queue a task there with `jass board add fma-boat "<brief>"`. On the Mac, add a `scale` block to `~/.config/jass/box.json` and sign the `boat` CLI in:
+
+```json
+"scale": {
+  "enabled": true,
+  "pool": [{"id": "bx_…", "box": "boat-w1"}, {"id": "bx_…", "box": "boat-w2"}],
+  "channels": ["fma-boat"],
+  "per_vm": 2,
+  "spend_cap_usd": 8,
+  "since": "2026-11-23T00:00:00Z"
+}
+```
+
+Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claimed tasks, and (re)starts the worker on every running pool VM while tasks wait (`start_command`, through a login shell; starting a running unit does nothing). It pushes back the auto-stop (`ttl_minutes`) of a VM whose box holds a claimed task, stops a VM that has run `idle_stop_minutes` (15) with no task at all, and at `spend_cap_usd`, counted from `since`, stops the whole pool and switches itself off, then keeps stopping any pool VM that is not stopped until you switch it back `--on`. Ready tasks that a VM was started for and left unclaimed (meant for another profile, or a worker that fails at start) wake no VM again; a new task does. It never creates or deletes a VM. Set `board.task_minutes` on the VMs, or a task waiting for your answer keeps its VM up for `answer_hours`.
+
+`--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the Mac sleeps no tick runs; the VMs still stop themselves.
+
+Run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>jass.board-scale</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/zsh</string><string>-lc</string><string>jass board scale</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/Users/you/.local/bin:/Users/you/.ascii/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartInterval</key><integer>120</integer>
+  <key>StandardErrorPath</key><string>/tmp/jass-board-scale.err</string>
+</dict>
+</plist>
+```
+
+Put the folders of `jass`, `boat` and `vercel` in that `PATH` (`command -v jass boat vercel`): a login `zsh` reads `.zprofile` but not `.zshrc`. The tick logs to `~/.cache/jass/scale/scale-<date>.log` and its errors to `/tmp/jass-board-scale.err`. A tick that finds an earlier one still resuming a VM exits at once.
 
 ## Add a skill
 

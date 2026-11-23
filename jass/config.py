@@ -40,6 +40,14 @@ DEFAULTS = {
         "lease_minutes": 10, "poll_seconds": 15, "settle_seconds": 45, "board_poll_seconds": 60, "answer_hours": 24, "stall_minutes": 15,
         "task_minutes": 0,
     },
+    # `jass board scale`: one tick wakes stopped cloud VMs of `pool` ({"id", "box"}: the boat id and its box name)
+    # while tasks wait in `channels` (project keys), `per_vm` tasks per VM, and stops the pool at `spend_cap_usd`
+    # counted from `since` (ISO time; '' for each VM's creation). `start_command` starts the worker after a resume.
+    "scale": {
+        "enabled": False, "pool": [], "channels": [], "per_vm": 2, "ttl_minutes": 120, "idle_stop_minutes": 15,
+        "spend_warn_usd": 5, "spend_cap_usd": 8, "since": "", "max_starts_per_day": 30,
+        "start_command": "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} systemctl --user start jass-board-vm", "boat": "boat",
+    },
 }
 
 
