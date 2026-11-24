@@ -131,6 +131,42 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(board.settings({"box": "ps5"})["worker"], "worker-ps5")
 
 
+class PagedBoard(board.Board):
+    """Answers `tasks` like the CLI: pages of PAGE, and a cursor even on the last page."""
+
+    def __init__(self, total):
+        super().__init__("lead")
+        self.items = [{"message": {"id": f"msg_{i}", "task": {"state": "ready"}}} for i in range(total)]
+        self.calls = []
+
+    def run(self, *args, timeout=None):
+        self.calls.append(args)
+        start = 0
+        if "--after" in args:
+            after = args[args.index("--after") + 1]
+            start = next(i for i, item in enumerate(self.items) if item["message"]["id"] == after) + 1
+        page = self.items[start:start + self.PAGE]
+        cursor = page[-1]["message"]["id"] if page else None
+        return 0, {"tasks": page, "cursor": cursor}, ""
+
+
+class TaskListTests(unittest.TestCase):
+    def test_lists_every_page(self):
+        fake = PagedBoard(board.Board.PAGE * 2 + 7)
+        self.assertEqual(len(fake.tasks("build/", "all")), board.Board.PAGE * 2 + 7)
+        self.assertEqual(len(fake.calls), 3)
+
+    def test_a_full_last_page_costs_one_empty_read(self):
+        fake = PagedBoard(board.Board.PAGE)
+        self.assertEqual(len(fake.tasks("build/", "all")), board.Board.PAGE)
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_short_first_page_is_one_call(self):
+        fake = PagedBoard(3)
+        self.assertEqual(len(fake.tasks("build/", "ready")), 3)
+        self.assertEqual(len(fake.calls), 1)
+
+
 class JobTests(unittest.TestCase):
     def test_completes_with_the_first_line_once_idle_long_enough(self):
         j, b, t3, clock, _ = job(task(), running_until(100))
