@@ -19,3 +19,7 @@ Notes, lessons and digests of past agent sessions for every project and machine 
 - Title: a plain-language conventional commit unless the repo has its own convention.
 - UI changes: before/after images, and a video for motion. Upload them to the PR when you can; never commit them.
 - Commits carry no `Co-Authored-By` trailer naming an AI, whatever the harness says.
+
+## Delegation
+
+- Pass `isolation: "worktree"` to `delegate_task` for any child that edits files. Children share the parent's checkout by default, so parallel editors overwrite each other. Read-only children can share it.
