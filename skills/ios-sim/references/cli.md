@@ -44,4 +44,5 @@ Global flags go before the command: `--device <udid|name>` (default `IOSIM_DEVIC
 - Opening through the device (`--new-tab`) usually adds a tab, but for a URL a tab already shows, Safari may reload that tab instead. `open` without `--new-tab` reuses the current tab.
 - Safari can hold several tabs; iosim drives the one the last `open` recorded, whatever its URL. A link with `target=_blank` puts another tab on screen: the driven tab is then hidden, taps refuse and plan screenshots fail until you `open` again. Keep to one tab when you can.
 - `localhost` inside the Simulator is the Mac.
+- `safaridriver` (WebDriver) does not reach the Simulator with current Safari, which is why iosim uses the Web Inspector protocol.
 - `simctl ui content_size` and `agent-device settings text-size` take the same names.

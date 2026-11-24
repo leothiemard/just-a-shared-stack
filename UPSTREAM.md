@@ -31,10 +31,18 @@ On 2026-10-27, the user approved restoring the borrowed workflows instead of mai
 On 2026-11-06, the user approved bounded reviews and lean-thread handoffs to
 reduce review and cache-rebuild costs. Upstream pins are unchanged.
 
-Theo's four other folders, Matt's five folders, and Sanity's five folders are copied without local modifications (apart from historical trailing-whitespace normalization on the untouched `content-modeling-best-practices` and `seo-aeo-best-practices` folders). The complete patches are:
+On 2026-11-24, the user chose to put per-task choices in prompts rather than
+patches: `council` returned to upstream (its panel is the latest flagship of
+each provider; round caps, a single follow-up reviewer and model pins are
+prompted when wanted), and the Gemini Neon reviewer trial left `sol-loop`
+(prompt "use Neon" to keep it). The lean-thread handoffs stay. PR
+descriptions end with `file-pr`'s model-and-harness line again: the global
+rules no longer forbid it, and only the no-AI `Co-Authored-By` rule for
+commits remains.
 
-- [council](patches/tstack-council.patch): retain the user-selected Opus 5.5 / Gemini Neon / GPT-6.2 Sol panel, with Neon as the only allowed Gemini model (2026-11-22); bound reviews with findings, scores, plateaus and a 3-round cap; use one diff-only follow-up reviewer after round 1 (Gemini Neon through 2026-12-03 as a user-approved trial, then GPT-6.2 Sol) and escalate contradictions.
-- [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context; use Gemini Neon instead of Sol through 2026-12-03 (user-approved trial, 2026-11-19), then Sol again.
+Theo's five other folders, Matt's five folders, and Sanity's five folders are copied without local modifications (apart from historical trailing-whitespace normalization on the untouched `content-modeling-best-practices` and `seo-aeo-best-practices` folders). The complete patches are:
+
+- [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context.
 - [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context.
 
 - [blast-radius](patches/pstack-blast-radius.patch): qualify companion calls as `pstack:how`, `pstack:why`, `pstack:arena` and `pstack:unslop`; mirror its explicit-only invocation policy in Codex metadata.

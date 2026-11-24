@@ -119,7 +119,7 @@ class InitTests(Sandbox):
         (layer / "rules" / "global.md").write_text("## Company rule\n")
         self.ok(*INIT, "--layer", str(layer), "--apply")
         text = (self.home / ".agents" / "AGENTS.md").read_text()
-        self.assertLess(text.index("No agent attribution"), text.index("## Company rule"), text)
+        self.assertLess(text.index("## Pull requests"), text.index("## Company rule"), text)
         self.assertTrue((self.home / ".agents" / "skills" / "work-flow").is_symlink())
 
     def test_conflicting_skill_needs_replace(self):
