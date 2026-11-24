@@ -176,7 +176,33 @@ Run `loginctl enable-linger $USER` once and `systemctl --user daemon-reload` aft
 
 Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claimed tasks, and (re)starts the worker on every running pool VM while tasks wait (`start_command`, through a login shell; starting a running unit does nothing). It pushes back the auto-stop (`ttl_minutes`) of a VM whose box holds a claimed task, stops a VM that has run `idle_stop_minutes` (15) with no task at all, and at `spend_cap_usd`, counted from `since`, stops the whole pool and switches itself off, then keeps stopping any pool VM that is not stopped until you switch it back `--on`. Ready tasks that a VM was started for and left unclaimed (meant for another profile, or a worker that fails at start) wake no VM again, and while a VM runs they start no second one; a new task does, and `--on` forgets them. It never creates or deletes a VM. Set `board.task_minutes` on the VMs, or a task waiting for your answer keeps its VM up for `answer_hours`.
 
-`--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the Mac sleeps no tick runs; the VMs still stop themselves.
+`--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the scaler's box sleeps no tick runs; the VMs still stop themselves, but waiting tasks wake nothing. Prefer a Linux box that stays on, and run the scaler on one box only: the lock that keeps ticks apart is per box.
+
+On Linux, run a tick every 2 minutes with a systemd user timer (`systemctl --user enable --now jass-board-scale.timer`; `disable --now` to stop; `loginctl enable-linger $USER` so it runs without a login). On a headless box, sign `boat` in with an API key limited to the pool's VMs: `boat api-key create <name> --preset full-sandbox --sandbox <id> ...` on a signed-in box, piped into `boat login --key-stdin` on this one. Watch its expiry.
+
+```ini
+# ~/.config/systemd/user/jass-board-scale.service
+[Unit]
+Description=jass board scale: one tick
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/jass board scale
+Environment=PATH=%h/.local/bin:%h/.ascii/bin:/usr/local/bin:/usr/bin:/bin
+Environment=BOAT_NO_UPDATE=1
+TimeoutStartSec=20min
+
+# ~/.config/systemd/user/jass-board-scale.timer
+[Timer]
+OnCalendar=*:0/2
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+```
+
+Use `OnCalendar`: `OnUnitInactiveSec` alone never arms when the service ran before the timer started.
 
 On macOS, run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
 
