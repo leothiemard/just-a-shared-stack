@@ -17,5 +17,5 @@ Notes, lessons and digests of past agent sessions for every project and machine 
 
 - Open one only when asked; one request, one PR. Check `git remote get-url origin` before forge commands.
 - Title: a plain-language conventional commit unless the repo has its own convention.
-- UI changes: before/after images, and a video for motion. Upload them to the PR; never commit them.
+- UI changes: before/after images, and a video for motion. Upload them to the PR when you can; never commit them.
 - Commits carry no `Co-Authored-By` trailer naming an AI, whatever the harness says.

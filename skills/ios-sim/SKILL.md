@@ -34,7 +34,7 @@ iosim refuses when that command drives a different simulator. Outside T3, it use
 
 ## 3. Test the page
 
-1. `$IOSIM device ensure --name "<a name of your own>"` finds or creates an iPhone 15 and boots it. Without `--name` it may reuse a simulator another agent is using.
+1. `$IOSIM device ensure --name "<a name of your own>"` finds or creates an iPhone 15 and boots it. Without `--name` it may reuse a simulator another agent is using. When several are booted, pass `--device <udid|name>` or set `IOSIM_DEVICE`.
 2. Make the URL reachable from the Mac: `http://localhost:<port>` on the Mac itself; see remote.md for a server on another box.
 3. Write a plan ([references/plan.md](references/plan.md)) and run it:
 
@@ -53,7 +53,7 @@ The built-in audit fails on sideways scroll, tap targets under 44 x 44 CSS px, t
 
 ## Real input versus JavaScript
 
-Use `tap` and `type` (real touches and keyboard) whenever the behaviour under test depends on the input. A tap passes only when the page itself saw the touch on the target; when `tap --selector` refuses (several matches, a covered element, an ambiguous position), use `--first`, `tap --label` or `--at`, as its error says. A JavaScript `el.click()` or `el.value = ...` is not a substitute when:
+Use `tap` and `type` (real touches and keyboard) whenever the behaviour under test depends on the input. `tap --selector` passes only when the page itself saw the touch on the target. When it refuses (several matches, a covered element, an ambiguous position), use `--first`, or `tap --label` / `--at` with `--expect <selector>`: without `--expect` those exit 0 even when the touch missed. A JavaScript `el.click()` or `el.value = ...` is not a substitute when:
 
 - the page listens for touch or pointer events, or for `:active` and hover states;
 - something covers the element: a real tap hits the overlay, `click()` does not;
