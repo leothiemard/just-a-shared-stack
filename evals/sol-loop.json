@@ -39,8 +39,8 @@
     },
     {
       "id": 7,
-      "prompt": "It is 2026-11-25. Run a sol loop on this change. Neon is unavailable but Sol is. What do you do?",
-      "expected_output": "During the trial through 2026-12-03 the reviewer is Gemini Neon. Report Neon as unavailable; do not fall back to Sol or another Gemini model unless the user asks. From 2026-12-04, Sol reviews as written.",
+      "prompt": "Run a sol loop on this change, and use Gemini Neon as the reviewer this time.",
+      "expected_output": "Use Gemini Neon as the reviewer because the user asked; if Neon is unavailable, report the blocker instead of substituting Sol or another model.",
       "files": []
     }
   ]

@@ -12,12 +12,6 @@ your code in a loop.
 Make the most minimal possible changes to appease the Sol reviewers. Be careful
 of scope creep and don't be scared to push back.
 
-Reviewer trial: through 2026-12-03, the reviewer is Gemini Neon
-(`gemini-4-neon`, Antigravity provider) instead of GPT Sol. Read every "Sol"
-below as Neon, including the PR line and report. Never use another Gemini
-model. If Neon is unavailable, report the blocker; do not fall back to Sol
-unless the user asks. From 2026-12-04, use Sol as written.
-
 ## Budget
 
 - Default: 3 rounds total. Round 1 is full. Later rounds check only
