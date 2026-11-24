@@ -178,7 +178,7 @@ Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claime
 
 `--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the scaler's box sleeps no tick runs; the VMs still stop themselves, but waiting tasks wake nothing. Prefer a Linux box that stays on, and run the scaler on one box only: the lock that keeps ticks apart is per box.
 
-On Linux, run a tick every 2 minutes with a systemd user timer (`systemctl --user enable --now jass-board-scale.timer`; `disable --now` to stop; `loginctl enable-linger $USER` so it runs without a login). On a headless box, sign `boat` in with an API key limited to the pool's VMs: `boat api-key create <name> --preset full-sandbox --sandbox <id> ...` on a signed-in box, piped into `boat login --key-stdin` on this one. Watch its expiry.
+On Linux, run a tick every 2 minutes with a systemd user timer (`systemctl --user enable --now jass-board-scale.timer`; `disable --now` to stop; `loginctl enable-linger $USER` so it runs without a login). On a headless box, sign `boat` in with an API key limited to the pool's VMs: `boat api-key create <name> --actions sandbox.read,sandbox.update,sandbox.resume,sandbox.stop,exec,account.read --sandbox <id> ...` on a signed-in box, piped into `boat login --key-stdin` on this one. The `full-sandbox` preset cannot resume a VM. A key cannot outlive the key that created it, so watch its expiry.
 
 ```ini
 # ~/.config/systemd/user/jass-board-scale.service
