@@ -73,6 +73,8 @@ Commands you may use yourself: `jass doctor` (health and context budget), `jass 
 
 ## Leave agents working unattended
 
+Start unattended threads on a reachable Linux box that can stay awake, with the project's checkout, tools and provider sign-in ready there. Open that environment from your Mac to steer the work. To send a child from an active thread to another box, find the link with `t3 environment list` and name the destination in the brief. The orchestrator passes its ID as `target.environmentId` to `delegate_task`. For independent jobs that can wait for a VM to start, use the [board queue](#queue-work-on-a-board). The scaler wakes VMs for queued work.
+
 Before you leave agents working overnight or while you are away, on every box that hosts work:
 
 ```sh
@@ -159,7 +161,7 @@ Run `loginctl enable-linger $USER` once and `systemctl --user daemon-reload` aft
 
 ### Wake VMs when tasks wait
 
-`jass board scale` runs on an always-on box (the Mac) and starts stopped VMs when their tasks wait; the VMs stop themselves as above. Give the VMs their own project keys (`fma-boat` mapped to the checkout in each VM's `box.json`), so the Mac and other boxes never take those tasks, and queue a task there with `jass board add fma-boat "<brief>"`. On the Mac, add a `scale` block to `~/.config/jass/box.json` and sign the `boat` CLI in:
+`jass board scale` runs on an always-on box and starts stopped VMs when their tasks wait; the VMs stop themselves as above. Give the VMs their own project keys (`fma-boat` mapped to the checkout in each VM's `box.json`), so the Mac and other boxes never take those tasks, and queue a task there with `jass board add fma-boat "<brief>"`. On the box that runs the scaler, add a `scale` block to `~/.config/jass/box.json` and sign the `boat` CLI in:
 
 ```json
 "scale": {
@@ -176,7 +178,7 @@ Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claime
 
 `--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the Mac sleeps no tick runs; the VMs still stop themselves.
 
-Run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
+On macOS, run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
