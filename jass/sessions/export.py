@@ -211,3 +211,16 @@ def stats_table(groups: list[dict], by: str) -> str:
                 f" {human(g['output']):>7} {g['subagents']:>9} {g['long']:>6} {g['long_share']:>6.0%}")
 
     return "\n".join([head, *(line(g) for g in groups), line(total)]) + "\n"
+
+
+def delegate_stats_table(groups: list[dict]) -> str:
+    if not groups:
+        return "No T3 delegates in this period."
+    width = max(5, max(len(g["model"]) for g in groups))
+    lines = [f"{'model':<{width}} {'delegates':>9} {'share':>6} {'completed':>9} {'timed':>6} {'avg min':>7}"]
+    total = sum(g["delegates"] for g in groups)
+    for g in groups:
+        minutes = "-" if g["avg_minutes"] is None else f"{g['avg_minutes']:.2f}"
+        lines.append(f"{g['model']:<{width}} {g['delegates']:>9} {g['delegates'] / total:>6.1%}"
+                     f" {g['completed']:>9} {g['timed']:>6} {minutes:>7}")
+    return "\n".join(lines)

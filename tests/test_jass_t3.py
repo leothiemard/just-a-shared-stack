@@ -177,3 +177,34 @@ class T3SourceTests(Sandbox):
         self.assertRegex(table.splitlines()[1], r"^\d{4}-W\d{2} ")
         self.assertRegex(table.splitlines()[-1], r"^total\s+6\s")
         self.assertIn(">200K", table.splitlines()[0])
+
+    def test_delegate_stats_read_t3_directly(self):
+        # An old attempt and a native child are outside this report's scope.
+        self.store.subagent("parent", "child", "app_owned", model="fast", started="2000-01-01T23:59:00Z")
+        self.store.subagent("parent", "child", "provider_native", model="fast")
+        start = "2000-01-02T00:00:00Z"
+        for status, finish in [
+            ("completed", "2000-01-02T00:01:00Z"),
+            ("completed", "2000-01-02T00:02:00Z"),
+            ("completed", None),
+            ("completed", "2000-01-01T23:59:59Z"),
+            ("failed", "2000-01-02T00:15:00Z"),
+            ("running", None),
+        ]:
+            self.store.subagent("parent", "child", "app_owned", status, model="fast", started=start, completed=finish)
+        self.store.subagent("parent", "child", "app_owned", "running", model="", started=start)
+
+        args = ("sessions", "stats", "--by", "delegate-model", "--since", "2000-01-02")
+        groups = json.loads(self.ok(*args, "--json"))
+        self.assertEqual(groups[0], {"model": "fast", "delegates": 6, "completed": 4, "timed": 2, "avg_minutes": 1.5})
+        self.assertIn({"model": "(unknown)", "delegates": 1, "completed": 0, "timed": 0, "avg_minutes": None}, groups)
+        self.assertRegex(self.ok(*args), r"fast\s+6\s+[\d.]+%\s+4\s+2\s+1\.50")
+        self.assertEqual(self.ok("sessions", "stats", "--by", "delegate-model", "--since", "9999-01-01").strip(),
+                         "No T3 delegates in this period.")
+
+    def test_delegate_stats_report_schema_drift(self):
+        self.store.drop_column(f"{t3.T}subagents", "completed_at")
+        code, _, error = self.jass("sessions", "stats", "--by", "delegate-model")
+        self.assertEqual(code, 1)
+        self.assertIn("Cannot read T3 delegate stats", error)
+        self.assertIn("completed_at", error)

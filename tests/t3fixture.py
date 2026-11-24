@@ -22,7 +22,7 @@ CREATE INDEX {T}messages_thread_created_idx ON {T}messages (thread_id, created_a
 CREATE TABLE {T}provider_turns (provider_turn_id TEXT PRIMARY KEY, thread_id TEXT, payload_json TEXT);
 CREATE TABLE {T}provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, first_run_ordinal INTEGER, payload_json TEXT);
 CREATE TABLE {T}subagents (subagent_id TEXT PRIMARY KEY, thread_id TEXT, child_thread_id TEXT, origin TEXT, status TEXT,
-  started_at TEXT, payload_json TEXT);
+  started_at TEXT, completed_at TEXT, payload_json TEXT);
 CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, workspace_root TEXT, deleted_at TEXT);
 CREATE TABLE projection_thread_pull_requests (thread_id TEXT, url TEXT);
 """
@@ -140,10 +140,12 @@ class Store:
             conn.execute(f"INSERT INTO {T}provider_threads VALUES (?, ?, 1, ?)",
                          (self.next_id("pth"), thread_id, json.dumps({"nativeThreadRef": {"driver": driver, "nativeId": native_id}})))
 
-    def subagent(self, parent: str, child: str, origin: str, status: str = "completed", title: str = "", model: str = "model-b") -> None:
+    def subagent(self, parent: str, child: str, origin: str, status: str = "completed", title: str = "",
+                 model: str = "model-b", *, started: str = "", completed: str | None = None) -> None:
         with self.db() as conn:
-            conn.execute(f"INSERT INTO {T}subagents VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (self.next_id("sa"), parent, child, origin, status, stamp(300), json.dumps({"title": title, "model": model})))
+            conn.execute(f"INSERT INTO {T}subagents VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         (self.next_id("sa"), parent, child, origin, status, started or stamp(300), completed,
+                          json.dumps({"title": title, "model": model})))
 
     def pull_request(self, thread_id: str, url: str) -> None:
         with self.db() as conn:
