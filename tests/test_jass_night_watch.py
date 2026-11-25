@@ -142,6 +142,25 @@ class StateTests(Sandbox):
         self.assertEqual(found["link"]["provider"], "claudeAgent")
         self.assertEqual([t["id"] for t in t3state.snapshot(self.path, ["nothing"])], [])
 
+    def test_a_card_the_owner_moved_past_or_whose_run_ended_does_not_block(self):
+        # A link card asked in run 1 stays `waiting` in T3's store after the owner wrote again and later runs finished.
+        self.lane("moved-on")
+        self.store.item("moved-on", "link_request", "waiting", at=150)
+        self.store.turn("moved-on", "Clean everything", "Done.", at=50)
+        # An agent's message or an idle `/compact` is not the owner moving past it.
+        self.lane("agent-wrote")
+        self.store.item("agent-wrote", "link_request", "waiting", at=150)
+        self.store.turn("agent-wrote", "Child result: done", "Noted.", at=50, createdBy="agent")
+        self.store.turn("agent-wrote", "/compact", "Compacted.", at=40)
+        # A card asked after the owner's last message still waits, whatever ran before it.
+        self.lane("asked-last")
+        self.store.turn("asked-last", "Link the box", "Asked for the link.", at=50)
+        self.store.item("asked-last", "link_request", "waiting", at=49)
+        # A secret asks only while its run is live: an agent waits in the run for it.
+        self.lane("secret-done")
+        self.store.item("secret-done", "secret_request", "waiting", secretStatus="pending")
+        self.assertEqual(self.states(), {"moved-on": "ended", "agent-wrote": "blocked", "asked-last": "blocked", "secret-done": "ended"})
+
     def test_failure_kinds(self):
         self.assertEqual([t3state.failure_kind(f) for f in (OOM, DNS, LIMIT, {"class": "transport_error", "code": "unknown"}, {"class": "provider_error", "message": "403"}, AUTH,
                                                             {"class": "provider_error", "message": "exit 1 at line 4031"}, {})],
