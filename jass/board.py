@@ -241,13 +241,25 @@ class Board:
             raise BoardError(f"create in {channel} failed: {self.reason(data, raw)}")
         return data["task"]
 
+    PAGE = 50
+
     def tasks(self, channel: str, state: str) -> list[dict]:
-        rc, data, raw = self.run("tasks", channel, "--state", state)
-        if rc != 0 and self.reason(data, raw) == "channel_not_found":
-            return []
-        if rc != 0 or data is None:
-            raise BoardError(f"listing tasks in {channel} failed: {self.reason(data, raw)}")
-        return data.get("tasks") or []
+        """Every task, oldest first. The CLI lists one page at a time and prints a cursor even on the last page."""
+        found: list[dict] = []
+        after = None
+        while True:
+            args = ["tasks", channel, "--state", state, "--limit", str(self.PAGE)] + (["--after", after] if after else [])
+            rc, data, raw = self.run(*args)
+            if rc != 0 and self.reason(data, raw) == "channel_not_found":
+                return found
+            if rc != 0 or data is None:
+                raise BoardError(f"listing tasks in {channel} failed: {self.reason(data, raw)}")
+            page = data.get("tasks") or []
+            found += page
+            cursor = data.get("cursor")
+            if len(page) < self.PAGE or not cursor or cursor == after:
+                return found
+            after = cursor
 
 
 class T3:
