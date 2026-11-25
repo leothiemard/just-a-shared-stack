@@ -178,7 +178,7 @@ Each tick resumes stopped pool VMs until one runs per `per_vm` waiting or claime
 
 `--status` shows the pool, spend and last actions; `--off` and `--on` pause and resume it, and `--off` takes effect at once, even during a tick's resume. A VM you resume by hand for setup counts too: switch scaling `--off` first, or it is stopped after 15 minutes without tasks. While the scaler's box sleeps no tick runs; the VMs still stop themselves, but waiting tasks wake nothing. Prefer a Linux box that stays on, and run the scaler on one box only: the lock that keeps ticks apart is per box.
 
-On Linux, run a tick every 2 minutes with a systemd user timer (`systemctl --user enable --now jass-board-scale.timer`; `disable --now` to stop; `loginctl enable-linger $USER` so it runs without a login). On a headless box, sign `boat` in with an API key limited to the pool's VMs: `boat api-key create <name> --actions sandbox.read,sandbox.update,sandbox.resume,sandbox.stop,exec,account.read --sandbox <id> ...` on a signed-in box, piped into `boat login --key-stdin` on this one. The `full-sandbox` preset cannot resume a VM. A key cannot outlive the key that created it, so watch its expiry.
+On Linux, run a tick every 2 minutes with a systemd user timer (`systemctl --user daemon-reload` after writing the units, then `systemctl --user enable --now jass-board-scale.timer`; `disable --now` to stop; `loginctl enable-linger $USER` so it runs without a login). On a headless box, sign `boat` in with an API key limited to the pool's VMs: `boat api-key create <name> --actions sandbox.read,sandbox.update,sandbox.resume,sandbox.stop,exec,account.read --sandbox <id> [--sandbox <id> ...]` on a signed-in box, piped into `boat login --key-stdin` on this one. The `full-sandbox` preset cannot resume a VM. A key cannot outlive the key that created it, so watch its expiry.
 
 ```ini
 # ~/.config/systemd/user/jass-board-scale.service
@@ -191,7 +191,7 @@ Type=oneshot
 ExecStart=%h/.local/bin/jass board scale
 Environment=PATH=%h/.local/bin:%h/.ascii/bin:/usr/local/bin:/usr/bin:/bin
 Environment=BOAT_NO_UPDATE=1
-TimeoutStartSec=20min
+TimeoutStartSec=35min
 
 # ~/.config/systemd/user/jass-board-scale.timer
 [Timer]
@@ -202,7 +202,9 @@ AccuracySec=10s
 WantedBy=timers.target
 ```
 
-Use `OnCalendar`: `OnUnitInactiveSec` alone never arms when the service ran before the timer started.
+Use `OnCalendar`: `OnUnitInactiveSec` alone never arms until the service has run and exited once, so the timer stays idle after a reboot. `TimeoutStartSec` must cover one tick that resumes VMs one after another (up to 15 minutes each); raise it for a pool of more than two.
+
+Put the folders of `jass`, `boat`, `vercel` and `node` in the unit's `PATH` if they live elsewhere (`command -v jass boat vercel node`), for example under nvm or a global npm prefix. The tick logs to `~/.cache/jass/scale/scale-<date>.log` and its errors to the journal (`journalctl --user -u jass-board-scale`).
 
 On macOS, run a tick every 2 minutes with launchd (`launchctl load ~/Library/LaunchAgents/jass.board-scale.plist`; `unload` to stop):
 
@@ -222,7 +224,7 @@ On macOS, run a tick every 2 minutes with launchd (`launchctl load ~/Library/Lau
 </plist>
 ```
 
-Put the folders of `jass`, `boat` and `vercel` in that `PATH` (`command -v jass boat vercel`): a login `zsh` reads `.zprofile` but not `.zshrc`. The tick logs to `~/.cache/jass/scale/scale-<date>.log` and its errors to `/tmp/jass-board-scale.err`. A tick that finds an earlier one still resuming a VM exits at once.
+Put the folders of `jass`, `boat`, `vercel` and `node` in that `PATH` (`command -v jass boat vercel node`): a login `zsh` reads `.zprofile` but not `.zshrc`. The tick logs to `~/.cache/jass/scale/scale-<date>.log` and its errors to `/tmp/jass-board-scale.err`. A tick that finds an earlier one still resuming a VM exits at once.
 
 ## Add a skill
 

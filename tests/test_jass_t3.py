@@ -202,6 +202,21 @@ class T3SourceTests(Sandbox):
         self.assertEqual(self.ok("sessions", "stats", "--by", "delegate-model", "--since", "9999-01-01").strip(),
                          "No T3 delegates in this period.")
 
+    def test_delegate_stats_edge_rows(self):
+        # Offsets compare in UTC; odd model values group as unknown or as text; no --since keeps unstarted rows.
+        self.store.subagent("parent", "child", "app_owned", model="x", started="2000-01-02T00:30:00+02:00")
+        self.store.subagent("parent", "child", "app_owned", model="x", started="2000-01-01T23:30:00-02:00")
+        self.store.subagent("parent", "child", "app_owned", "running", model="   ", started="2000-01-02T00:00:00Z")
+        with self.store.db() as conn:
+            conn.execute(f"INSERT INTO {t3.T}subagents VALUES ('sa-null', 'parent', 'child', 'app_owned', 'running', NULL, NULL, ?)",
+                         (json.dumps({"model": 123}),))
+        since = json.loads(self.ok("sessions", "stats", "--by", "delegate-model", "--since", "2000-01-02", "--json"))
+        counts = lambda groups: {g["model"]: g["delegates"] for g in groups if g["model"] != "model-b"}  # fixture rows
+        self.assertEqual(counts(since), {"x": 1, "(unknown)": 1})
+        every = json.loads(self.ok("sessions", "stats", "--by", "delegate-model", "--json"))
+        self.assertEqual(counts(every), {"x": 2, "(unknown)": 1, "123": 1})
+        self.assertIn("123", self.ok("sessions", "stats", "--by", "delegate-model"))
+
     def test_delegate_stats_report_schema_drift(self):
         self.store.drop_column(f"{t3.T}subagents", "completed_at")
         code, _, error = self.jass("sessions", "stats", "--by", "delegate-model")
