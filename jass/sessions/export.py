@@ -87,18 +87,20 @@ def stale_digests(root: Path, box: str, ids: set[str]) -> list[Path]:
     return out
 
 
-def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry_run: bool = False, prune: bool = False) -> dict:
+def run(cfg: dict, root: Path, *, everything: bool = False, since: str = "", dry_run: bool = False, prune: bool = False,
+        idle_minutes: float | None = None) -> dict:
     """Export finished top-level sessions. Returns counts and the written paths.
 
     Sessions updated before the last run's horizon (its time minus the idle window)
     were final then, so incremental runs ask sources only for newer ones. `prune`
     reads every session instead and deletes this box's digests of sessions that are
     now left out, which an incremental run would never see again; it writes only what
-    an incremental run would."""
+    an incremental run would. `idle_minutes` replaces `sessions.idle_minutes`; 0 exports sessions that just finished,
+    for a box about to stop."""
     state = load_state(root)
     seen = state["sessions"]
     now = dt.datetime.now(dt.timezone.utc)
-    idle = dt.timedelta(minutes=cfg["sessions"]["idle_minutes"])
+    idle = dt.timedelta(minutes=cfg["sessions"]["idle_minutes"] if idle_minutes is None else idle_minutes)
     horizon = None if everything or not state.get("horizon") else dt.datetime.fromisoformat(state["horizon"])
     records, complete = collect(cfg, None if prune else horizon)
     never = excluded_ids(root)

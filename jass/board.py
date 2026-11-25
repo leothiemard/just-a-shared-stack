@@ -852,6 +852,112 @@ def status(cfg: dict, args) -> int:
     return 0
 
 
+PR_URL = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
+RESULT_HEADER = "Result from T3 thread"
+OPEN = ("waiting", "ready", "claimed", "blocked")
+
+
+def parse_time(text: str, now: float) -> float:
+    """`--since` as an epoch: a span back from now (`90m`, `6h`, `2d`) or an ISO date or time (UTC when it has no offset)."""
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([mhd])", text.strip())
+    if match:
+        return now - float(match.group(1)) * {"m": 60, "h": 3600, "d": 86400}[match.group(2)]
+    try:
+        when = dt.datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise BoardError(f"Cannot read --since {text!r}. Use a span like 90m, 6h, 2d or a time like 2026-11-25T06:00Z.")
+    return (when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)).timestamp()
+
+
+def last_activity(item: dict) -> float:
+    """When the task last changed as far as the listing shows: its newest reply, its edit or its creation. The worker
+    posts the thread's result just before it completes or fails a task, so for a settled task this is when it settled."""
+    message = item.get("message", item)
+    stamps = [message.get("createdAt"), message.get("editedAt"), (item.get("last") or {}).get("createdAt")]
+    return max([e for e in (epoch(s) for s in stamps if s) if e is not None] or [0.0])
+
+
+def result_text(item: dict, read) -> str:
+    """The worker's result reply for a task: the listing's last reply when it is that, else a read of the task."""
+    last = item.get("last") or {}
+    if is_worker(last) and str(last.get("text", "")).startswith(RESULT_HEADER):
+        return last["text"]
+    try:
+        replies = read(item.get("message", item)["id"]).get("replies")
+    except BoardError:
+        return ""
+    found = [m for m in replies if is_worker(m) and str(m.get("text", "")).startswith(RESULT_HEADER)] if isinstance(replies, list) else []
+    return found[-1]["text"] if found else ""
+
+
+def report_rows(items: list[dict], since: float, now: float, stale_s: float, read) -> list[dict]:
+    """Tasks settled since `since` (`done`, `failed`) and open tasks that wait for a person now (`stuck`), whenever they
+    started: blocked, waiting for an answer or a check in T3, ready with no worker for `stale_s`, or waiting for a task
+    that failed or was canceled (a failed need never completes until someone reopens it)."""
+    states = {(i.get("message", i)).get("id"): ((i.get("message", i)).get("task") or {}).get("state", "") for i in items}
+    changed = {(i.get("message", i)).get("id"): last_activity(i) for i in items}
+    rows = []
+    for item in items:
+        message = item.get("message", item)
+        task = message.get("task") or {}
+        labels = message.get("labels") or {}
+        state, when = task.get("state", ""), last_activity(item)
+        kind, why = "", ""
+        if state == "completed" and when >= since:
+            kind, why = "done", task.get("result") or ""
+        elif state == "failed" and when >= since:
+            kind, why = "failed", task.get("reason") or ""
+        elif state in OPEN:
+            dead = [n for n in task.get("needs") or [] if states.get(n) in ("failed", "canceled")]
+            if state == "blocked":
+                kind, why = "stuck", "blocked: " + str((task.get("blocked") or {}).get("reason") or "no reason given")
+            elif labels.get(WAITING) == "answer":
+                kind, why = "stuck", "waiting for an answer in T3"
+            elif labels.get(WAITING):
+                kind, why = "stuck", "no progress: check its T3 thread"
+            elif state == "waiting" and dead:
+                kind, why = "stuck", f"waits for {', '.join(dead)}, which {'failed or was canceled' if len(dead) == 1 else 'failed or were canceled'}"
+            elif state == "ready":
+                # A task becomes ready when its last need completes, which leaves no trace on the task itself.
+                ready = max([when] + [changed.get(n, 0.0) for n in task.get("needs") or []])
+                if now - ready >= stale_s:
+                    kind, why = "stuck", f"ready for {int((now - ready) // 60)} min; no worker took it"
+        if not kind:
+            continue
+        prs = list(dict.fromkeys(PR_URL.findall(result_text(item, read)))) if kind != "stuck" else []
+        rows.append({"kind": kind, "id": message.get("id"), "channel": message.get("channel"), "task": first_line(message.get("text", ""), 70),
+                     "detail": first_line(str(why), 160), "box": labels.get(BOX, ""), "thread": labels.get(THREAD, ""), "prs": prs,
+                     "when": dt.datetime.fromtimestamp(when, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if when else ""})
+    order = {"failed": 0, "stuck": 1, "done": 2}
+    return sorted(rows, key=lambda r: (order[r["kind"]], r["when"]))
+
+
+def report(cfg: dict, args, board: Board | None = None, now: float | None = None) -> int:
+    """Board tasks settled since a time and those stuck now, each with its box, T3 thread and PRs: the summary an
+    owner (or a scheduled watch thread) reads instead of every box's T3 sidebar."""
+    s = settings(cfg)
+    prefix = s.get("channel", "build").rstrip("/")
+    board = board or Board(args.as_profile)
+    now = time.time() if now is None else now
+    since = parse_time(args.since, now)
+    items = board.tasks(f"{prefix}/{args.project}" if args.project else f"{prefix}/", "all")
+    rows = report_rows(items, since, now, float(args.stale_minutes) * 60, board.read)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    counts = {kind: sum(r["kind"] == kind for r in rows) for kind in ("done", "failed", "stuck")}
+    stamp = dt.datetime.fromtimestamp(since, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    print(f"Board since {stamp}: {counts['done']} done, {counts['failed']} failed, {counts['stuck']} stuck now")
+    for row in rows:
+        print(f"\n{row['kind']:<7} {row['channel']}  {row['task']}")
+        print(f"{'':7} {row['id']}" + (f"  · {row['box']} {row['thread']}" if row["thread"] else "") + (f"  · {row['when']}" if row["when"] else ""))
+        if row["detail"]:
+            print(f"{'':7} {row['detail']}")
+        for url in row["prs"]:
+            print(f"{'':7} {url}")
+    return 0
+
+
 # `@vercel/board inspect` is the only visual view of a board: a local server that acts as the signed-in user.
 # Pinned, because npx runs whatever it downloads; bump it after checking the new version's `inspect --help`.
 INSPECT_PACKAGE = "@vercel/board@0.53.0"

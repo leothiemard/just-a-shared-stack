@@ -684,3 +684,113 @@ class OpenTests(unittest.TestCase):
                 mock.patch("jass.board.open_board", return_value=0) as opened:
             self.assertEqual(cli.cmd_board(args), 0)
         self.assertEqual(opened.call_args.args[0], {})
+
+
+def listed(id_, state, minutes_ago, labels=None, needs=(), last=None, text="Fix the order email.", **task):
+    """A task as `vercel board tasks --json` lists it: last activity `minutes_ago` before BASE."""
+    message = {"id": id_, "channel": "build/demo", "text": text, "labels": dict(labels or {}), "createdAt": iso(-minutes_ago * 60 - 600),
+               "task": dict({"state": state, "needs": list(needs), "blocked": None, "result": None, "reason": None}, **task)}
+    item = {"message": message}
+    if last is not None:
+        item["last"] = dict(last, createdAt=iso(-minutes_ago * 60))
+    else:
+        message["createdAt"] = iso(-minutes_ago * 60)
+    return item
+
+
+def worker_result(text):
+    return {"by": {"profile": "worker-boat-w1"}, "text": f"Result from T3 thread `mcp:a` (completed):\n\n{text}"}
+
+
+class ReportTests(unittest.TestCase):
+    PR = "https://github.com/acme/shop/pull/12"
+
+    def rows(self, items, since_minutes=360, stale=30, replies=None):
+        reads = []
+
+        def read(task_id):
+            reads.append(task_id)
+            if replies is None:
+                raise board.BoardError("read failed")
+            return {"message": {}, "replies": replies}
+
+        rows = board.report_rows(items, BASE - since_minutes * 60, BASE, stale * 60, read)
+        return rows, reads
+
+    def test_settled_tasks_in_the_window_with_box_thread_and_pr(self):
+        labels = {board.THREAD: "mcp:a", board.BOX: "boat-w1"}
+        items = [
+            listed("old", "completed", 600, labels, result="Done long ago", last=worker_result("Done")),
+            listed("ok", "completed", 30, labels, result="Fixed it", last=worker_result(f"Fixed it\n\nPR: {self.PR} and again {self.PR}#issuecomment-1")),
+            listed("bad", "failed", 10, labels, reason="timebox: still working after 60 minutes"),
+            listed("gone", "canceled", 5, reason="deleted"),
+        ]
+        rows, reads = self.rows(items, replies=[worker_result(f"FAILED: no\n\n{self.PR}"), {"by": {"profile": "lead"}, "text": "Result from T3 thread"}])
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("failed", "bad"), ("done", "ok")])
+        done = rows[1]
+        self.assertEqual((done["box"], done["thread"], done["prs"], done["detail"]), ("boat-w1", "mcp:a", [self.PR], "Fixed it"))
+        self.assertEqual(rows[0]["prs"], [self.PR])  # found by reading the task: its last reply was not the result
+        self.assertEqual(reads, ["bad"])
+
+    def test_a_failed_read_leaves_the_row_without_prs(self):
+        rows, _ = self.rows([listed("bad", "failed", 10, reason="FAILED: x")])
+        self.assertEqual((rows[0]["kind"], rows[0]["prs"]), ("failed", []))
+
+    def test_stuck_tasks_count_whenever_they_started(self):
+        items = [
+            listed("blocked", "blocked", 2000, blocked={"reason": "thread waits for an answer"}),
+            listed("asks", "claimed", 2000, {board.WAITING: "answer", board.THREAD: "mcp:q", board.BOX: "boat-w2"}),
+            listed("quiet", "claimed", 2000, {board.WAITING: "check"}),
+            listed("orphan", "ready", 45),
+            listed("fresh", "ready", 5),
+            listed("working", "claimed", 50),
+            listed("failed-need", "failed", 2000, reason="FAILED: x"),
+            listed("review", "waiting", 2000, needs=["failed-need"]),
+            listed("patient", "waiting", 2000, needs=["working"]),
+            listed("just-done", "completed", 5, result="ok", last=worker_result("ok")),
+            listed("next", "ready", 2000, needs=["just-done"]),
+        ]
+        rows, reads = self.rows(items)
+        stuck = {r["id"]: r["detail"] for r in rows if r["kind"] == "stuck"}
+        self.assertEqual(set(stuck), {"blocked", "asks", "quiet", "orphan", "review"})
+        self.assertEqual(stuck["blocked"], "blocked: thread waits for an answer")
+        self.assertEqual(stuck["asks"], "waiting for an answer in T3")
+        self.assertIn("ready for 45 min", stuck["orphan"])
+        self.assertIn("failed-need", stuck["review"])
+        self.assertEqual(reads, [])  # stuck tasks have no result to read
+
+    def test_since_takes_spans_and_times(self):
+        self.assertEqual(board.parse_time("90m", BASE), BASE - 5400)
+        self.assertEqual(board.parse_time("6h", BASE), BASE - 6 * 3600)
+        self.assertEqual(board.parse_time("2d", BASE), BASE - 2 * 86400)
+        self.assertEqual(board.parse_time("2026-11-25T06:00Z", BASE), board.parse_time("2026-11-25T07:00+01:00", BASE))
+        self.assertEqual(board.parse_time("2026-11-25T06:00", BASE), board.parse_time("2026-11-25T06:00Z", BASE))
+        with self.assertRaisesRegex(board.BoardError, "--since"):
+            board.parse_time("yesterday", BASE)
+
+    def test_report_prints_counts_and_lists_every_channel(self):
+        import contextlib
+        import io
+
+        from jass import cli
+
+        class ListBoard:
+            def __init__(self):
+                self.listed = []
+
+            def tasks(self, channel, state):
+                self.listed.append((channel, state))
+                return [listed("ok", "completed", 30, {board.THREAD: "mcp:a", board.BOX: "boat-w1"}, result="Fixed it",
+                               last=worker_result(f"Fixed it\n{ReportTests.PR}"))]
+
+            def read(self, task_id):
+                raise AssertionError("no read needed")
+
+        fake, out = ListBoard(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(board.report(CFG, cli.parse(["board", "report", "--since", "6h"]), board=fake, now=BASE), 0)
+        self.assertEqual(fake.listed, [("build/", "all")])
+        text = out.getvalue()
+        self.assertIn("1 done, 0 failed, 0 stuck now", text)
+        self.assertIn("boat-w1 mcp:a", text)
+        self.assertIn(self.PR, text)

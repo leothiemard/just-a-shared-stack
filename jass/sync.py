@@ -91,7 +91,9 @@ def write_if_changed(path: Path, text: str) -> None:
 FIRST_PUSH_HINT = "The lore remote is empty; nothing was pushed. Publish this lore there once with: jass sync --first-push"
 
 
-def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False, first_push: bool = False) -> int:
+def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False, first_push: bool = False, before_stop: bool = False) -> int:
+    """`before_stop`: this box is about to stop (a cloud VM after its board worker), so export every finished session
+    now instead of after `sessions.idle_minutes`, which would leave them unreadable until the box runs again."""
     root = lore.open_lore(cfg)
 
     def say(message: str) -> None:
@@ -116,8 +118,8 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
             raise not_empty()
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
-        if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
-            result = export.run(cfg, root)
+        if cfg["sessions"]["export"] and (before_stop or not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS)):
+            result = export.run(cfg, root, idle_minutes=0 if before_stop else None)
             state["last_export"] = now().isoformat()
             if result["written"]:
                 say(f"Exported {len(result['written'])} session digest(s).")

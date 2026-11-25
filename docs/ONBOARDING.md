@@ -110,6 +110,7 @@ Queue a task, from your terminal or by asking an agent:
 jass board add shop "Fix the date shown on order emails (apps/web/emails/order.tsx). Done when: npm test -- order passes."
 jass board add shop --needs <id> "Review the order-email fix on its branch; report problems, change nothing."
 jass board status            # open tasks, their state and their T3 thread
+jass board report --since 6h # tasks done, failed and stuck, with box, thread and pull requests
 jass board open              # the board in a browser, as you: read, post, react
 ```
 
@@ -152,12 +153,25 @@ Description=jass board worker that stops this VM when the queue is empty
 [Service]
 # Login shells: boat puts the VM's environment variables (tokens, its in-VM key) there only.
 ExecStart=/bin/bash -lc 'exec jass board work --workers 2 --idle-exit 3'
-ExecStopPost=/bin/bash -lc 'boat stop self'
+# Export this VM's session digests to the lore, then stop the VM whatever the export did.
+ExecStopPost=/bin/bash -lc 'timeout -k 10 150 jass sync --before-stop; boat stop self'
+# Above systemd's 90 s default, which would kill the line above before `boat stop self`.
+TimeoutStopSec=5min
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=no
 ```
 
 Run `loginctl enable-linger $USER` once and `systemctl --user daemon-reload` after writing the unit. Without linger, the user's systemd stops when your SSH session ends, and with it the worker and the VM. Then start it with `systemctl --user start jass-board-vm` after each boot or resume, not `enable`: a VM that stops itself on every start would never stay up for setup. `Restart=no` matters for the same reason. Any end of the worker stops the VM: an empty queue, a crash (its tasks return to the queue when their leases run out), a failure at startup such as no network yet, and a manual `systemctl --user stop` too.
+
+A stopped VM's threads cannot be read, so the stop line first runs `jass sync --before-stop`: it exports the sessions that just finished (without waiting `sessions.idle_minutes`) to `Sessions/<box>/` in the lore and pushes. Give each VM its own box name (`boat-w1`, `boat-w2`, the names in `scale.pool`), so two VMs that stop together write separate box cards. The VM needs a lore clone it can push to (`jass init --box boat-w1 --lore <url> --apply`, with a credential that may write the lore repository, such as a deploy key). That clone gives the VM's agents the whole lore of its zone to read and write, so set it up only on VMs you trust as much as your other boxes. Without one, `jass sync` fails at once and the VM still stops. `timeout` ends an export that hangs (an unreachable remote, a slow push) after 150 seconds; the lore keeps what it committed, and the next stop pushes it. A VM that the scaler stops (no task for `idle_stop_minutes`, the spend cap) runs no stop line; its digests wait for its next stop.
+
+Watch the VMs through the board, not T3 Code's sidebar. A VM that stops whenever the queue is empty looks like a broken machine there, raises sign-in warnings and leaves threads that cannot be settled while it is down. Remove each VM's environment from the sidebar, but keep the agent link (`t3 environment`) that lets an agent on another box read a VM's threads while it runs. Then follow the work with:
+
+- `jass board report --since 6h` on any box: the tasks done and failed in that time and the tasks stuck now (blocked, waiting for an answer, ready with no worker, waiting for a task that failed), each with its box, T3 thread and pull requests. Add `--json` for a script. A scheduled thread on an always-on box can run it and pass on what needs you.
+- The pull requests the tasks open, and their reviews.
+- The VMs' session digests in the lore: `jass recall "<task>" --box boat-w1`.
+
+A finished thread whose run failed or was interrupted stays unsettled on its VM: the brief asks every thread to settle itself, but a failed turn does not, and the `t3` CLI has no command to settle or archive a thread. The report lists those tasks as failed; reopening one (`vercel board tasks reopen <id>`) continues it in the same thread when the VM next runs.
 
 ### Wake VMs when tasks wait
 

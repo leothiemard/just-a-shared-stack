@@ -198,6 +198,21 @@ class SessionsTests(Sandbox):
         self.assertIn("Continued and finished.", (self.lore / first["written"][0]).read_text())
         self.assertEqual(len(list((self.lore / "Sessions").rglob("*.md"))), 1)
 
+    def test_sync_before_stop_exports_sessions_that_just_finished(self):
+        self.store.write_text(json.dumps([record("s1", updated_minutes_ago=4)]))
+        self.assertEqual(self.export([record("s1", updated_minutes_ago=4)])["written"], [])
+        self.ok("sync", "--before-stop")
+        digests = list((self.lore / "Sessions" / "mac").rglob("*.md"))
+        self.assertEqual(len(digests), 1)
+        self.assertIn("Fixed the deploy hook", digests[0].read_text())
+        self.assertEqual(lore.git(self.lore, "status", "--porcelain").stdout.strip(), "")  # committed
+        # The next ordinary export, after the box wakes, rewrites it only once the session changed again.
+        self.assertEqual(self.export([record("s1", updated_minutes_ago=4)])["written"], [])
+        continued = record("s1", updated_minutes_ago=0.1, turn_finals=["a", "Continued after the wake."])
+        self.store.write_text(json.dumps([continued]))
+        self.ok("sync", "--before-stop")
+        self.assertIn("Continued after the wake.", digests[0].read_text())
+
     def test_dry_run_writes_nothing(self):
         result = self.export([record("s1")], "--dry-run")
         self.assertEqual(len(result["written"]), 1)
