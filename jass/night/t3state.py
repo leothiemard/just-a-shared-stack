@@ -49,15 +49,16 @@ AUTH_WORDS = ("authenticat", "unauthorized", "not logged in", "log in again", "s
 # The cards that wait for the owner, as T3's own `waitsOnUser` reads them. A secret card's agent waits in its run, so
 # the card asks only while that run is live. A link card's agent asked without waiting, so the card asks after its
 # run, until the owner writes in the thread again (a message of the owner's own, not one an agent sent and not an
-# idle `/compact`) and so has moved past it.
+# idle `/compact` T3 sent for them; one they typed counts) and so has moved past it.
+WHITESPACE = "char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)"
 SECRET_ASKS = (f"SELECT 'secret', i.turn_item_id FROM {T}turn_items i JOIN {T}runs r ON r.run_id = i.run_id"
                f" WHERE i.thread_id = ? AND i.type = 'secret_request' AND json_extract(i.payload_json, '$.secretStatus') = 'pending'"
                f" AND r.status IN {GOING}")
 LINK_ASKS = (f"SELECT 'link', i.turn_item_id FROM {T}turn_items i WHERE i.thread_id = ? AND i.type = 'link_request' AND i.status = 'waiting'"
              f" AND NOT EXISTS (SELECT 1 FROM {T}messages m WHERE m.thread_id = i.thread_id AND m.role = 'user'"
              f" AND json_extract(m.payload_json, '$.createdBy') = 'user'"
-             f" AND NOT (lower(trim(coalesce(json_extract(m.payload_json, '$.text'), ''))) = '/compact'"
-             f" AND coalesce(json_array_length(m.payload_json, '$.attachments'), 0) = 0)"
+             f" AND NOT (lower(trim(json_extract(m.payload_json, '$.text'), {WHITESPACE})) = '/compact'"
+             f" AND coalesce(json_array_length(m.payload_json, '$.attachments'), 0) = 0 AND json_extract(m.payload_json, '$.idleCompaction') IS NOT NULL)"
              f" AND m.updated_at > coalesce(json_extract(i.payload_json, '$.startedAt'), i.updated_at))")
 NETWORK_WORDS = ("reach the api", "eai_again", "enotfound", "econnreset", "econnrefused", "etimedout", "network", "dns", "socket", "fetch failed")
 
