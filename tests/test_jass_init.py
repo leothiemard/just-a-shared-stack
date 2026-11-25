@@ -44,13 +44,34 @@ class InitTests(Sandbox):
         out = self.ok(*INIT, "--apply")
         settings = json.loads((claude / "settings.json").read_text())
         self.assertEqual(settings["attribution"], {"commit": "", "pr": ""})
-        self.assertEqual(settings["env"], {"A": "1"})
+        self.assertEqual(settings["env"], {"A": "1", "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "1"})
+        self.assertEqual(settings["model"], "x")
         self.ok("restore", self.manifest(out))
         after = tree(self.home)
         for rel in list(after):
             if rel.startswith(("lore", ".config/jass/backups", ".agents/skill-backups", ".claude/skill-backups")):
                 after.pop(rel)
         self.assertEqual(after, {**before, ".config": "/", ".config/jass": "/", ".agents": "/"})
+
+    def test_claude_settings_keep_values_the_user_set(self):
+        claude = self.home / ".claude"
+        claude.mkdir()
+        mine = {"attribution": {"commit": "mine"}, "env": {"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "0"}}
+        (claude / "settings.json").write_text(json.dumps(mine))
+        out = self.ok(*INIT, "--apply")
+        self.assertRegex(out, r"keep\s+claude")
+        self.assertEqual(json.loads((claude / "settings.json").read_text()), mine)
+
+    def test_claude_settings_add_missing_env_only(self):
+        claude = self.home / ".claude"
+        claude.mkdir()
+        (claude / "settings.json").write_text(json.dumps({"attribution": {"commit": "mine"}}))
+        out = self.ok(*INIT, "--apply")
+        self.assertIn("add env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", out)
+        self.assertNotIn("attribution", out)
+        settings = json.loads((claude / "settings.json").read_text())
+        self.assertEqual(settings, {"attribution": {"commit": "mine"}, "env": {"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "1"}})
+        self.assertIn("Nothing to do.", self.ok(*INIT, "--apply"))
 
     def test_restore_refuses_when_a_file_changed_since(self):
         out = self.ok(*INIT, "--apply")

@@ -25,7 +25,7 @@ git clone https://github.com/leothiemard/just-a-shared-stack.git ~/Development/j
 jass sync --first-push
 ```
 
-The preview changes nothing. `--apply` links the skills into `~/.agents/skills` and `~/.claude/skills`, installs `~/.local/bin/jass`, writes the rules block, clones the lore and runs `jass doctor`. It prints a restore manifest for `jass restore`. `--first-push` publishes the new lore once.
+The preview changes nothing. `--apply` links the skills into `~/.agents/skills` and `~/.claude/skills`, installs `~/.local/bin/jass`, writes the rules block, adds two Claude Code defaults that `~/.claude/settings.json` lacks (no AI commit/PR attribution, and prompt suggestions that keep running past 75% of the weekly limit), clones the lore and runs `jass doctor`. It prints a restore manifest for `jass restore`. `--first-push` publishes the new lore once.
 
 **Daily commands.** Agents run most of these themselves.
 

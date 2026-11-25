@@ -15,6 +15,8 @@ from typing import Callable
 from jass import JassError, config, lore, paths, rules, sync
 
 ATTRIBUTION = {"commit": "", "pr": ""}
+# Claude Code stops prompt suggestions once weekly usage passes 75%; this keeps them on until the limit itself.
+CLAUDE_ENV = {"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "1"}
 
 
 def load_installer():
@@ -181,19 +183,31 @@ def rules_changes(repos: list[Path]) -> list[Change]:
     return out
 
 
-def attribution_change() -> Change:
+def claude_settings_change() -> Change:
+    """Adds jass's Claude Code defaults that the settings file lacks; keys the user already set are left alone."""
     path = paths.home() / ".claude" / "settings.json"
     label = paths.tilde(path)
     if not path.exists():
-        return Change("attribution", label, "skip", "no Claude settings file")
+        return Change("claude", label, "skip", "no Claude settings file")
     try:
         settings = json.loads(path.read_text())
     except ValueError as error:
-        return Change("attribution", label, "conflict", f"invalid JSON ({error}); fix it, then rerun")
-    if not isinstance(settings, dict) or "attribution" in settings:
-        return Change("attribution", label, "keep")
-    text = json.dumps(dict(settings, attribution=ATTRIBUTION), indent=2) + "\n"
-    return Change("attribution", label, "update", "add empty commit/PR attribution", lambda tx: tx.write(path, text))
+        return Change("claude", label, "conflict", f"invalid JSON ({error}); fix it, then rerun")
+    if not isinstance(settings, dict) or not isinstance(settings.get("env", {}), dict):
+        return Change("claude", label, "keep")
+    added, new = [], dict(settings)
+    if "attribution" not in settings:
+        new["attribution"] = ATTRIBUTION
+        added.append("empty commit/PR attribution")
+    env = settings.get("env", {})
+    missing = {k: v for k, v in CLAUDE_ENV.items() if k not in env}
+    if missing:
+        new["env"] = {**env, **missing}
+        added.append("env " + ", ".join(missing))
+    if not added:
+        return Change("claude", label, "keep")
+    text = json.dumps(new, indent=2) + "\n"
+    return Change("claude", label, "update", "add " + "; ".join(added), lambda tx: tx.write(path, text))
 
 
 def lore_changes(cfg: dict, remote: str, new_lore: bool, import_dir: Path | None) -> list[Change]:
@@ -271,7 +285,7 @@ def plan(cfg: dict, replace: bool, lore_args: tuple | None) -> list[Change]:
     changes = [config_change(cfg), *skill_changes(repos, replace)]
     changes.append(link_change("cli", paths.bin_dir() / "jass", config.stack_path(cfg) / "bin" / "jass", replace))
     changes += rules_changes(repos)
-    changes.append(attribution_change())
+    changes.append(claude_settings_change())
     if lore_args is not None:
         changes += lore_changes(cfg, *lore_args)
     return changes
