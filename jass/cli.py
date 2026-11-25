@@ -115,8 +115,14 @@ def cmd_sessions(args) -> int:
     from jass.sessions import export
 
     cfg = config.load()
-    root = lore.open_lore(cfg)
     since = index.parse_since(args.since) if args.since else ""
+    if args.action == "stats" and args.by == "delegate-model":
+        from jass.sessions import t3
+
+        groups = t3.T3Source(store=cfg["sessions"]["t3_store"]).delegate_stats(since)
+        print(json.dumps(groups, indent=2) if args.json else export.delegate_stats_table(groups))
+        return 0
+    root = lore.open_lore(cfg)
     if args.action == "export":
         result = export.run(cfg, root, everything=args.all, since=since, dry_run=args.dry_run, prune=args.prune)
         if args.json:
@@ -279,9 +285,10 @@ def parser() -> argparse.ArgumentParser:
     ls.add_argument("--box")
     ls.add_argument("--project", "-p")
     ls.add_argument("--json", action="store_true")
-    st = actions.add_parser("stats", help="sessions, turns, tokens and long-context share per week, box or project")
+    st = actions.add_parser("stats", help="digest totals or local T3 delegate counts and durations")
     st.add_argument("--since")
-    st.add_argument("--by", choices=["week", "box", "project"], default="week")
+    st.add_argument("--by", choices=["week", "box", "project", "delegate-model"], default="week",
+                    help="week, box and project read digests; delegate-model reads this box's T3 store")
     st.add_argument("--json", action="store_true")
 
     p = command("night", cmd_night, "Unattended agent work: pre-flight check, watchdog and thread states. Reads only; changes no system setting.")

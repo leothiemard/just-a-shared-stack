@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Iterator
 
-from jass import paths
+from jass import JassError, paths
 from jass.sessions import SessionRecord, Source
 
 T = "orchestration_v2_projection_"
@@ -56,6 +56,7 @@ def project_key(workspace_root: str) -> str:
 def connect(store: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(f"{store.resolve().as_uri()}?mode=ro", uri=True)
     conn.execute("PRAGMA query_only = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -143,6 +144,33 @@ class T3Source(Source):
         with contextlib.closing(connect(self.store)) as conn:
             rows = conn.execute("SELECT title, workspace_root FROM projection_projects WHERE deleted_at IS NULL ORDER BY title")
             return [(title or project_key(root), root) for title, root in rows if root]
+
+    def delegate_stats(self, since: str = "") -> list[dict]:
+        """Count app-owned starts and average elapsed minutes for timed completions.
+
+        `completed_at` is not in `PINNED`: older stores lack it and must still export.
+        A missing column fails here as a `JassError` instead.
+        """
+        try:
+            with contextlib.closing(connect(self.store)) as conn:
+                rows = conn.execute(
+                    "WITH delegates AS ("
+                    " SELECT coalesce(nullif(trim(CAST(json_extract(payload_json, '$.model') AS TEXT)), ''), '(unknown)') AS model,"
+                    " status, CASE WHEN status = 'completed'"
+                    " THEN (julianday(completed_at) - julianday(started_at)) * 1440 END AS minutes"
+                    f" FROM {T}subagents WHERE origin = 'app_owned'"
+                    " AND (? = '' OR julianday(started_at) >= julianday(?))"
+                    ") SELECT model, count(*), count(CASE WHEN status = 'completed' THEN 1 END),"
+                    " count(CASE WHEN minutes >= 0 THEN 1 END), round(avg(CASE WHEN minutes >= 0 THEN minutes END), 2)"
+                    " FROM delegates GROUP BY model ORDER BY count(*) DESC, model",
+                    (since, since),
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise JassError(f"Cannot read T3 delegate stats from {paths.tilde(self.store)}: {error}") from error
+        return [
+            {"model": model, "delegates": count, "completed": completed, "timed": timed, "avg_minutes": avg_minutes}
+            for model, count, completed, timed, avg_minutes in rows
+        ]
 
 
 def load(conn: sqlite3.Connection, thread_id: str, with_runs: set[str]) -> dict:
