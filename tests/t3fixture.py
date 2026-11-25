@@ -17,7 +17,8 @@ CREATE TABLE {T}runs (run_id TEXT PRIMARY KEY, thread_id TEXT, ordinal INTEGER, 
   requested_at TEXT, completed_at TEXT);
 CREATE TABLE {T}turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, type TEXT, status TEXT, updated_at TEXT, payload_json TEXT);
 CREATE INDEX {T}runs_thread_ordinal_idx ON {T}runs (thread_id, ordinal);
-CREATE TABLE {T}messages (message_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, role TEXT, created_at TEXT, payload_json TEXT);
+CREATE TABLE {T}messages (message_id TEXT PRIMARY KEY, thread_id TEXT, run_id TEXT, role TEXT, created_at TEXT, payload_json TEXT,
+  updated_at TEXT);
 CREATE INDEX {T}messages_thread_created_idx ON {T}messages (thread_id, created_at, message_id);
 CREATE TABLE {T}provider_turns (provider_turn_id TEXT PRIMARY KEY, thread_id TEXT, payload_json TEXT);
 CREATE TABLE {T}provider_threads (provider_thread_id TEXT PRIMARY KEY, thread_id TEXT, first_run_ordinal INTEGER, payload_json TEXT);
@@ -83,7 +84,7 @@ class Store:
     def message(self, thread_id: str, role: str, text: str, run_id: str | None, at: float, **extra) -> None:
         payload = dict({"text": text, "createdBy": "user" if role == "user" else "agent"}, **extra)
         with self.db() as conn:
-            conn.execute(f"INSERT INTO {T}messages VALUES (?, ?, ?, ?, ?, ?)", (self.next_id("m"), thread_id, run_id, role, stamp(at), json.dumps(payload)))
+            conn.execute(f"INSERT INTO {T}messages VALUES (?, ?, ?, ?, ?, ?, ?)", (self.next_id("m"), thread_id, run_id, role, stamp(at), json.dumps(payload), stamp(at)))
 
     def turn(self, thread_id: str, prompt: str | None, answer: str, *, at: float = 200, status: str = "completed",
              tokens=(100, 50, 10), used: int = 0, **prompt_extra) -> str:

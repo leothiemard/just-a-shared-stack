@@ -4,7 +4,10 @@ T3's own status calls a thread `completed` both when it has finished and when it
 delegate or a background command still works for it, so a watcher needs more than the run status:
 
 - `working`   a run is going.
-- `blocked`   a request waits for the owner (an approval, a question, a secret, a link to open).
+- `blocked`   a request waits for the owner (an approval, a question, a secret, a link to open). A card counts
+               as T3 counts it: a secret only while its run is live, a link only until the owner writes in the
+               thread again. T3 leaves a link card `waiting` after its run, and builds older than the one that
+               closes cards on settle left it `waiting` for good.
 - `delegated`  no run is going, but a child agent of this thread still is.
 - `background` no run is going, but T3 lists a background command or task the thread still waits on.
 - `failed`     the last run failed; `failure` is `memory`, `network`, `limit`, `auth` or `other`. It wins over
@@ -39,9 +42,24 @@ PINNED = {
     f"{T}subagents": ("thread_id", "child_thread_id", "status"),
     f"{T}provider_threads": ("provider_thread_id", "payload_json"),
     f"{T}runtime_requests": ("runtime_request_id", "thread_id", "kind", "status"),
+    f"{T}messages": ("thread_id", "role", "updated_at", "payload_json"),
 }
 GOING = ("running", "starting", "preparing", "waiting")  # T3's own test for an active run
 AUTH_WORDS = ("authenticat", "unauthorized", "not logged in", "log in again", "sign in again")
+# The cards that wait for the owner, as T3's own `waitsOnUser` reads them. A secret card's agent waits in its run, so
+# the card asks only while that run is live. A link card's agent asked without waiting, so the card asks after its
+# run, until the owner writes in the thread again (a message of the owner's own, not one an agent sent and not an
+# idle `/compact` T3 sent for them; one they typed counts) and so has moved past it.
+WHITESPACE = "char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)"
+SECRET_ASKS = (f"SELECT 'secret', i.turn_item_id FROM {T}turn_items i JOIN {T}runs r ON r.run_id = i.run_id"
+               f" WHERE i.thread_id = ? AND i.type = 'secret_request' AND json_extract(i.payload_json, '$.secretStatus') = 'pending'"
+               f" AND r.status IN {GOING}")
+LINK_ASKS = (f"SELECT 'link', i.turn_item_id FROM {T}turn_items i WHERE i.thread_id = ? AND i.type = 'link_request' AND i.status = 'waiting'"
+             f" AND NOT EXISTS (SELECT 1 FROM {T}messages m WHERE m.thread_id = i.thread_id AND m.role = 'user'"
+             f" AND json_extract(m.payload_json, '$.createdBy') = 'user'"
+             f" AND NOT (lower(trim(json_extract(m.payload_json, '$.text'), {WHITESPACE})) = '/compact'"
+             f" AND coalesce(json_array_length(m.payload_json, '$.attachments'), 0) = 0 AND json_extract(m.payload_json, '$.idleCompaction') IS NOT NULL)"
+             f" AND m.updated_at > coalesce(json_extract(i.payload_json, '$.startedAt'), i.updated_at))")
 NETWORK_WORDS = ("reach the api", "eai_again", "enotfound", "econnreset", "econnrefused", "etimedout", "network", "dns", "socket", "fetch failed")
 
 
@@ -141,9 +159,8 @@ def snapshot(store: Path, only: list[str] | None = None) -> list[dict]:
             runs = conn.execute(f"SELECT ordinal, status, requested_at, completed_at, run_id FROM {T}runs WHERE thread_id = ? ORDER BY ordinal", (thread_id,)).fetchall()
             (children,) = conn.execute(f"SELECT count(*) FROM {T}subagents WHERE thread_id = ? AND status IN {GOING}", (thread_id,)).fetchone()
             asked = conn.execute(f"SELECT kind, runtime_request_id FROM {T}runtime_requests WHERE thread_id = ? AND status = 'pending'", (thread_id,)).fetchall()
-            asked += conn.execute(f"SELECT 'secret', turn_item_id FROM {T}turn_items WHERE thread_id = ? AND type = 'secret_request'"
-                                  f" AND json_extract(payload_json, '$.secretStatus') = 'pending'", (thread_id,)).fetchall()
-            asked += conn.execute(f"SELECT 'link', turn_item_id FROM {T}turn_items WHERE thread_id = ? AND type = 'link_request' AND status = 'waiting'", (thread_id,)).fetchall()
+            asked += conn.execute(SECRET_ASKS, (thread_id,)).fetchall()
+            asked += conn.execute(LINK_ASKS, (thread_id,)).fetchall()
             requests = [kind for kind, _ in asked]
             asks = hashlib.sha1("\n".join(sorted(str(request_id) for _, request_id in asked)).encode()).hexdigest()[:12] if asked else ""
             pending = conn.execute(f"SELECT payload_json FROM {T}provider_threads WHERE provider_thread_id = ?", (provider_thread,)).fetchone()
