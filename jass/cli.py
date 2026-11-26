@@ -153,7 +153,7 @@ def cmd_sessions(args) -> int:
 def cmd_sync(args) -> int:
     from jass import sync
 
-    return sync.run(config.load(), quick=args.quick, first_push=args.first_push)
+    return sync.run(config.load(), quick=args.quick, first_push=args.first_push, before_stop=args.before_stop)
 
 
 def cmd_night(args) -> int:
@@ -205,7 +205,7 @@ def cmd_board(args) -> int:
         from jass import scale
 
         return scale.run(cfg, args)
-    return {"work": board.work, "add": board.add, "status": board.status, "open": board.open_board}[args.action](cfg, args)
+    return {"work": board.work, "add": board.add, "status": board.status, "report": board.report, "open": board.open_board}[args.action](cfg, args)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -319,7 +319,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--mem", type=int, metavar="MB", help="memory cap (default: night.heavy_mb of the box config, else a quarter of memory; 0 for none)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, metavar="-- command", help="the command and its arguments")
 
-    p = command("board", cmd_board, "Vercel Board tasks run as T3 Code threads: queue a task, work the queue on this box, list what is open, show the board in a browser.")
+    p = command("board", cmd_board, "Vercel Board tasks run as T3 Code threads: queue a task, work the queue on this box, list what is open, report what settled, show the board in a browser.")
     actions = p.add_subparsers(dest="action", metavar="<action>")
     actions.required = True
     w = actions.add_parser("work", help="claim ready tasks for this box's projects and run each as a T3 thread, settling it when the thread is idle. Runs in the foreground")
@@ -345,6 +345,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--all", action="store_true", help="include completed, failed and canceled tasks")
     s.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
     s.add_argument("--json", action="store_true")
+    r = actions.add_parser("report", help="tasks done and failed since a time and tasks stuck now, each with its box, T3 thread and PR links")
+    r.add_argument("project", nargs="?", help="project key (default: all)")
+    r.add_argument("--since", required=True, help="a span back from now (90min, 6h, 2d, 1w) or an ISO time (UTC unless it has an offset)")
+    r.add_argument("--stale-minutes", type=float, default=30, help="a ready task no worker took for this long counts as stuck (default 30)")
+    r.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
+    r.add_argument("--json", action="store_true")
     sc = actions.add_parser("scale", help="one tick: wake this box's cloud VMs (scale.pool) while tasks wait in scale.channels, stop them all at scale.spend_cap_usd; run it from launchd or cron")
     mode = sc.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true", help="show the pool, spend, starts today and the last actions; change nothing")
@@ -359,6 +365,7 @@ def parser() -> argparse.ArgumentParser:
     p = command("sync", cmd_sync, "Export sessions, refresh the box card, commit, pull and push the lore.")
     p.add_argument("--quick", action="store_true", help="skip the session export when the last one was under 6 hours ago")
     p.add_argument("--first-push", action="store_true", help="publish this lore to an empty remote; refused once the remote has a branch")
+    p.add_argument("--before-stop", action="store_true", help="this box is about to stop (a cloud VM): export sessions that just finished, without waiting sessions.idle_minutes")
     return top
 
 

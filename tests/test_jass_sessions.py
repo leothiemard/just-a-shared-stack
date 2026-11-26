@@ -198,6 +198,58 @@ class SessionsTests(Sandbox):
         self.assertIn("Continued and finished.", (self.lore / first["written"][0]).read_text())
         self.assertEqual(len(list((self.lore / "Sessions").rglob("*.md"))), 1)
 
+    def test_sync_before_stop_exports_sessions_that_just_finished(self):
+        self.store.write_text(json.dumps([record("s1", updated_minutes_ago=4)]))
+        self.assertEqual(self.export([record("s1", updated_minutes_ago=4)])["written"], [])
+        self.ok("sync", "--before-stop")
+        digests = list((self.lore / "Sessions" / "mac").rglob("*.md"))
+        self.assertEqual(len(digests), 1)
+        self.assertIn("Fixed the deploy hook", digests[0].read_text())
+        self.assertEqual(lore.git(self.lore, "status", "--porcelain").stdout.strip(), "")  # committed
+        # The next ordinary export, after the box wakes, rewrites it only once the session changed again.
+        self.assertEqual(self.export([record("s1", updated_minutes_ago=4)])["written"], [])
+        continued = record("s1", updated_minutes_ago=0.1, turn_finals=["a", "Continued after the wake."])
+        self.store.write_text(json.dumps([continued]))
+        self.ok("sync", "--before-stop")
+        self.assertIn("Continued after the wake.", digests[0].read_text())
+
+    def test_sync_before_stop_waits_for_another_sync_instead_of_skipping(self):
+        import threading
+
+        from jass import sync
+
+        self.store.write_text(json.dumps([record("s1", updated_minutes_ago=4)]))
+        held = sync.lock(self.lore)
+        self.assertTrue(held.__enter__())
+        try:
+            self.assertIn("skipped", self.ok("sync"))
+        finally:
+            threading.Timer(0.5, held.__exit__, (None, None, None)).start()
+        self.ok("sync", "--before-stop")
+        self.assertEqual(len(list((self.lore / "Sessions" / "mac").rglob("*.md"))), 1)
+
+    def test_sync_before_stop_undoes_a_rebase_a_killed_sync_left(self):
+        def git(*args):
+            return lore.git(self.lore, *args, check=False)
+
+        note = self.lore / "note.md"
+        git("switch", "-q", "-c", "other")
+        note.write_text("other\n")
+        git("add", "note.md")
+        git("commit", "-q", "-m", "other")
+        git("switch", "-q", "-")
+        note.write_text("mine\n")
+        git("add", "note.md")
+        git("commit", "-q", "-m", "mine")
+        mine = git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(git("rebase", "other").returncode, 0)  # stops on the conflict, as a killed sync would leave it
+        self.store.write_text(json.dumps([record("s1", updated_minutes_ago=4)]))
+        self.assertEqual(self.jass("sync")[0], 1)  # an ordinary sync refuses to commit over it
+        out = self.ok("sync", "--before-stop")
+        self.assertIn("Aborted a rebase", out)
+        self.assertEqual(git("rev-parse", "HEAD~1").stdout.strip(), mine)  # local commit kept, export committed on top
+        self.assertEqual(len(list((self.lore / "Sessions" / "mac").rglob("*.md"))), 1)
+
     def test_dry_run_writes_nothing(self):
         result = self.export([record("s1")], "--dry-run")
         self.assertEqual(len(result["written"]), 1)

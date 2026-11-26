@@ -50,8 +50,17 @@ def synced_label(root: Path) -> str:
     return f"synced {minutes} min ago" if minutes < 120 else f"synced {minutes // 60} h ago" if minutes < 2880 else f"synced {minutes // 1440} days ago"
 
 
-def lock(root: Path) -> paths.Lock:
-    return paths.Lock(paths.cache_dir() / f"sync-{paths.lore_key(root)}.lock")
+def lock(root: Path, wait: bool = False) -> paths.Lock:
+    return paths.Lock(paths.cache_dir() / f"sync-{paths.lore_key(root)}.lock", wait=wait)
+
+
+def abort_left_rebase(root: Path, say) -> None:
+    """Undo a rebase that an earlier sync left when it was killed (a VM's stop line ends a slow sync with `timeout`).
+    Called with the sync lock held, so no live sync owns it; the abort keeps the local commits."""
+    git_dir = Path(lore.git(root, "rev-parse", "--absolute-git-dir").stdout.strip())
+    if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+        lore.git(root, "rebase", "--abort", check=False)
+        say("Aborted a rebase an earlier sync left; local commits kept.")
 
 
 def strip_credentials(url: str) -> str:
@@ -91,17 +100,24 @@ def write_if_changed(path: Path, text: str) -> None:
 FIRST_PUSH_HINT = "The lore remote is empty; nothing was pushed. Publish this lore there once with: jass sync --first-push"
 
 
-def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False, first_push: bool = False) -> int:
+def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False, first_push: bool = False, before_stop: bool = False) -> int:
+    """`before_stop`: this box is about to stop (a cloud VM after its board worker), so export every finished session
+    now instead of after `sessions.idle_minutes`, which would leave them unreadable until the box runs again. It waits
+    for another sync instead of skipping (that one may be a recall's quick sync, which exports nothing that just
+    finished) and undoes a rebase that a killed sync left, since nobody fixes the lore of a VM by hand; the caller
+    bounds the whole run with `timeout`."""
     root = lore.open_lore(cfg)
 
     def say(message: str) -> None:
         if not quiet:
             print(message)
 
-    with lock(root) as held:
+    with lock(root, wait=before_stop) as held:
         if not held:
             say("Another jass sync is running for this lore; skipped.")
             return 0
+        if before_stop:
+            abort_left_rebase(root, say)
         problem = lore.unfinished(root)
         if problem:
             raise JassError(f"Sync stopped; nothing was exported, committed or pushed. {problem}")
@@ -116,8 +132,8 @@ def run(cfg: dict, quick: bool = False, timeout: float = 60, quiet: bool = False
             raise not_empty()
         state = load_state(root)
         last_export = age_seconds(state.get("last_export"))
-        if cfg["sessions"]["export"] and not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS):
-            result = export.run(cfg, root)
+        if cfg["sessions"]["export"] and (before_stop or not (quick and last_export is not None and last_export < QUICK_EXPORT_SECONDS)):
+            result = export.run(cfg, root, idle_minutes=0 if before_stop else None)
             state["last_export"] = now().isoformat()
             if result["written"]:
                 say(f"Exported {len(result['written'])} session digest(s).")

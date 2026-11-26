@@ -362,6 +362,20 @@ class JobTests(unittest.TestCase):
         t3.start = boom
         self.assertEqual(j.run(), "failed")
         self.assertEqual(b.done()[0][0], "fail")
+        # A reply dates the failure for `jass board report`; the listing has no settle time.
+        replies = [a[1] for a in b.actions if a[0] == "reply"]
+        self.assertEqual(len(replies), 1)
+        self.assertIn("could not start this task: t3 thread start failed", replies[0])
+
+    def test_pr_links_cut_from_a_long_answer_are_kept(self):
+        url = "https://github.com/acme/shop/pull/12"
+        j, b, _, _, _ = job(task(), lambda t: {}, answer="Did it.\n\n" + "x" * (board.REPLY_MAX + 100) + f"\nPR: {url}")
+        j.thread = "mcp:new"
+        j.t3.known.add("mcp:new")
+        j.finish({"status": "completed"})
+        reply = [a[1] for a in b.actions if a[0] == "reply"][-1]
+        self.assertIn("[cut:", reply)
+        self.assertTrue(reply.endswith(f"Pull requests: {url}"))
 
     def test_stop_releases_and_leaves_the_thread(self):
         j, b, _, _, _ = job(task(), running_until(10_000))
@@ -684,3 +698,152 @@ class OpenTests(unittest.TestCase):
                 mock.patch("jass.board.open_board", return_value=0) as opened:
             self.assertEqual(cli.cmd_board(args), 0)
         self.assertEqual(opened.call_args.args[0], {})
+
+
+def listed(id_, state, minutes_ago, labels=None, needs=(), last=None, text="Fix the order email.", **task):
+    """A task as `vercel board tasks --json` lists it: last activity `minutes_ago` before BASE."""
+    message = {"id": id_, "channel": "build/demo", "text": text, "labels": dict(labels or {}), "createdAt": iso(-minutes_ago * 60 - 600),
+               "task": dict({"state": state, "needs": list(needs), "blocked": None, "result": None, "reason": None}, **task)}
+    item = {"message": message}
+    if last is not None:
+        item["last"] = dict(last, createdAt=iso(-minutes_ago * 60))
+    else:
+        message["createdAt"] = iso(-minutes_ago * 60)
+    return item
+
+
+def worker_result(text):
+    return {"by": {"profile": "worker-boat-w1"}, "text": f"Result from T3 thread `mcp:a` (completed):\n\n{text}"}
+
+
+class ReportTests(unittest.TestCase):
+    PR = "https://github.com/acme/shop/pull/12"
+
+    def rows(self, items, since_minutes=360, stale=30, replies=None):
+        reads = []
+
+        def read(task_id):
+            reads.append(task_id)
+            if replies is None:
+                raise board.BoardError("read failed")
+            return {"message": {}, "replies": replies}
+
+        rows = board.report_rows(items, BASE - since_minutes * 60, BASE, stale * 60, read)
+        return rows, reads
+
+    def test_settled_tasks_in_the_window_with_box_thread_and_pr(self):
+        labels = {board.THREAD: "mcp:a", board.BOX: "boat-w1"}
+        items = [
+            listed("old", "completed", 600, labels, result="Done long ago", last=worker_result("Done")),
+            listed("ok", "completed", 30, labels, result="Fixed it", last=worker_result(f"Fixed it\n\nPR: {self.PR} and again {self.PR}#issuecomment-1")),
+            listed("bad", "failed", 10, labels, reason="timebox: still working after 60 minutes"),
+            listed("gone", "canceled", 5, reason="deleted"),
+        ]
+        rows, reads = self.rows(items, replies=[worker_result(f"FAILED: no\n\n{self.PR}"), {"by": {"profile": "lead"}, "text": "Result from T3 thread"}])
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("failed", "bad"), ("done", "ok")])
+        done = rows[1]
+        self.assertEqual((done["box"], done["thread"], done["prs"], done["detail"]), ("boat-w1", "mcp:a", [self.PR], "Fixed it"))
+        self.assertEqual(rows[0]["prs"], [self.PR])  # found by reading the task: its last reply was not the result
+        self.assertEqual(reads, ["bad"])
+
+    def test_a_failed_read_leaves_the_row_without_prs(self):
+        rows, _ = self.rows([listed("bad", "failed", 10, reason="FAILED: x")])
+        self.assertEqual((rows[0]["kind"], rows[0]["prs"]), ("failed", []))
+
+    def test_stuck_tasks_count_whenever_they_started(self):
+        items = [
+            listed("blocked", "blocked", 2000, blocked={"reason": "thread waits for an answer"}),
+            listed("asks", "claimed", 2000, {board.WAITING: "answer", board.THREAD: "mcp:q", board.BOX: "boat-w2"}),
+            listed("quiet", "claimed", 2000, {board.WAITING: "check"}),
+            listed("orphan", "ready", 45),
+            listed("fresh", "ready", 5),
+            listed("working", "claimed", 50),
+            listed("failed-need", "failed", 2000, reason="FAILED: x"),
+            listed("review", "waiting", 2000, needs=["failed-need"]),
+            listed("patient", "waiting", 2000, needs=["working"]),
+            listed("just-done", "completed", 5, result="ok", last=worker_result("ok")),
+            listed("next", "ready", 2000, needs=["just-done"]),
+        ]
+        rows, reads = self.rows(items)
+        stuck = {r["id"]: r["detail"] for r in rows if r["kind"] == "stuck"}
+        self.assertEqual(set(stuck), {"blocked", "asks", "quiet", "orphan", "review"})
+        self.assertEqual(stuck["blocked"], "blocked: thread waits for an answer")
+        self.assertEqual(stuck["asks"], "waiting for an answer in T3")
+        self.assertIn("ready for 45 min", stuck["orphan"])
+        self.assertIn("failed-need", stuck["review"])
+        self.assertEqual(reads, [])  # stuck tasks have no result to read
+
+    def test_a_settled_task_is_dated_by_the_workers_last_reply(self):
+        thanks = {"by": {"profile": "lead"}, "text": "Thanks!"}
+        note = {"by": {"profile": "worker-boat-w1"}, "text": "The worker on box boat-w1 could not start this task: x", "createdAt": iso(-5 * 60)}
+        result = dict(worker_result(f"Fixed\n{self.PR}"), createdAt=iso(-3 * 86400))
+        items = [
+            listed("old-thanked", "completed", 10, result="Fixed", last=thanks),
+            listed("start-failed", "failed", 5, reason="t3 thread start failed", last=note),
+        ]
+        replies = {"old-thanked": [result, dict(thanks, createdAt=iso(-600))]}
+        reads = []
+
+        def read(task_id):
+            reads.append(task_id)
+            return {"replies": replies[task_id]}
+
+        rows = board.report_rows(items, BASE - 6 * 3600, BASE, 1800, read)
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("failed", "start-failed")])
+        self.assertEqual(reads, ["old-thanked"])
+
+    def test_a_claim_whose_lease_ran_out_is_stuck(self):
+        items = [
+            listed("gone", "claimed", 300, {board.BOX: "boat-w1", board.THREAD: "mcp:g"}, claim={"until": iso(-10 * 60)}),
+            listed("renewed", "claimed", 300, claim={"until": iso(5 * 60)}),
+            listed("just-now", "claimed", 300, claim={"until": iso(-30)}),
+        ]
+        rows, _ = self.rows(items)
+        self.assertEqual([(r["id"], r["box"]) for r in rows], [("gone", "boat-w1")])
+        self.assertIn("lease ran out 10 min ago", rows[0]["detail"])
+
+    def test_one_project_still_sees_needs_in_other_projects(self):
+        need = listed("web-fix", "failed", 2000, reason="FAILED: x")
+        need["message"]["channel"] = "build/web"
+        items = [need, listed("review", "waiting", 2000, needs=["web-fix"])]
+        rows = board.report_rows(items, BASE - 3600, BASE, 1800, lambda i: {"replies": []}, "build/demo")
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("stuck", "review")])
+
+    def test_since_takes_spans_and_times(self):
+        self.assertEqual(board.parse_time("90min", BASE), BASE - 5400)
+        self.assertEqual(board.parse_time("1w", BASE), BASE - 7 * 86400)
+        with self.assertRaisesRegex(board.BoardError, "--since"):
+            board.parse_time("3m", BASE)  # months to `jass recall`, so never minutes here
+        self.assertEqual(board.parse_time("6h", BASE), BASE - 6 * 3600)
+        self.assertEqual(board.parse_time("2d", BASE), BASE - 2 * 86400)
+        self.assertEqual(board.parse_time("2026-11-25T06:00Z", BASE), board.parse_time("2026-11-25T07:00+01:00", BASE))
+        self.assertEqual(board.parse_time("2026-11-25T06:00", BASE), board.parse_time("2026-11-25T06:00Z", BASE))
+        with self.assertRaisesRegex(board.BoardError, "--since"):
+            board.parse_time("yesterday", BASE)
+
+    def test_report_prints_counts_and_lists_every_channel(self):
+        import contextlib
+        import io
+
+        from jass import cli
+
+        class ListBoard:
+            def __init__(self):
+                self.listed = []
+
+            def tasks(self, channel, state):
+                self.listed.append((channel, state))
+                return [listed("ok", "completed", 30, {board.THREAD: "mcp:a", board.BOX: "boat-w1"}, result="Fixed it",
+                               last=worker_result(f"Fixed it\n{ReportTests.PR}"))]
+
+            def read(self, task_id):
+                raise AssertionError("no read needed")
+
+        fake, out = ListBoard(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(board.report(CFG, cli.parse(["board", "report", "--since", "6h"]), board=fake, now=BASE), 0)
+        self.assertEqual(fake.listed, [("build/", "all")])
+        text = out.getvalue()
+        self.assertIn("1 done, 0 failed, 0 stuck now", text)
+        self.assertIn("boat-w1 mcp:a", text)
+        self.assertIn(self.PR, text)

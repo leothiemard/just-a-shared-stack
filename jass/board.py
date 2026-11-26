@@ -56,6 +56,7 @@ WORKER_PREFIX = "worker-"
 REPLY_MAX = 9000
 RESULT_MAX = 240
 TITLE_MAX = 72
+PR_URL = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
 
 BRIEF = """You are working board task {task} (channel `{channel}`), as an ordinary T3 Code thread. A worker on this box (`jass board work`) started this thread and watches it; the owner follows it here in T3 Code.
 
@@ -446,6 +447,7 @@ class Job:
                 self.log(f"{self.id}: started T3 thread {self.thread}")
         except BoardError as error:
             self.log(f"{self.id}: {error}")
+            self.note(f"The worker on box {self.cfg.get('box')} could not start this task: {error}")
             problem = self.board.settle("fail", self.id, first_line(str(error)))
             return "failed" if not problem else f"lost ({problem})"
         shown = self.t3.show(self.thread) or {}
@@ -606,7 +608,9 @@ class Job:
         line = first_line(answer)
         failed = status != "completed" or not line or line.upper().startswith("FAILED")
         header = f"Result from T3 thread `{self.thread}` ({status}):"
-        self.note(clip(f"{header}\n\n{answer}" if answer else f"{header} no final answer."))
+        text = clip(f"{header}\n\n{answer}" if answer else f"{header} no final answer.")
+        cut = [url for url in dict.fromkeys(PR_URL.findall(answer)) if url not in text]
+        self.note(text + ("\n\nPull requests: " + " ".join(cut) if cut else ""))
         if failed:
             reason = line if line.upper().startswith("FAILED") else (f"T3 thread {status}" + (f": {line}" if line else ", no final answer"))
             problem = self.board.settle("fail", self.id, first_line(reason))
@@ -849,6 +853,128 @@ def status(cfg: dict, args) -> int:
         print(f"{'':12} {row['id']}" + (f"  · T3 {row['thread']}" if row["thread"] else ""))
         if row["detail"]:
             print(f"{'':12} {row['detail']}")
+    return 0
+
+
+RESULT_HEADER = "Result from T3 thread"
+OPEN = ("waiting", "ready", "claimed", "blocked")
+LEASE_GRACE_S = 120
+SPAN = {"min": 60, "h": 3600, "d": 86400, "w": 7 * 86400}
+
+
+def parse_time(text: str, now: float) -> float:
+    """`--since` as an epoch: a span back from now (`90min`, `6h`, `2d`, `1w`) or an ISO date or time (UTC when it has
+    no offset). No bare `m`: `jass recall --since` reads it as months."""
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(min|h|d|w)", text.strip())
+    if match:
+        return now - float(match.group(1)) * SPAN[match.group(2)]
+    try:
+        when = dt.datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise BoardError(f"Cannot read --since {text!r}. Use a span like 90min, 6h, 2d, 1w or a time like 2026-11-25T06:00Z.")
+    return (when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)).timestamp()
+
+
+def last_activity(item: dict) -> float:
+    """When the task last changed as far as the listing shows: its newest reply, its edit or its creation."""
+    message = item.get("message", item)
+    stamps = [message.get("createdAt"), message.get("editedAt"), (item.get("last") or {}).get("createdAt")]
+    return max([e for e in (epoch(s) for s in stamps if s) if e is not None] or [0.0])
+
+
+def settled(item: dict, read) -> tuple[float, str]:
+    """When a completed or failed task settled, and the worker's result reply ('' when there is none).
+
+    The listing has no settle time. The worker posts a reply (the result, a timebox or a start failure) right before it
+    completes or fails a task, so its newest reply dates the settle; a later reply from someone else does not. A task
+    settled by hand, with no worker reply, falls back to its newest activity."""
+    last = item.get("last") or {}
+    if is_worker(last):
+        replies = [last]
+    else:
+        try:
+            replies = read(item.get("message", item)["id"]).get("replies")
+        except BoardError:
+            replies = []
+        replies = [m for m in replies if is_worker(m) and not m.get("deleted")] if isinstance(replies, list) else []
+    results = [m for m in replies if str(m.get("text", "")).startswith(RESULT_HEADER)]
+    when = epoch(replies[-1].get("createdAt")) if replies else None
+    return (when if when is not None else last_activity(item)), (results[-1]["text"] if results else "")
+
+
+def report_rows(items: list[dict], since: float, now: float, stale_s: float, read, channel: str = "") -> list[dict]:
+    """Tasks settled since `since` (`done`, `failed`) and open tasks that wait for a person now (`stuck`), whenever they
+    started: blocked, waiting for an answer or a check in T3, claimed past the end of a lease nobody renewed (its worker
+    or VM is gone), ready with no worker for `stale_s`, or waiting for a task that failed or was canceled (a failed need
+    never completes until someone reopens it). `items` must hold every channel's tasks, since a need can be in another
+    project; `channel` limits the rows."""
+    states = {(i.get("message", i)).get("id"): ((i.get("message", i)).get("task") or {}).get("state", "") for i in items}
+    changed = {(i.get("message", i)).get("id"): last_activity(i) for i in items}
+    rows = []
+    for item in items:
+        message = item.get("message", item)
+        if channel and message.get("channel") != channel:
+            continue
+        task = message.get("task") or {}
+        labels = message.get("labels") or {}
+        state, when = task.get("state", ""), last_activity(item)
+        kind, why, result = "", "", ""
+        if state in ("completed", "failed") and when >= since:  # a task settles no later than its newest activity
+            when, result = settled(item, read)
+            if when >= since:
+                kind, why = ("done", task.get("result")) if state == "completed" else ("failed", task.get("reason"))
+        elif state in OPEN:
+            dead = [n for n in task.get("needs") or [] if states.get(n) in ("failed", "canceled")]
+            until = epoch((task.get("claim") or {}).get("until") or "")
+            if state == "blocked":
+                kind, why = "stuck", "blocked: " + str((task.get("blocked") or {}).get("reason") or "no reason given")
+            elif labels.get(WAITING) == "answer":
+                kind, why = "stuck", "waiting for an answer in T3"
+            elif labels.get(WAITING):
+                kind, why = "stuck", "no progress: check its T3 thread"
+            elif state == "claimed" and until and now - until >= LEASE_GRACE_S:
+                # The worker renews every third of a lease, so a lease that ran out means its worker or VM stopped.
+                kind, why = "stuck", f"claimed, but its lease ran out {int((now - until) // 60)} min ago: its worker is gone"
+            elif state == "waiting" and dead:
+                kind, why = "stuck", f"waits for {', '.join(dead)}, which {'failed or was canceled' if len(dead) == 1 else 'failed or were canceled'}"
+            elif state == "ready":
+                # A task becomes ready when its last need completes, which leaves no trace on the task itself.
+                ready = max([when] + [changed.get(n, 0.0) for n in task.get("needs") or []])
+                if now - ready >= stale_s:
+                    kind, why = "stuck", f"ready for {int((now - ready) // 60)} min; no worker took it"
+        if not kind:
+            continue
+        rows.append({"kind": kind, "id": message.get("id"), "channel": message.get("channel"), "task": first_line(message.get("text", ""), 70),
+                     "detail": first_line(str(why or ""), 160), "box": labels.get(BOX, ""), "thread": labels.get(THREAD, ""),
+                     "prs": list(dict.fromkeys(PR_URL.findall(result))),
+                     "when": dt.datetime.fromtimestamp(when, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if when else ""})
+    order = {"failed": 0, "stuck": 1, "done": 2}
+    return sorted(rows, key=lambda r: (order[r["kind"]], r["when"]))
+
+
+def report(cfg: dict, args, board: Board | None = None, now: float | None = None) -> int:
+    """Board tasks settled since a time and those stuck now, each with its box, T3 thread and PRs: the summary an
+    owner (or a scheduled watch thread) reads instead of every box's T3 sidebar."""
+    s = settings(cfg)
+    prefix = s.get("channel", "build").rstrip("/")
+    board = board or Board(args.as_profile)
+    now = time.time() if now is None else now
+    since = parse_time(args.since, now)
+    items = board.tasks(f"{prefix}/", "all")  # every channel: a task's needs can be in another project
+    rows = report_rows(items, since, now, float(args.stale_minutes) * 60, board.read, f"{prefix}/{args.project}" if args.project else "")
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    counts = {kind: sum(r["kind"] == kind for r in rows) for kind in ("done", "failed", "stuck")}
+    stamp = dt.datetime.fromtimestamp(since, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    print(f"Board since {stamp}: {counts['done']} done, {counts['failed']} failed, {counts['stuck']} stuck now")
+    for row in rows:
+        print(f"\n{row['kind']:<7} {row['channel']}  {row['task']}")
+        print(f"{'':7} {row['id']}" + (f"  · {row['box']} {row['thread']}" if row["thread"] else "") + (f"  · {row['when']}" if row["when"] else ""))
+        if row["detail"]:
+            print(f"{'':7} {row['detail']}")
+        for url in row["prs"]:
+            print(f"{'':7} {url}")
     return 0
 
 
