@@ -362,6 +362,20 @@ class JobTests(unittest.TestCase):
         t3.start = boom
         self.assertEqual(j.run(), "failed")
         self.assertEqual(b.done()[0][0], "fail")
+        # A reply dates the failure for `jass board report`; the listing has no settle time.
+        replies = [a[1] for a in b.actions if a[0] == "reply"]
+        self.assertEqual(len(replies), 1)
+        self.assertIn("could not start this task: t3 thread start failed", replies[0])
+
+    def test_pr_links_cut_from_a_long_answer_are_kept(self):
+        url = "https://github.com/acme/shop/pull/12"
+        j, b, _, _, _ = job(task(), lambda t: {}, answer="Did it.\n\n" + "x" * (board.REPLY_MAX + 100) + f"\nPR: {url}")
+        j.thread = "mcp:new"
+        j.t3.known.add("mcp:new")
+        j.finish({"status": "completed"})
+        reply = [a[1] for a in b.actions if a[0] == "reply"][-1]
+        self.assertIn("[cut:", reply)
+        self.assertTrue(reply.endswith(f"Pull requests: {url}"))
 
     def test_stop_releases_and_leaves_the_thread(self):
         j, b, _, _, _ = job(task(), running_until(10_000))
@@ -759,8 +773,47 @@ class ReportTests(unittest.TestCase):
         self.assertIn("failed-need", stuck["review"])
         self.assertEqual(reads, [])  # stuck tasks have no result to read
 
+    def test_a_settled_task_is_dated_by_the_workers_last_reply(self):
+        thanks = {"by": {"profile": "lead"}, "text": "Thanks!"}
+        note = {"by": {"profile": "worker-boat-w1"}, "text": "The worker on box boat-w1 could not start this task: x", "createdAt": iso(-5 * 60)}
+        result = dict(worker_result(f"Fixed\n{self.PR}"), createdAt=iso(-3 * 86400))
+        items = [
+            listed("old-thanked", "completed", 10, result="Fixed", last=thanks),
+            listed("start-failed", "failed", 5, reason="t3 thread start failed", last=note),
+        ]
+        replies = {"old-thanked": [result, dict(thanks, createdAt=iso(-600))]}
+        reads = []
+
+        def read(task_id):
+            reads.append(task_id)
+            return {"replies": replies[task_id]}
+
+        rows = board.report_rows(items, BASE - 6 * 3600, BASE, 1800, read)
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("failed", "start-failed")])
+        self.assertEqual(reads, ["old-thanked"])
+
+    def test_a_claim_whose_lease_ran_out_is_stuck(self):
+        items = [
+            listed("gone", "claimed", 300, {board.BOX: "boat-w1", board.THREAD: "mcp:g"}, claim={"until": iso(-10 * 60)}),
+            listed("renewed", "claimed", 300, claim={"until": iso(5 * 60)}),
+            listed("just-now", "claimed", 300, claim={"until": iso(-30)}),
+        ]
+        rows, _ = self.rows(items)
+        self.assertEqual([(r["id"], r["box"]) for r in rows], [("gone", "boat-w1")])
+        self.assertIn("lease ran out 10 min ago", rows[0]["detail"])
+
+    def test_one_project_still_sees_needs_in_other_projects(self):
+        need = listed("web-fix", "failed", 2000, reason="FAILED: x")
+        need["message"]["channel"] = "build/web"
+        items = [need, listed("review", "waiting", 2000, needs=["web-fix"])]
+        rows = board.report_rows(items, BASE - 3600, BASE, 1800, lambda i: {"replies": []}, "build/demo")
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("stuck", "review")])
+
     def test_since_takes_spans_and_times(self):
-        self.assertEqual(board.parse_time("90m", BASE), BASE - 5400)
+        self.assertEqual(board.parse_time("90min", BASE), BASE - 5400)
+        self.assertEqual(board.parse_time("1w", BASE), BASE - 7 * 86400)
+        with self.assertRaisesRegex(board.BoardError, "--since"):
+            board.parse_time("3m", BASE)  # months to `jass recall`, so never minutes here
         self.assertEqual(board.parse_time("6h", BASE), BASE - 6 * 3600)
         self.assertEqual(board.parse_time("2d", BASE), BASE - 2 * 86400)
         self.assertEqual(board.parse_time("2026-11-25T06:00Z", BASE), board.parse_time("2026-11-25T07:00+01:00", BASE))

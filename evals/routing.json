@@ -118,7 +118,7 @@
     {
       "id": 22,
       "prompt": "Send the order-email fix on shop to the cloud VMs and keep an eye on it.",
-      "expected_output": "board-queue: take the key from scale.channels (shop-boat), not board.projects, and queue it there; tell the owner the scaler starts it; follow it with jass board status, reading the thread through the linked environment when the VM is linked.",
+      "expected_output": "board-queue: take the key from scale.channels (shop-boat), not board.projects, and queue it there; tell the owner the scaler starts it; follow it with jass board status or jass board report, reading the thread through the linked environment while the VM runs and from its lore digest (jass recall --box <vm>) once it has stopped.",
       "files": []
     },
     {

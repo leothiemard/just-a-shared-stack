@@ -347,7 +347,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     r = actions.add_parser("report", help="tasks done and failed since a time and tasks stuck now, each with its box, T3 thread and PR links")
     r.add_argument("project", nargs="?", help="project key (default: all)")
-    r.add_argument("--since", required=True, help="a span back from now (90m, 6h, 2d) or an ISO time (UTC unless it has an offset)")
+    r.add_argument("--since", required=True, help="a span back from now (90min, 6h, 2d, 1w) or an ISO time (UTC unless it has an offset)")
     r.add_argument("--stale-minutes", type=float, default=30, help="a ready task no worker took for this long counts as stuck (default 30)")
     r.add_argument("--as", dest="as_profile", default="lead", metavar="PROFILE")
     r.add_argument("--json", action="store_true")
