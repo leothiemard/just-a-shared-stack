@@ -132,6 +132,18 @@
       "prompt": "Add an 'Edit in Studio' button that links directly to a nested Portable Text field, and register the Studio in the Sanity Dashboard with defineApplication.",
       "expected_output": "sanity-best-practices: follow Studio edit intent link rules (URI-encoded path, _key selectors) and references/dashboard.md.",
       "files": []
+    },
+    {
+      "id": 23,
+      "prompt": "Delegate checking the signup flow on the staging site in a browser to a cheap Codex child while you keep going on the API.",
+      "expected_output": "Global rules: give the browser check to a Claude child; in T3 a Codex child has no browser of its own. Say why if the user named Codex.",
+      "files": []
+    },
+    {
+      "id": 24,
+      "prompt": "Read the order history from my logged-in shop account and list last month's totals.",
+      "expected_output": "Global rules: use a background tab, read page snapshots rather than screenshots, leave the user's windows where they are and close only the tabs you opened. If a login, 2FA, passkey or payment step appears, hand it to the user.",
+      "files": []
     }
   ]
 }
