@@ -70,6 +70,7 @@ It clones the stack to `~/Development/just-a-shared-stack` and runs `jass init` 
 | retro | Recommend improvements to the coding environment from a session retrospective. |
 | file-pr | Open a concise PR describing the problem, solution and proof. |
 | babysit-pr | Follow review and CI with the host watcher or the bundled non-T3 watcher. |
+| pr-media | Upload PR screenshots and videos through the T3 browser as GitHub attachments. |
 | leaving-pr-comments | Attribute agent-authored GitHub comments and verify the posted result. |
 | writing-for-agents | Write skills and instructions using Matt's full guide and mechanics reference. |
 | ios-sim | Test web pages in Mobile Safari on an iOS Simulator with the bundled `iosim` CLI: drive, evaluate, screenshot, record, audit; callable from boxes without a Simulator. |

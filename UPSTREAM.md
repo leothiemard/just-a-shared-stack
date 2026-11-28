@@ -40,10 +40,18 @@ descriptions end with `file-pr`'s model-and-harness line again: the global
 rules no longer forbid it, and only the no-AI `Co-Authored-By` rule for
 commits remains.
 
-Theo's five other folders, Matt's five folders, and Sanity's five folders are copied without local modifications (apart from historical trailing-whitespace normalization on the untouched `content-modeling-best-practices` and `seo-aeo-best-practices` folders). The complete patches are:
+On 2026-11-28, the user ruled that PR screenshots and videos are always uploaded
+through the T3 browser and never committed, and chose the fallback: ask the user
+to sign in when the browser is signed out of GitHub, otherwise report the local
+paths. `full-send` and `babysit-pr` now name the local `pr-media` skill where
+they said "when you have a way to upload them"; whether to attach media is
+unchanged.
+
+Theo's four other folders, Matt's five folders, and Sanity's five folders are copied without local modifications (apart from historical trailing-whitespace normalization on the untouched `content-modeling-best-practices` and `seo-aeo-best-practices` folders). The complete patches are:
 
 - [sol-loop](patches/tstack-sol-loop.patch): hand off the ledger before reviewer waits above ~150k context.
-- [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context.
+- [babysit-pr](patches/tstack-babysit-pr.patch): hand off PR state before watching above ~150k context; upload PR media with `pr-media`.
+- [full-send](patches/tstack-full-send.patch): attach Proof screenshots with `pr-media`.
 
 - [blast-radius](patches/pstack-blast-radius.patch): qualify companion calls as `pstack:how`, `pstack:why`, `pstack:arena` and `pstack:unslop`; mirror its explicit-only invocation policy in Codex metadata.
 - [create-verification-skill](patches/pstack-create-verification-skill.patch): resolve the project-local skill directory for Codex, Claude Code or Cursor; qualify the pstack maintenance companion; mirror its explicit-only invocation policy in Codex metadata. The output stays project-local, and its feature coverage and proof requirements are unchanged.

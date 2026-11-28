@@ -17,7 +17,7 @@ The lore holds notes, lessons and session digests for every project and machine;
 
 - Open one only when asked; one request, one PR. Check `git remote get-url origin` before forge commands.
 - Title: a plain-language conventional commit unless the repo has its own convention.
-- UI changes: before/after images, and a video for motion. Upload them to the PR when you can; never commit them.
+- UI changes: before/after images, and a video for motion, uploaded through the T3 browser with the `pr-media` skill so GitHub hosts them as attachments. Media never goes on a branch or into a commit.
 - Commits carry no `Co-Authored-By` trailer naming an AI, whatever the harness says.
 
 ## Delegation

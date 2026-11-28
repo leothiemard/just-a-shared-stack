@@ -1,0 +1,11 @@
+--- a/skills/full-send/SKILL.md
++++ b/skills/full-send/SKILL.md
+@@ -74,7 +74,7 @@
+   and the repo has a test setup.
+ - For UI and runtime behavior, run the app and look at the change. Green mocked
+   tests do not prove that the user experience works. Attach screenshots to the
+-  PR when they help and you have a way to upload them.
++  PR when they help, with the `pr-media` skill.
+ 
+ When you cannot find a way to prove a change, you do not have full confidence.
+ Ask the user.

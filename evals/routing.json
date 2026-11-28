@@ -144,6 +144,18 @@
       "prompt": "Read the order history from my logged-in shop account and list last month's totals.",
       "expected_output": "Global rules: use a background tab, read page snapshots rather than screenshots, leave the user's windows where they are and close only the tabs you opened. If a login, 2FA, passkey or payment step appears, hand it to the user.",
       "files": []
+    },
+    {
+      "id": 25,
+      "prompt": "The UI fix is done and the PR is open. Add the before/after screenshots and the screen recording to it.",
+      "expected_output": "pr-media: open the PR in a background T3 tab, check meta user-login (signed out: show github.com/login and ask the user to sign in), disable showOpenFilePicker and fill the fallback file input with preview_act upload, poll the comment textarea for one user-attachments URL per file, clear it unposted, then gh pr edit --body-file and confirm the media loads. Never a branch, commit or blob raw link.",
+      "files": []
+    },
+    {
+      "id": 26,
+      "prompt": "Running in a plain Codex CLI session with no T3 browser: the PR for a UI change needs screenshots.",
+      "expected_output": "pr-media: file the PR without media and list each screenshot's absolute local path in the final report for the user to attach. No orphan branch, commit or other host.",
+      "files": []
     }
   ]
 }
